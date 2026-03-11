@@ -50,6 +50,15 @@ jobs:
         if: matrix.cross
         run: cargo install cross --git https://github.com/cross-rs/cross
 
+      - name: Configure cross for musl (aarch64)
+        if: matrix.cross && contains(matrix.target, 'musl')
+        run: |
+          mkdir -p .cargo
+          cat > Cross.toml <<'TOML'
+          [target.aarch64-unknown-linux-musl.env]
+          passthrough = ["CFLAGS"]
+          TOML
+
       - name: Build
         run: |
           # sqlite-vec uses BSD u_int*_t types missing from musl — define them
@@ -57,7 +66,7 @@ jobs:
             export CFLAGS="-Du_int8_t=uint8_t -Du_int16_t=uint16_t -Du_int64_t=uint64_t"
           fi
           if [ "${{ matrix.cross }}" = "true" ]; then
-            cross build --release --no-default-features --target ${{ matrix.target }}
+            CROSS_CONTAINER_OPTS="--env CFLAGS" cross build --release --no-default-features --target ${{ matrix.target }}
           else
             cargo build --release --no-default-features --target ${{ matrix.target }}
           fi
