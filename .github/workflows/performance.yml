@@ -1,0 +1,73 @@
+name: Performance guard
+
+on:
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  MAX_BINARY_SIZE_MB: 5
+  MAX_STARTUP_MS: 15
+
+jobs:
+  binary-size:
+    name: Binary size check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release (no embeddings)
+        run: cargo build --release --no-default-features
+
+      - name: Check binary size
+        run: |
+          SIZE_BYTES=$(stat --format=%s target/release/hyphae)
+          SIZE_MB=$(echo "scale=2; $SIZE_BYTES / 1048576" | bc)
+          echo "Binary size: ${SIZE_MB}MB"
+
+          if (( $(echo "$SIZE_MB > $MAX_BINARY_SIZE_MB" | bc -l) )); then
+            echo "::error::Binary size ${SIZE_MB}MB exceeds ${MAX_BINARY_SIZE_MB}MB limit"
+            exit 1
+          fi
+
+          echo "### Binary size: ${SIZE_MB}MB (limit: ${MAX_BINARY_SIZE_MB}MB)" >> "$GITHUB_STEP_SUMMARY"
+
+  startup-time:
+    name: Startup time check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install hyperfine
+        run: cargo install hyperfine
+
+      - name: Build release (no embeddings)
+        run: cargo build --release --no-default-features
+
+      - name: Benchmark startup
+        run: |
+          RESULT=$(hyperfine --warmup 5 --min-runs 20 \
+            '${{ github.workspace }}/target/release/hyphae --version' \
+            --export-json /tmp/bench.json 2>&1)
+          echo "$RESULT"
+
+          MEDIAN_MS=$(python3 -c "
+          import json
+          with open('/tmp/bench.json') as f:
+              data = json.load(f)
+          median_s = data['results'][0]['median']
+          print(f'{median_s * 1000:.1f}')
+          ")
+
+          echo "Median startup: ${MEDIAN_MS}ms"
+
+          if (( $(echo "$MEDIAN_MS > $MAX_STARTUP_MS" | bc -l) )); then
+            echo "::error::Startup time ${MEDIAN_MS}ms exceeds ${MAX_STARTUP_MS}ms limit"
+            exit 1
+          fi
+
+          echo "### Startup time: ${MEDIAN_MS}ms (limit: ${MAX_STARTUP_MS}ms)" >> "$GITHUB_STEP_SUMMARY"
