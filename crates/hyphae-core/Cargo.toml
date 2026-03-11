@@ -3,6 +3,9 @@ name = "hyphae-core"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
+description = "Core types and traits for Hyphae persistent memory"
+license = "MIT"
+repository = "https://github.com/basidiocarp/hyphae"
 
 [features]
 default = []
