@@ -1,0 +1,17 @@
+[package]
+name = "hyphae-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+[features]
+default = []
+embeddings = ["fastembed"]
+
+[dependencies]
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+ulid = { workspace = true }
+fastembed = { workspace = true, optional = true }

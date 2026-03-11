@@ -1,0 +1,32 @@
+[package]
+name = "hyphae-cli"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Permanent memory for AI agents"
+license = "MIT"
+repository = "https://github.com/basidiocarp/hyphae"
+keywords = ["memory", "ai-agents", "mcp", "llm", "cli"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "hyphae"
+path = "src/main.rs"
+
+[features]
+default = ["embeddings"]
+embeddings = ["hyphae-core/embeddings", "hyphae-mcp/embeddings"]
+
+[dependencies]
+hyphae-core = { path = "../hyphae-core" }
+hyphae-store = { path = "../hyphae-store" }
+hyphae-mcp = { path = "../hyphae-mcp" }
+anyhow = { workspace = true }
+clap = { workspace = true }
+chrono = { workspace = true }
+directories = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
