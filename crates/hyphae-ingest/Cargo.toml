@@ -1,0 +1,22 @@
+[package]
+name = "hyphae-ingest"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Document ingestion and chunking for Hyphae"
+license = "MIT"
+
+[dependencies]
+hyphae-core = { path = "../hyphae-core" }
+walkdir = "2"
+regex = "1"
+chrono = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+default = ["embeddings"]
+embeddings = ["hyphae-core/embeddings"]

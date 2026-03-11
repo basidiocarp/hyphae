@@ -7,6 +7,7 @@ use hyphae_store::SqliteStore;
 
 use crate::protocol::ToolResult;
 
+mod ingest;
 mod memoir;
 mod memory;
 mod schema;
@@ -54,6 +55,12 @@ pub fn call_tool(
         "hyphae_memoir_search_all" => memoir::tool_memoir_search_all(store, args),
         "hyphae_memoir_link" => memoir::tool_memoir_link(store, args),
         "hyphae_memoir_inspect" => memoir::tool_memoir_inspect(store, args),
+        // RAG tools
+        "hyphae_ingest_file" => ingest::tool_ingest_file(store, embedder, args, compact),
+        "hyphae_search_docs" => ingest::tool_search_docs(store, embedder, args, compact),
+        "hyphae_list_sources" => ingest::tool_list_sources(store),
+        "hyphae_forget_source" => ingest::tool_forget_source(store, args),
+        "hyphae_search_all" => ingest::tool_search_all(store, embedder, args, compact),
         _ => ToolResult::error(format!("unknown tool: {name}")),
     }
 }
@@ -1065,5 +1072,291 @@ mod tests {
         assert!(result.is_error);
         assert!(result.content[0].text.contains("definition"));
         assert!(result.content[0].text.contains("32768"));
+    }
+
+    // --- RAG tool tests ---
+
+    #[test]
+    fn test_tool_ingest_file() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let store = test_store();
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test_doc.md");
+        fs::write(&path, "# Hello\n\nThis is a test document with some content.\n\n## Section\n\nMore text here.").unwrap();
+
+        let result = call_tool(
+            &store,
+            None,
+            "hyphae_ingest_file",
+            &json!({"path": path.to_str().unwrap()}),
+            false,
+        );
+        assert!(
+            !result.is_error,
+            "unexpected error: {}",
+            result.content[0].text
+        );
+        assert!(result.content[0].text.contains("Ingested"));
+        assert!(result.content[0].text.contains("document(s)"));
+        assert!(result.content[0].text.contains("chunk(s)"));
+    }
+
+    #[test]
+    fn test_tool_search_docs() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let store = test_store();
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("searchable.md");
+        fs::write(
+            &path,
+            "# Mycelium\n\nMycelium is the vegetative part of a fungus.",
+        )
+        .unwrap();
+
+        // Ingest first
+        call_tool(
+            &store,
+            None,
+            "hyphae_ingest_file",
+            &json!({"path": path.to_str().unwrap()}),
+            false,
+        );
+
+        let result = call_tool(
+            &store,
+            None,
+            "hyphae_search_docs",
+            &json!({"query": "mycelium fungus"}),
+            false,
+        );
+        assert!(
+            !result.is_error,
+            "unexpected error: {}",
+            result.content[0].text
+        );
+        assert!(
+            result.content[0].text.to_lowercase().contains("mycelium")
+                || result.content[0].text.to_lowercase().contains("fungus")
+        );
+    }
+
+    #[test]
+    fn test_tool_list_sources() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let store = test_store();
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("listed.txt");
+        fs::write(&path, "Some content to list.").unwrap();
+
+        call_tool(
+            &store,
+            None,
+            "hyphae_ingest_file",
+            &json!({"path": path.to_str().unwrap()}),
+            false,
+        );
+
+        let result = call_tool(&store, None, "hyphae_list_sources", &json!({}), false);
+        assert!(
+            !result.is_error,
+            "unexpected error: {}",
+            result.content[0].text
+        );
+        assert!(
+            result.content[0].text.contains("listed.txt")
+                || result.content[0].text.contains("listed")
+        );
+    }
+
+    #[test]
+    fn test_tool_forget_source() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let store = test_store();
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("to_forget.txt");
+        fs::write(&path, "Content that will be forgotten.").unwrap();
+
+        let path_str = path.to_str().unwrap();
+
+        call_tool(
+            &store,
+            None,
+            "hyphae_ingest_file",
+            &json!({"path": path_str}),
+            false,
+        );
+
+        let result = call_tool(
+            &store,
+            None,
+            "hyphae_forget_source",
+            &json!({"path": path_str}),
+            false,
+        );
+        assert!(
+            !result.is_error,
+            "unexpected error: {}",
+            result.content[0].text
+        );
+        assert!(result.content[0].text.contains("Deleted"));
+
+        // Verify it's gone
+        let list_result = call_tool(&store, None, "hyphae_list_sources", &json!({}), false);
+        assert!(!list_result.content[0].text.contains("to_forget.txt"));
+    }
+
+    #[test]
+    fn test_tool_search_docs_no_results() {
+        let store = test_store();
+        let result = call_tool(
+            &store,
+            None,
+            "hyphae_search_docs",
+            &json!({"query": "nonexistent unicorn content"}),
+            false,
+        );
+        assert!(!result.is_error);
+        assert!(result.content[0].text.contains("No results"));
+    }
+
+    #[test]
+    fn test_tool_forget_source_not_found() {
+        let store = test_store();
+        let result = call_tool(
+            &store,
+            None,
+            "hyphae_forget_source",
+            &json!({"path": "/nonexistent/path.txt"}),
+            false,
+        );
+        assert!(result.is_error);
+        assert!(
+            result.content[0].text.contains("not found")
+                || result.content[0].text.contains("Source not found")
+        );
+    }
+
+    #[test]
+    fn test_tool_search_all_empty() {
+        let store = test_store();
+        let result = call_tool(
+            &store,
+            None,
+            "hyphae_search_all",
+            &json!({"query": "anything"}),
+            false,
+        );
+        assert!(!result.is_error);
+        assert!(result.content[0].text.contains("No results"));
+    }
+
+    #[test]
+    fn test_tool_search_all_memories_and_docs() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let store = test_store();
+
+        // Store a memory
+        call_tool(
+            &store,
+            None,
+            "hyphae_memory_store",
+            &json!({"topic": "architecture", "content": "The system uses PostgreSQL for data storage"}),
+            false,
+        );
+
+        // Ingest a document
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("guide.md");
+        fs::write(
+            &path,
+            "# Storage Guide\n\nPostgreSQL is the primary database for production workloads.",
+        )
+        .unwrap();
+        call_tool(
+            &store,
+            None,
+            "hyphae_ingest_file",
+            &json!({"path": path.to_str().unwrap()}),
+            false,
+        );
+
+        // Search across both
+        let result = call_tool(
+            &store,
+            None,
+            "hyphae_search_all",
+            &json!({"query": "PostgreSQL database"}),
+            false,
+        );
+        assert!(
+            !result.is_error,
+            "search_all error: {}",
+            result.content[0].text
+        );
+        let text = &result.content[0].text;
+        assert!(
+            text.contains("[memory]") || text.contains("[doc:"),
+            "should contain tagged results"
+        );
+    }
+
+    #[test]
+    fn test_tool_search_all_missing_query() {
+        let store = test_store();
+        let result = call_tool(&store, None, "hyphae_search_all", &json!({}), false);
+        assert!(result.is_error);
+        assert!(result.content[0].text.contains("query"));
+    }
+
+    #[test]
+    fn test_tool_search_all_include_docs_false() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let store = test_store();
+
+        call_tool(
+            &store,
+            None,
+            "hyphae_memory_store",
+            &json!({"topic": "test", "content": "Kubernetes cluster management"}),
+            false,
+        );
+
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("k8s.md");
+        fs::write(&path, "Kubernetes pod scheduling and orchestration.").unwrap();
+        call_tool(
+            &store,
+            None,
+            "hyphae_ingest_file",
+            &json!({"path": path.to_str().unwrap()}),
+            false,
+        );
+
+        let result = call_tool(
+            &store,
+            None,
+            "hyphae_search_all",
+            &json!({"query": "Kubernetes", "include_docs": false}),
+            false,
+        );
+        assert!(!result.is_error);
+        let text = &result.content[0].text;
+        // Should contain memory result but no doc results
+        assert!(
+            !text.contains("[doc:"),
+            "should not include doc results when include_docs=false"
+        );
     }
 }

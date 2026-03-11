@@ -1,6 +1,6 @@
 # Hyphae -- CLI Reference
 
-This file documents all 29 CLI commands exposed by the `hyphae` binary. Each entry covers syntax, option tables, and concrete examples. Commands are grouped into four categories: episodic memory, memoir knowledge graphs, administration/maintenance, and configuration/setup — plus the benchmark suite.
+This file documents all CLI commands exposed by the `hyphae` binary. Each entry covers syntax, option tables, and concrete examples. Commands are grouped into five categories: episodic memory, memoir knowledge graphs, documents and RAG, administration/maintenance, and configuration/setup — plus the benchmark suite.
 
 All commands accept the global `--db <path>` flag to override the default database location.
 
@@ -26,6 +26,12 @@ All commands accept the global `--db <path>` flag to override the default databa
   - [`hyphae memoir link`](#hyphae-memoir-link----link-two-concepts)
   - [`hyphae memoir inspect`](#hyphae-memoir-inspect----inspect-a-concept-and-its-neighborhood)
   - [`hyphae memoir distill`](#hyphae-memoir-distill----distill-memories-into-concepts)
+- [Documents and RAG](#documents-and-rag)
+  - [`hyphae ingest`](#hyphae-ingest----ingest-files-for-rag-search)
+  - [`hyphae search-docs`](#hyphae-search-docs----search-ingested-documents)
+  - [`hyphae list-sources`](#hyphae-list-sources----list-ingested-sources)
+  - [`hyphae forget-source`](#hyphae-forget-source----remove-an-ingested-source)
+  - [`hyphae search-all`](#hyphae-search-all----unified-cross-store-search)
 - [Administration and maintenance](#administration-and-maintenance)
   - [`hyphae topics`](#hyphae-topics----list-topics)
   - [`hyphae stats`](#hyphae-stats----global-statistics)
@@ -455,6 +461,133 @@ hyphae memoir distill --from-topic "decisions-api" --into "arch-v2"
 
 ---
 
+## Documents and RAG
+
+### `hyphae ingest` -- Ingest files for RAG search
+
+```
+hyphae ingest <path> [--recursive] [--force]
+```
+
+| Option | Short | Required | Default | Description |
+|--------|-------|----------|---------|-------------|
+| `<path>` | -- | yes | -- | File or directory to ingest |
+| `--recursive` | `-r` | no | false | Recurse into subdirectories |
+| `--force` | `-f` | no | false | Re-ingest even if source already exists |
+
+Ingest a file or directory into the document store. Files are automatically chunked based on type:
+- **Markdown** (`.md`, `.mdx`): split by heading (max 500 tokens per chunk)
+- **Code** (`.rs`, `.py`, `.js`, `.ts`, `.go`, etc.): split by function
+- **Text** (`.txt`, `.log`, `.json`, `.toml`, etc.): sliding window (500 words, 50 overlap)
+
+Binary files are detected and skipped. Hidden files and build directories (`target/`, `node_modules/`, `.git/`) are excluded.
+
+```bash
+# Ingest a single file
+hyphae ingest README.md
+
+# Ingest a directory
+hyphae ingest src/
+
+# Ingest recursively
+hyphae ingest . --recursive
+
+# Force re-ingest
+hyphae ingest src/main.rs --force
+```
+
+---
+
+### `hyphae search-docs` -- Search ingested documents
+
+```
+hyphae search-docs <query> [--limit N]
+```
+
+| Option | Short | Required | Default | Description |
+|--------|-------|----------|---------|-------------|
+| `<query>` | -- | yes | -- | Search query |
+| `--limit` | `-l` | no | `10` | Maximum results |
+
+Searches ingested document chunks using hybrid search (vector + FTS) when embeddings are available, or FTS-only otherwise.
+
+```bash
+# Search for authentication logic
+hyphae search-docs "authentication middleware"
+
+# Limit to top 3
+hyphae search-docs "database pooling" --limit 3
+```
+
+---
+
+### `hyphae list-sources` -- List ingested sources
+
+```
+hyphae list-sources
+```
+
+Lists all ingested document sources with their file type, chunk count, and ingestion date.
+
+```bash
+hyphae list-sources
+```
+
+Example output:
+```
+Path                                                         Type       Chunks   Ingested
+------------------------------------------------------------------------------------------
+/home/user/project/src/main.rs                               Code       5        2024-03-05
+/home/user/project/README.md                                 Markdown   3        2024-03-05
+```
+
+---
+
+### `hyphae forget-source` -- Remove an ingested source
+
+```
+hyphae forget-source <path>
+```
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `<path>` | yes | Source path to remove (as shown by `list-sources`) |
+
+Removes a document source and all its associated chunks from the store.
+
+```bash
+hyphae forget-source /home/user/project/src/old_module.rs
+```
+
+---
+
+### `hyphae search-all` -- Unified cross-store search
+
+```
+hyphae search-all <query> [--limit N] [--include-docs]
+```
+
+| Option | Short | Required | Default | Description |
+|--------|-------|----------|---------|-------------|
+| `<query>` | -- | yes | -- | Search query |
+| `--limit` | `-l` | no | `10` | Maximum total results |
+| `--include-docs` | -- | no | `true` | Include document chunks in results |
+
+Searches across both episodic memories and ingested documents, merging results using Reciprocal Rank Fusion (RRF) for unified relevance ranking.
+
+```bash
+# Search everything
+hyphae search-all "database connection"
+
+# Memories only (exclude docs)
+hyphae search-all "database connection" --include-docs false
+
+# Limit results
+hyphae search-all "auth" --limit 5
+```
+
+---
+
 ## Administration and maintenance
 
 ### `hyphae topics` -- List topics
@@ -774,5 +907,5 @@ hyphae bench-agent --sessions 10 --model haiku --runs 3
 
 ## See also
 
-- **[MCP-TOOLS.md](MCP-TOOLS.md)** — All 18 MCP tool definitions (parameters, request/response examples) for AI agent integration
+- **[MCP-TOOLS.md](MCP-TOOLS.md)** — All 23 MCP tool definitions (parameters, request/response examples) for AI agent integration
 - **[FEATURES.md](FEATURES.md)** — Conceptual guides: Memory vs Memoir, multi-session workflows, topic organization, consolidation, importance levels, decay model, and complete configuration reference

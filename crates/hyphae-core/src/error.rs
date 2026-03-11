@@ -23,6 +23,9 @@ pub enum HyphaeError {
     #[error("validation error: {0}")]
     Validation(String),
 
+    #[error("ingest error: {0}")]
+    Ingest(String),
+
     #[error("lock was poisoned")]
     LockPoisoned,
 }

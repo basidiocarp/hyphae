@@ -1,3 +1,5 @@
+pub mod chunk;
+pub mod chunk_store;
 pub mod embedder;
 pub mod error;
 #[cfg(feature = "embeddings")]
@@ -8,6 +10,8 @@ pub mod memoir_store;
 pub mod memory;
 pub mod store;
 
+pub use chunk::{Chunk, ChunkMetadata, ChunkSearchResult, Document, SourceType};
+pub use chunk_store::ChunkStore;
 pub use embedder::Embedder;
 pub use error::{HyphaeError, HyphaeResult};
 #[cfg(feature = "embeddings")]

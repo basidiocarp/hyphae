@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.2.0
+
+### Added
+- **RAG document ingestion**: `hyphae ingest <path>` ingests files/directories into a searchable vector store
+- **Document chunking**: Automatic chunking with Sliding Window (text), By Heading (markdown), By Function (code) strategies
+- **Unified search**: `hyphae search-all <query>` searches across memories and document chunks using Reciprocal Rank Fusion (RRF)
+- **MCP RAG tools**: `hyphae_ingest_file`, `hyphae_search_docs`, `hyphae_list_sources`, `hyphae_forget_source`, `hyphae_search_all` (23 tools total)
+- **New crate**: `hyphae-ingest` — file readers + chunking logic, no database dependency
+
 ## v0.1.0
 
 ### New Features

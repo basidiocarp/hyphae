@@ -1,6 +1,6 @@
 # Hyphae -- MCP Tools Reference
 
-This file documents all 18 tools exposed by the Hyphae MCP server over the JSON-RPC 2.0 protocol (stdio transport). These tools are called transparently by AI agents (Claude, Cursor, Windsurf, etc.) — no manual invocation is required once the server is configured. Tools are split evenly between the episodic memory system (9 tools) and the memoir knowledge-graph system (9 tools).
+This file documents all 23 tools exposed by the Hyphae MCP server over the JSON-RPC 2.0 protocol (stdio transport). These tools are called transparently by AI agents (Claude, Cursor, Windsurf, etc.) — no manual invocation is required once the server is configured. Tools are organized into three categories: episodic memory (9 tools), memoir knowledge graphs (9 tools), and RAG document ingestion (5 tools).
 
 ## Table of Contents
 
@@ -25,6 +25,12 @@ This file documents all 18 tools exposed by the Hyphae MCP server over the JSON-
   - [`hyphae_memoir_search_all`](#hyphae_memoir_search_all----search-across-all-memoirs)
   - [`hyphae_memoir_link`](#hyphae_memoir_link----link-two-concepts)
   - [`hyphae_memoir_inspect`](#hyphae_memoir_inspect----inspect-a-concepts-neighborhood)
+- [RAG Tools (5)](#rag-tools-5)
+  - [`hyphae_ingest_file`](#hyphae_ingest_file----ingest-a-file-or-directory)
+  - [`hyphae_search_docs`](#hyphae_search_docs----search-ingested-documents)
+  - [`hyphae_list_sources`](#hyphae_list_sources----list-ingested-sources)
+  - [`hyphae_forget_source`](#hyphae_forget_source----remove-a-source)
+  - [`hyphae_search_all`](#hyphae_search_all----unified-cross-store-search)
 - [See also](#see-also)
 
 ---
@@ -378,7 +384,152 @@ Returns the concept and all concepts reachable in N hops, with the links between
 
 ---
 
+## RAG Tools (5)
+
+### `hyphae_ingest_file` -- Ingest a file or directory
+
+Ingest a file or directory into Hyphae's document store for RAG search. Content is automatically chunked based on file type: markdown files are split by heading, code files by function, and other text files use a sliding window.
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `path` | string | yes | -- | Absolute or relative path to a file or directory to ingest |
+| `recursive` | boolean | no | `false` | If path is a directory, recurse into subdirectories |
+
+**Automatic behaviors:**
+- **Auto-detect file type**: Markdown, code (14 languages), or plain text
+- **Auto-chunk**: Chooses the best chunking strategy per file type
+- **Auto-embed**: If the embedder is available, chunks are automatically vectorized
+- **Skip binary files**: Binary files are detected and skipped
+
+**Example request:**
+```json
+{
+  "path": "/home/user/project/src",
+  "recursive": true
+}
+```
+
+**Example response (normal mode):**
+```
+Ingested: /home/user/project/src/main.rs (5 chunks)
+Ingested: /home/user/project/src/lib.rs (3 chunks)
+```
+
+**Example response (compact mode):**
+```
+ok:2 files, 8 chunks
+```
+
+---
+
+### `hyphae_search_docs` -- Search ingested documents
+
+Search ingested documents using hybrid (vector + FTS) or FTS-only search. Returns ranked chunks with source paths and relevance scores.
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `query` | string | yes | -- | Natural language search query |
+| `limit` | integer | no | `10` | Maximum number of results to return (1-100) |
+
+**Example request:**
+```json
+{
+  "query": "authentication middleware",
+  "limit": 5
+}
+```
+
+**Example response (normal mode):**
+```
+--- chunk 01HW...C1 ---
+  source: /home/user/project/src/auth.rs
+  score:  0.872
+  content: pub fn auth_middleware(...) { ... }
+```
+
+**Example response (compact mode):**
+```
+[auth.rs:0.87] pub fn auth_middleware(...) { ... }
+```
+
+---
+
+### `hyphae_list_sources` -- List ingested sources
+
+List all ingested document sources with their type, chunk count, and ingestion date.
+
+**Parameters:** None
+
+**Example response:**
+```
+/home/user/project/src/main.rs    Code    5 chunks    2024-03-05
+/home/user/project/README.md      Markdown 3 chunks   2024-03-05
+```
+
+---
+
+### `hyphae_forget_source` -- Remove a source
+
+Remove an ingested document source and all its chunks from the store.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `path` | string | yes | Source path of the document to delete (as shown by `hyphae_list_sources`) |
+
+**Example:**
+```json
+{ "path": "/home/user/project/src/old_module.rs" }
+```
+
+---
+
+### `hyphae_search_all` -- Unified cross-store search
+
+Search across both episodic memories and ingested documents in a single query. Results are merged and ranked using Reciprocal Rank Fusion (RRF) to produce a unified relevance ordering.
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `query` | string | yes | -- | Natural language search query |
+| `limit` | integer | no | `10` | Total results across both stores (1-50) |
+| `include_docs` | boolean | no | `true` | Whether to include document chunks in results |
+
+**Example request:**
+```json
+{
+  "query": "database connection pooling",
+  "limit": 5,
+  "include_docs": true
+}
+```
+
+**Example response (normal mode):**
+```
+--- memory 01HW...M1 (score: 0.92) ---
+  topic:   decisions-api
+  content: Configured PgBouncer for connection pooling
+
+--- doc chunk 01HW...C3 (score: 0.85) ---
+  source:  /home/user/project/src/db.rs
+  content: pub fn create_pool(config: &DbConfig) -> Pool { ... }
+```
+
+**Example response (compact mode):**
+```
+[memory|decisions-api:0.92] Configured PgBouncer for connection pooling
+[doc|db.rs:0.85] pub fn create_pool(config: &DbConfig) -> Pool { ... }
+```
+
+---
+
 ## See also
 
-- **[CLI-REFERENCE.md](CLI-REFERENCE.md)** — All 29 CLI commands with syntax, option tables, and examples
+- **[CLI-REFERENCE.md](CLI-REFERENCE.md)** — All CLI commands with syntax, option tables, and examples
 - **[FEATURES.md](FEATURES.md)** — Conceptual guides: Memory vs Memoir, multi-session workflows, topic organization, consolidation, importance levels, decay model, and complete configuration reference

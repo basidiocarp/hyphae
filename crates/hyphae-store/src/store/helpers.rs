@@ -1,8 +1,8 @@
 use chrono::{DateTime, Utc};
 
 use hyphae_core::{
-    Concept, ConceptId, ConceptLink, Confidence, Importance, Label, Memoir, Memory, MemoryId,
-    MemorySource, Relation, Weight,
+    Chunk, ChunkMetadata, Concept, ConceptId, ConceptLink, Confidence, Document, Importance, Label,
+    Memoir, Memory, MemoryId, MemorySource, Relation, SourceType, Weight,
 };
 
 // ---------------------------------------------------------------------------
@@ -191,6 +191,56 @@ pub(crate) fn row_to_link(row: &rusqlite::Row) -> rusqlite::Result<ConceptLink> 
 }
 
 pub(crate) const LINK_COLS: &str = "id, source_id, target_id, relation, weight, created_at";
+
+// ---------------------------------------------------------------------------
+// Document / Chunk helpers
+// ---------------------------------------------------------------------------
+
+pub(crate) const DOCUMENT_COLS: &str =
+    "id, source_path, source_type, chunk_count, created_at, updated_at";
+
+pub(crate) const CHUNK_COLS: &str = "id, document_id, chunk_index, content, source_path, \
+     source_type, language, heading, line_start, line_end, created_at";
+
+pub(crate) fn row_to_document(row: &rusqlite::Row) -> rusqlite::Result<Document> {
+    // Column order: id(0), source_path(1), source_type(2), chunk_count(3),
+    //   created_at(4), updated_at(5)
+    let source_type_str: String = row.get(2)?;
+    let source_type: SourceType = source_type_str.parse().unwrap_or_default();
+    Ok(Document {
+        id: row.get::<_, String>(0)?.into(),
+        source_path: row.get(1)?,
+        source_type,
+        chunk_count: row.get::<_, u32>(3)? as usize,
+        created_at: parse_dt(&row.get::<_, String>(4)?),
+        updated_at: parse_dt(&row.get::<_, String>(5)?),
+    })
+}
+
+pub(crate) fn row_to_chunk(row: &rusqlite::Row) -> rusqlite::Result<Chunk> {
+    // Column order: id(0), document_id(1), chunk_index(2), content(3),
+    //   source_path(4), source_type(5), language(6), heading(7),
+    //   line_start(8), line_end(9), created_at(10)
+    let source_type_str: String = row.get(5)?;
+    let source_type: SourceType = source_type_str.parse().unwrap_or_default();
+    let metadata = ChunkMetadata {
+        source_path: row.get(4)?,
+        source_type,
+        language: row.get(6)?,
+        heading: row.get(7)?,
+        line_start: row.get(8)?,
+        line_end: row.get(9)?,
+    };
+    Ok(Chunk {
+        id: row.get::<_, String>(0)?.into(),
+        document_id: row.get::<_, String>(1)?.into(),
+        chunk_index: row.get::<_, u32>(2)?,
+        content: row.get(3)?,
+        metadata,
+        embedding: None,
+        created_at: parse_dt(&row.get::<_, String>(10)?),
+    })
+}
 
 // ---------------------------------------------------------------------------
 // Tests

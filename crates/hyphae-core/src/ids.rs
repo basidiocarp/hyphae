@@ -50,3 +50,5 @@ define_id!(MemoryId);
 define_id!(MemoirId);
 define_id!(ConceptId);
 define_id!(LinkId);
+define_id!(DocumentId);
+define_id!(ChunkId);

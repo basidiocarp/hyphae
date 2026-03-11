@@ -34,7 +34,7 @@ hyphae init
 
 This auto-detects and configures.
 
-That's it. Your agent now has access to 18 MCP tools for storing and recalling context.
+That's it. Your agent now has access to 23 MCP tools for storing, recalling, and searching context.
 
 ## How It Works
 
@@ -65,6 +65,8 @@ Next session:  Agent queries the "backend" memoir
 ## Key Features
 
 - **Two memory models** — episodic (decay-based) + semantic (knowledge graphs)
+- **RAG document ingestion** — ingest files and directories into a searchable vector store with automatic chunking (sliding window, by heading, by function)
+- **Unified cross-store search** — search across memories, knowledge graphs, and ingested documents using Reciprocal Rank Fusion (RRF)
 - **Zero LLM cost** — rule-based fact extraction, local embeddings, no API calls for storage
 - **Local-first** — single SQLite file, no cloud, no network dependency
 - **Hybrid search** — 30% BM25 full-text + 70% cosine similarity via sqlite-vec
@@ -85,17 +87,18 @@ Benchmarked impact: +63% factual recall, -44% context tokens, -29% agent turns b
 ```
 hyphae (single binary)
 ├── hyphae-core    Types, traits, embedder (no I/O)
+├── hyphae-ingest  File readers + chunking logic (no database dependency)
 ├── hyphae-store   SQLite + FTS5 + sqlite-vec
 ├── hyphae-mcp     MCP server (JSON-RPC 2.0 over stdio)
-└── hyphae-cli     29 CLI commands, config, extraction, benchmarks
+└── hyphae-cli     CLI commands, config, extraction, benchmarks
 ```
 
 ## Documentation
 
 - [User Guide](docs/GUIDE.md) — quickstart, memory models, configuration
 - [Features](docs/FEATURES.md) — conceptual guides, topic hygiene, decay model
-- [CLI Reference](docs/CLI-REFERENCE.md) — all 29 commands with examples
-- [MCP Tools](docs/MCP-TOOLS.md) — all 18 MCP tool definitions
+- [CLI Reference](docs/CLI-REFERENCE.md) — all CLI commands with examples
+- [MCP Tools](docs/MCP-TOOLS.md) — all 23 MCP tool definitions
 - [Architecture](docs/ARCHITECTURE.md) — traits, schema, search pipeline, decay model
 - [Setup by Tool](docs/SETUP-BY-TOOL.md) — per-editor configuration details
 - [Troubleshooting](docs/TROUBLESHOOTING.md) — common issues and fixes

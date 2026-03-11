@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 #[cfg(feature = "embeddings")]
 use hyphae_core::Embedder;
-use hyphae_core::MemoryStore;
+use hyphae_core::{ChunkStore, MemoryStore};
 use hyphae_store::SqliteStore;
 use std::path::PathBuf;
 
@@ -78,6 +78,53 @@ enum Commands {
         /// Text to embed
         #[arg(short, long)]
         text: String,
+    },
+
+    /// Ingest a file or directory into the document store
+    Ingest {
+        /// Path to file or directory to ingest
+        path: PathBuf,
+
+        /// Recursively ingest subdirectories
+        #[arg(short, long)]
+        recursive: bool,
+
+        /// Re-ingest even if source already exists
+        #[arg(short, long)]
+        force: bool,
+    },
+
+    /// Search ingested documents
+    SearchDocs {
+        /// Query text
+        query: String,
+
+        /// Maximum results
+        #[arg(short, long, default_value = "10")]
+        limit: u32,
+    },
+
+    /// List all ingested document sources
+    ListSources,
+
+    /// Remove an ingested document source
+    ForgetSource {
+        /// Source path to remove
+        path: String,
+    },
+
+    /// Search across memories and documents
+    SearchAll {
+        /// Query text
+        query: String,
+
+        /// Maximum total results
+        #[arg(short, long, default_value = "10")]
+        limit: usize,
+
+        /// Include document chunks in results
+        #[arg(long, default_value = "true")]
+        include_docs: bool,
     },
 }
 
@@ -220,6 +267,163 @@ fn main() -> Result<()> {
                 println!("First 5 values: {:?}", &embedding[..5.min(embedding.len())]);
             } else {
                 println!("Embeddings not enabled");
+            }
+        }
+
+        Commands::Ingest {
+            path,
+            recursive,
+            force,
+        } => {
+            #[cfg(feature = "embeddings")]
+            let embedder_ref = embedder.as_ref().map(|e| e as &dyn hyphae_core::Embedder);
+            #[cfg(not(feature = "embeddings"))]
+            let embedder_ref: Option<&dyn hyphae_core::Embedder> = None;
+
+            let pairs: Vec<(hyphae_core::Document, Vec<hyphae_core::Chunk>)> = if path.is_dir() {
+                hyphae_ingest::ingest_directory(&path, embedder_ref, recursive)?
+            } else {
+                vec![hyphae_ingest::ingest_file(&path, embedder_ref)?]
+            };
+
+            let mut ingested = 0usize;
+            let mut skipped = 0usize;
+            for (doc, chunks) in pairs {
+                let existing = store.get_document_by_path(&doc.source_path)?;
+                if let Some(existing_doc) = existing {
+                    if !force {
+                        println!(
+                            "Already ingested: {}, use --force to re-ingest",
+                            doc.source_path
+                        );
+                        skipped += 1;
+                        continue;
+                    }
+                    store.delete_document(&existing_doc.id)?;
+                }
+                let n = chunks.len();
+                store.store_document(doc.clone())?;
+                store.store_chunks(chunks)?;
+                println!("✓ Ingested {}: {} chunks", doc.source_path, n);
+                ingested += 1;
+            }
+            if skipped > 0 {
+                println!("Skipped {} already-ingested source(s)", skipped);
+            }
+            println!("Done: {} source(s) ingested", ingested);
+        }
+
+        Commands::SearchDocs { query, limit } => {
+            #[cfg(feature = "embeddings")]
+            let results = if let Some(ref e) = embedder {
+                let embedding = e.embed(&query)?;
+                store.search_chunks_hybrid(&query, &embedding, limit as usize)?
+            } else {
+                store.search_chunks_fts(&query, limit as usize)?
+            };
+            #[cfg(not(feature = "embeddings"))]
+            let results = store.search_chunks_fts(&query, limit as usize)?;
+
+            if results.is_empty() {
+                println!("No documents found");
+            } else {
+                for result in results {
+                    let meta = &result.chunk.metadata;
+                    let lines = match (meta.line_start, meta.line_end) {
+                        (Some(s), Some(e)) => format!(" (lines {s}-{e})"),
+                        (Some(s), None) => format!(" (line {s})"),
+                        _ => String::new(),
+                    };
+                    let snippet = if result.chunk.content.len() > 200 {
+                        format!("{}…", &result.chunk.content[..200])
+                    } else {
+                        result.chunk.content.clone()
+                    };
+                    println!(
+                        "[{:.2}] {}{}\n  {}",
+                        result.score, meta.source_path, lines, snippet
+                    );
+                }
+            }
+        }
+
+        Commands::ListSources => {
+            let docs = store.list_documents()?;
+            if docs.is_empty() {
+                println!("No sources ingested yet");
+            } else {
+                println!("{:<60} {:<10} {:<8} Ingested", "Path", "Type", "Chunks");
+                println!("{}", "-".repeat(90));
+                for doc in docs {
+                    println!(
+                        "{:<60} {:<10} {:<8} {}",
+                        doc.source_path,
+                        format!("{:?}", doc.source_type),
+                        doc.chunk_count,
+                        doc.created_at.format("%Y-%m-%d %H:%M"),
+                    );
+                }
+            }
+        }
+
+        Commands::ForgetSource { path } => match store.get_document_by_path(&path)? {
+            None => eprintln!("Source not found: {path}"),
+            Some(doc) => {
+                store.delete_document(&doc.id)?;
+                println!("✓ Removed source: {path}");
+            }
+        },
+
+        Commands::SearchAll {
+            query,
+            limit,
+            include_docs,
+        } => {
+            #[cfg(feature = "embeddings")]
+            let embedding = embedder.as_ref().and_then(|e| e.embed(&query).ok());
+            #[cfg(not(feature = "embeddings"))]
+            let embedding: Option<Vec<f32>> = None;
+
+            let emb_ref = embedding.as_deref();
+            let results = store.search_all(&query, emb_ref, limit, include_docs)?;
+
+            if results.is_empty() {
+                println!("No results found");
+            } else {
+                for (i, r) in results.iter().enumerate() {
+                    match r {
+                        hyphae_store::UnifiedSearchResult::Memory { memory, score } => {
+                            println!(
+                                "{}. [memory] [{:.3}] [{}] {}",
+                                i + 1,
+                                score,
+                                memory.topic,
+                                memory.summary,
+                            );
+                        }
+                        hyphae_store::UnifiedSearchResult::Chunk { chunk, score } => {
+                            let meta = &chunk.metadata;
+                            let lines = match (meta.line_start, meta.line_end) {
+                                (Some(s), Some(e)) => format!(":{s}-{e}"),
+                                (Some(s), None) => format!(":{s}"),
+                                _ => String::new(),
+                            };
+                            let snippet = if chunk.content.len() > 200 {
+                                format!("{}…", &chunk.content[..200])
+                            } else {
+                                chunk.content.clone()
+                            };
+                            println!(
+                                "{}. [doc: {}{}] [{:.3}]\n  {}",
+                                i + 1,
+                                meta.source_path,
+                                lines,
+                                score,
+                                snippet,
+                            );
+                        }
+                    }
+                }
             }
         }
     }

@@ -1,7 +1,10 @@
+mod chunk_store;
 mod helpers;
 mod memoir_store;
 mod memory_store;
 mod search;
+
+pub use search::UnifiedSearchResult;
 
 use std::path::Path;
 use std::sync::Once;
@@ -1031,6 +1034,147 @@ mod tests {
         assert_eq!(remaining, 2, "Critical and High memories should remain");
     }
 
+    // === ChunkStore tests ===
+
+    #[test]
+    fn test_chunk_store_document() {
+        use chunk_store::test_helpers::make_document;
+        use hyphae_core::ChunkStore;
+
+        let store = test_store();
+        let doc = make_document("docs/readme.md");
+        let doc_id = doc.id.clone();
+
+        let returned_id = store.store_document(doc).unwrap();
+        assert_eq!(returned_id, doc_id);
+
+        let fetched = store.get_document(&doc_id).unwrap();
+        assert!(fetched.is_some());
+        assert_eq!(fetched.unwrap().source_path, "docs/readme.md");
+    }
+
+    #[test]
+    fn test_chunk_store_chunks() {
+        use chunk_store::test_helpers::{make_chunk, make_document};
+        use hyphae_core::ChunkStore;
+
+        let store = test_store();
+        let doc = make_document("src/lib.rs");
+        let doc_id = doc.id.clone();
+        store.store_document(doc).unwrap();
+
+        let chunks = vec![
+            make_chunk(&doc_id, 0, "first chunk content"),
+            make_chunk(&doc_id, 1, "second chunk content"),
+        ];
+        let stored = store.store_chunks(chunks).unwrap();
+        assert_eq!(stored, 2);
+
+        let fetched = store.get_chunks(&doc_id).unwrap();
+        assert_eq!(fetched.len(), 2);
+        assert_eq!(fetched[0].chunk_index, 0);
+        assert_eq!(fetched[1].chunk_index, 1);
+    }
+
+    #[test]
+    fn test_chunk_store_fts_search() {
+        use chunk_store::test_helpers::{make_chunk, make_document};
+        use hyphae_core::ChunkStore;
+
+        let store = test_store();
+        let doc = make_document("src/main.rs");
+        let doc_id = doc.id.clone();
+        store.store_document(doc).unwrap();
+
+        let chunks = vec![
+            make_chunk(&doc_id, 0, "Rust ownership and borrowing rules"),
+            make_chunk(&doc_id, 1, "Python decorators are useful"),
+        ];
+        store.store_chunks(chunks).unwrap();
+
+        let results = store.search_chunks_fts("ownership borrowing", 10).unwrap();
+        assert!(!results.is_empty());
+        assert!(results[0].chunk.content.contains("ownership"));
+    }
+
+    #[test]
+    fn test_chunk_store_delete_cascades() {
+        use chunk_store::test_helpers::{make_chunk, make_document};
+        use hyphae_core::ChunkStore;
+
+        let store = test_store();
+        let doc = make_document("to_delete.txt");
+        let doc_id = doc.id.clone();
+        store.store_document(doc).unwrap();
+
+        store
+            .store_chunks(vec![make_chunk(&doc_id, 0, "some content")])
+            .unwrap();
+        assert_eq!(store.count_chunks().unwrap(), 1);
+
+        store.delete_document(&doc_id).unwrap();
+
+        assert!(store.get_document(&doc_id).unwrap().is_none());
+        assert_eq!(store.count_chunks().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_chunk_store_list_documents() {
+        use chunk_store::test_helpers::make_document;
+        use hyphae_core::ChunkStore;
+
+        let store = test_store();
+        assert_eq!(store.list_documents().unwrap().len(), 0);
+
+        store.store_document(make_document("a.txt")).unwrap();
+        store.store_document(make_document("b.txt")).unwrap();
+
+        let docs = store.list_documents().unwrap();
+        assert_eq!(docs.len(), 2);
+    }
+
+    #[test]
+    fn test_chunk_store_count() {
+        use chunk_store::test_helpers::{make_chunk, make_document};
+        use hyphae_core::ChunkStore;
+
+        let store = test_store();
+        assert_eq!(store.count_documents().unwrap(), 0);
+        assert_eq!(store.count_chunks().unwrap(), 0);
+
+        let doc = make_document("counts.txt");
+        let doc_id = doc.id.clone();
+        store.store_document(doc).unwrap();
+        store
+            .store_chunks(vec![
+                make_chunk(&doc_id, 0, "chunk one"),
+                make_chunk(&doc_id, 1, "chunk two"),
+                make_chunk(&doc_id, 2, "chunk three"),
+            ])
+            .unwrap();
+
+        assert_eq!(store.count_documents().unwrap(), 1);
+        assert_eq!(store.count_chunks().unwrap(), 3);
+    }
+
+    #[test]
+    fn test_chunk_store_get_by_path() {
+        use chunk_store::test_helpers::make_document;
+        use hyphae_core::ChunkStore;
+
+        let store = test_store();
+        let doc = make_document("unique/path/file.txt");
+        let doc_id = doc.id.clone();
+        store.store_document(doc).unwrap();
+
+        let found = store.get_document_by_path("unique/path/file.txt").unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().id, doc_id);
+
+        let not_found = store.get_document_by_path("nonexistent.txt").unwrap();
+        assert!(not_found.is_none());
+    }
+
     // === FTS sanitization tests ===
 
     #[test]
@@ -1059,5 +1203,136 @@ mod tests {
         for q in special_queries {
             let _ = store.search_fts(q, 10);
         }
+    }
+
+    // === ChunkStore tests ===
+
+    use super::chunk_store::test_helpers::{make_chunk, make_document};
+    use hyphae_core::ChunkStore;
+
+    #[test]
+    fn test_chunk_store_and_retrieve_document() {
+        let store = test_store();
+        let doc = make_document("src/main.rs");
+        let id = doc.id.clone();
+        store.store_document(doc).unwrap();
+
+        let retrieved = store.get_document(&id).unwrap();
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().source_path, "src/main.rs");
+    }
+
+    #[test]
+    fn test_chunk_store_and_retrieve_chunks() {
+        let store = test_store();
+        let doc = make_document("src/lib.rs");
+        let doc_id = doc.id.clone();
+        store.store_document(doc).unwrap();
+
+        let chunks = vec![
+            make_chunk(&doc_id, 0, "fn main() { println!(\"hello\"); }"),
+            make_chunk(&doc_id, 1, "fn helper() { return 42; }"),
+        ];
+        let count = store.store_chunks(chunks).unwrap();
+        assert_eq!(count, 2);
+
+        let retrieved = store.get_chunks(&doc_id).unwrap();
+        assert_eq!(retrieved.len(), 2);
+        assert_eq!(retrieved[0].chunk_index, 0);
+        assert_eq!(retrieved[1].chunk_index, 1);
+    }
+
+    #[test]
+    fn test_chunk_delete_document_cascades() {
+        let store = test_store();
+        let doc = make_document("test/cascade.rs");
+        let doc_id = doc.id.clone();
+        store.store_document(doc).unwrap();
+
+        let chunks = vec![
+            make_chunk(&doc_id, 0, "chunk one content"),
+            make_chunk(&doc_id, 1, "chunk two content"),
+        ];
+        store.store_chunks(chunks).unwrap();
+        assert_eq!(store.count_chunks().unwrap(), 2);
+
+        store.delete_document(&doc_id).unwrap();
+        assert_eq!(store.count_chunks().unwrap(), 0);
+        assert_eq!(store.count_documents().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_chunk_search_fts() {
+        let store = test_store();
+        let doc = make_document("docs/guide.md");
+        let doc_id = doc.id.clone();
+        store.store_document(doc).unwrap();
+
+        let chunks = vec![
+            make_chunk(&doc_id, 0, "authentication using JWT tokens"),
+            make_chunk(&doc_id, 1, "database connection pooling with sqlx"),
+            make_chunk(&doc_id, 2, "JWT token expiration and refresh flow"),
+        ];
+        store.store_chunks(chunks).unwrap();
+
+        let results = store.search_chunks_fts("JWT token", 10).unwrap();
+        assert!(!results.is_empty(), "FTS should find JWT-related chunks");
+        // First result should be most relevant
+        assert!(
+            results[0].chunk.content.contains("JWT"),
+            "Top result should contain JWT"
+        );
+    }
+
+    #[test]
+    fn test_chunk_list_documents() {
+        let store = test_store();
+        store.store_document(make_document("a.rs")).unwrap();
+        store.store_document(make_document("b.rs")).unwrap();
+        store.store_document(make_document("c.rs")).unwrap();
+
+        let docs = store.list_documents().unwrap();
+        assert_eq!(docs.len(), 3);
+    }
+
+    #[test]
+    fn test_chunk_get_document_by_path() {
+        let store = test_store();
+        let doc = make_document("unique/path.rs");
+        store.store_document(doc).unwrap();
+
+        let found = store.get_document_by_path("unique/path.rs").unwrap();
+        assert!(found.is_some());
+
+        let not_found = store.get_document_by_path("nonexistent.rs").unwrap();
+        assert!(not_found.is_none());
+    }
+
+    #[test]
+    fn test_chunk_count() {
+        let store = test_store();
+        assert_eq!(store.count_documents().unwrap(), 0);
+        assert_eq!(store.count_chunks().unwrap(), 0);
+
+        let doc = make_document("count.rs");
+        let doc_id = doc.id.clone();
+        store.store_document(doc).unwrap();
+
+        let chunks = vec![
+            make_chunk(&doc_id, 0, "first"),
+            make_chunk(&doc_id, 1, "second"),
+            make_chunk(&doc_id, 2, "third"),
+        ];
+        store.store_chunks(chunks).unwrap();
+
+        assert_eq!(store.count_documents().unwrap(), 1);
+        assert_eq!(store.count_chunks().unwrap(), 3);
+    }
+
+    #[test]
+    fn test_chunk_store_empty_batch() {
+        let store = test_store();
+        let count = store.store_chunks(vec![]).unwrap();
+        assert_eq!(count, 0);
     }
 }

@@ -349,6 +349,96 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }),
     ];
 
+    // --- RAG tools ---
+    tools.push(json!({
+        "name": "hyphae_ingest_file",
+        "description": "Ingest a file or directory into Hyphae's document store for RAG search. Chunks the content and stores it for later retrieval.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute or relative path to a file or directory to ingest"
+                },
+                "recursive": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "If path is a directory, recurse into subdirectories"
+                }
+            },
+            "required": ["path"]
+        }
+    }));
+    tools.push(json!({
+        "name": "hyphae_search_docs",
+        "description": "Search ingested documents using hybrid (vector + FTS) or FTS search. Returns ranked chunks with source paths and scores.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Natural language search query"
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": 10,
+                    "minimum": 1,
+                    "maximum": 100,
+                    "description": "Maximum number of results to return"
+                }
+            },
+            "required": ["query"]
+        }
+    }));
+    tools.push(json!({
+        "name": "hyphae_list_sources",
+        "description": "List all ingested document sources with their type, chunk count, and ingestion date.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {}
+        }
+    }));
+    tools.push(json!({
+        "name": "hyphae_forget_source",
+        "description": "Remove an ingested document source and all its chunks from the store.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Source path of the document to delete (as shown by hyphae_list_sources)"
+                }
+            },
+            "required": ["path"]
+        }
+    }));
+    tools.push(json!({
+        "name": "hyphae_search_all",
+        "description": "Unified cross-store search across memories and ingested documents. Returns ranked results using Reciprocal Rank Fusion.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Natural language search query"
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": 10,
+                    "minimum": 1,
+                    "maximum": 50,
+                    "description": "Total results across both stores"
+                },
+                "include_docs": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Whether to include document chunks in results"
+                }
+            },
+            "required": ["query"]
+        }
+    }));
+
     if has_embedder {
         tools.push(json!({
             "name": "hyphae_memory_embed_all",

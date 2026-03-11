@@ -81,6 +81,34 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
 
         CREATE INDEX IF NOT EXISTS idx_concept_links_source ON concept_links(source_id);
         CREATE INDEX IF NOT EXISTS idx_concept_links_target ON concept_links(target_id);
+
+        -- RAG tables
+        CREATE TABLE IF NOT EXISTS documents (
+            id TEXT PRIMARY KEY,
+            source_path TEXT NOT NULL UNIQUE,
+            source_type TEXT NOT NULL,
+            chunk_count INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS chunks (
+            id TEXT PRIMARY KEY,
+            document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+            chunk_index INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            source_path TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            language TEXT,
+            heading TEXT,
+            line_start INTEGER,
+            line_end INTEGER,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_chunks_document_id ON chunks(document_id);
+        CREATE INDEX IF NOT EXISTS idx_chunks_source_path ON chunks(source_path);
+        CREATE INDEX IF NOT EXISTS idx_documents_source_path ON documents(source_path);
         ",
     )
     .map_err(|e| HyphaeError::Database(e.to_string()))?;
@@ -166,6 +194,48 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
             END;
             ",
         )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    }
+
+    // Check if chunks FTS table already exists
+    let chunks_fts_exists: bool = tx
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='chunks_fts'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+    if !chunks_fts_exists {
+        tx.execute_batch(
+            "
+            CREATE VIRTUAL TABLE chunks_fts USING fts5(
+                id UNINDEXED,
+                content,
+                source_path UNINDEXED,
+                heading
+            );
+            ",
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    }
+
+    // sqlite-vec virtual table for chunk embeddings (dimension-aware)
+    let vec_chunks_exists: bool = tx
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='vec_chunks'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+    if !vec_chunks_exists {
+        tx.execute_batch(&format!(
+            "CREATE VIRTUAL TABLE vec_chunks USING vec0(
+                chunk_id TEXT,
+                embedding float[{embedding_dims}] distance_metric=cosine
+            )"
+        ))
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
     }
 
@@ -299,5 +369,9 @@ mod tests {
         assert!(tables.contains(&"concept_links".to_string()));
         assert!(tables.contains(&"concepts_fts".to_string()));
         assert!(tables.contains(&"vec_memories".to_string()));
+        assert!(tables.contains(&"documents".to_string()));
+        assert!(tables.contains(&"chunks".to_string()));
+        assert!(tables.contains(&"chunks_fts".to_string()));
+        assert!(tables.contains(&"vec_chunks".to_string()));
     }
 }

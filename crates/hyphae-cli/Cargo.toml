@@ -1,6 +1,6 @@
 [package]
 name = "hyphae-cli"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Permanent memory for AI agents"
@@ -15,12 +15,13 @@ path = "src/main.rs"
 
 [features]
 default = ["embeddings"]
-embeddings = ["hyphae-core/embeddings", "hyphae-mcp/embeddings"]
+embeddings = ["hyphae-core/embeddings", "hyphae-mcp/embeddings", "hyphae-ingest/embeddings"]
 
 [dependencies]
 hyphae-core = { path = "../hyphae-core" }
 hyphae-store = { path = "../hyphae-store" }
 hyphae-mcp = { path = "../hyphae-mcp" }
+hyphae-ingest = { path = "../hyphae-ingest" }
 anyhow = { workspace = true }
 clap = { workspace = true }
 chrono = { workspace = true }

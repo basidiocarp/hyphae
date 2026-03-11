@@ -11,6 +11,7 @@ This file covers the conceptual and operational guides for Hyphae: when to use e
 - [Consolidation guide](#consolidation-guide)
 - [Importance levels guide](#importance-levels-guide)
 - [Decay model explained](#decay-model-explained)
+- [Document Memory (RAG)](#document-memory-rag)
 - [Complete configuration](#complete-configuration)
 - [See also](#see-also)
 
@@ -23,7 +24,7 @@ Hyphae (Infinite Context Memory) offers two complementary memory systems:
 - **Memories** (episodic): temporal storage with decay. Important memories persist, trivial ones fade naturally. Organized by **topic**.
 - **Memoirs** (semantic): permanent knowledge graphs. Concepts are refined, never declined. Organized by **memoir** containing **concepts** linked by **typed relations**.
 
-The CLI offers 29 commands. The MCP server exposes 18 tools. Both access the same SQLite database.
+The CLI offers 29 commands. The MCP server exposes 23 tools (9 memory + 9 memoir + 5 RAG). Both access the same SQLite database.
 
 ---
 
@@ -421,6 +422,70 @@ And at `critical`: weight = 1.000 forever.
 
 ---
 
+## Document Memory (RAG)
+
+### What is document memory?
+
+In addition to episodic memories (what happened) and memoirs (what's true), Hyphae supports **document memory** — the ability to ingest files and directories into a searchable vector store. This gives your agent instant access to project source code, documentation, and configuration without re-reading files each session.
+
+Document memory uses Retrieval-Augmented Generation (RAG): files are chunked, embedded, and stored in the same SQLite database. When the agent searches, relevant chunks are retrieved and provided as context.
+
+### When to use document memory
+
+| Use case | Better approach |
+|----------|----------------|
+| Agent needs to reference a specific codebase | `hyphae ingest src/ --recursive` |
+| Project docs should persist across sessions | `hyphae ingest docs/` |
+| One-off decision or fact | Use episodic memory (`hyphae store`) |
+| Permanent concept with relations | Use memoir (`hyphae memoir add-concept`) |
+
+### Chunking strategies
+
+Hyphae automatically selects the best chunking strategy based on file type:
+
+| File type | Strategy | Behavior |
+|-----------|----------|----------|
+| **Markdown** (`.md`, `.mdx`) | By Heading | Splits at `#` headings, max 500 tokens per chunk. Each chunk tagged with its heading. |
+| **Code** (`.rs`, `.py`, `.js`, `.ts`, `.go`, `.java`, etc.) | By Function | Splits at function/method boundaries using language-aware regex patterns. |
+| **Text** (`.txt`, `.log`, `.json`, `.toml`, `.yaml`, etc.) | Sliding Window | 500-word windows with 50-word overlap for context continuity. |
+
+Binary files are automatically detected and skipped. Hidden files and build directories (`target/`, `node_modules/`, `.git/`) are excluded during directory ingestion.
+
+### Hybrid search over document chunks
+
+Document search follows the same pipeline as memory search:
+
+1. **Has embedder?** → Hybrid search: 30% FTS5 BM25 + 70% cosine similarity via sqlite-vec
+2. **No embedder?** → FTS5 full-text search
+3. **No FTS results?** → Keyword LIKE fallback
+
+### Unified cross-store search with RRF
+
+The `search-all` command (and `hyphae_search_all` MCP tool) searches across **both** episodic memories and document chunks in a single query. Results are merged using **Reciprocal Rank Fusion (RRF)**, which combines rankings from different sources into a single relevance order without requiring score normalization.
+
+```bash
+# Search everything at once
+hyphae search-all "database connection pooling"
+
+# Agent (via MCP) gets unified results:
+# [memory|decisions-api:0.92] Configured PgBouncer for connection pooling
+# [doc|src/db.rs:0.85]        pub fn create_pool(config: &DbConfig) -> Pool { ... }
+```
+
+This means the agent can find relevant context whether it was stored as a memory, added to a knowledge graph, or ingested from a source file.
+
+### Supported file types
+
+**Code** (14 languages): `.rs`, `.py`, `.js`, `.ts`, `.tsx`, `.go`, `.java`, `.c`, `.cpp`, `.h`, `.cs`, `.rb`, `.swift`, `.kt`
+
+**Markdown**: `.md`, `.mdx`
+
+**Text**: `.txt`, `.log`, `.csv`, `.json`, `.toml`, `.yaml`, `.yml`
+
+Unknown extensions default to text. Binary files are rejected.
+
+---
+
 ## Complete configuration
 
 ### Configuration file
@@ -508,5 +573,5 @@ When changing the model in `config.toml`:
 
 ## See also
 
-- **[CLI-REFERENCE.md](CLI-REFERENCE.md)** — All 29 CLI commands with syntax, option tables, and examples
-- **[MCP-TOOLS.md](MCP-TOOLS.md)** — All 18 MCP tool definitions (parameters, request/response examples) for AI agent integration
+- **[CLI-REFERENCE.md](CLI-REFERENCE.md)** — All CLI commands with syntax, option tables, and examples
+- **[MCP-TOOLS.md](MCP-TOOLS.md)** — All 23 MCP tool definitions (parameters, request/response examples) for AI agent integration

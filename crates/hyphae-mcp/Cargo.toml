@@ -1,6 +1,6 @@
 [package]
 name = "hyphae-mcp"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 description = "MCP server for Hyphae persistent memory"
@@ -9,13 +9,17 @@ repository = "https://github.com/basidiocarp/hyphae"
 
 [features]
 default = []
-embeddings = ["hyphae-core/embeddings"]
+embeddings = ["hyphae-core/embeddings", "hyphae-ingest/embeddings"]
 
 [dependencies]
 hyphae-core = { path = "../hyphae-core" }
 hyphae-store = { path = "../hyphae-store" }
+hyphae-ingest = { path = "../hyphae-ingest", default-features = false }
 chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
