@@ -87,11 +87,20 @@ info "All checks passed"
 PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
 
 if [ -n "$PREV_TAG" ]; then
-    RANGE="${PREV_TAG}..HEAD"
+    LOG_RANGE="${PREV_TAG}..HEAD"
     info "Generating changelog from ${BOLD}$PREV_TAG${RESET} to HEAD"
 else
-    RANGE="HEAD"
+    LOG_RANGE=""
     info "Generating changelog from initial commit"
+fi
+
+# Collect all commits into a temp file to avoid subshell issues
+COMMITS_FILE=$(mktemp)
+trap 'rm -f "$COMMITS_FILE"' EXIT
+if [ -n "$LOG_RANGE" ]; then
+    git log "$LOG_RANGE" --pretty=format:"%s|%h" --no-merges > "$COMMITS_FILE"
+else
+    git log --pretty=format:"%s|%h" --no-merges > "$COMMITS_FILE"
 fi
 
 # Group commits by conventional commit type
@@ -99,14 +108,15 @@ CHANGELOG=""
 
 add_section() {
     local title="$1" prefix="$2"
-    local commits
-    commits=$(git log "$RANGE" --pretty=format:"%s|%h" --no-merges | grep -E "^${prefix}" | while IFS='|' read -r msg hash; do
-        # Strip type prefix for cleaner display
-        desc=$(echo "$msg" | sed -E "s/^${prefix}:?\s*//")
-        echo "- ${desc} (\`${hash}\`)"
-    done)
+    local commits=""
+    while IFS='|' read -r msg hash; do
+        if echo "$msg" | grep -qE "^${prefix}"; then
+            desc=$(echo "$msg" | sed -E "s/^${prefix}:?\s*//")
+            commits="${commits}- ${desc} (\`${hash}\`)\n"
+        fi
+    done < "$COMMITS_FILE"
     if [ -n "$commits" ]; then
-        CHANGELOG="${CHANGELOG}### ${title}\n${commits}\n\n"
+        CHANGELOG="${CHANGELOG}### ${title}\n${commits}\n"
     fi
 }
 
@@ -120,11 +130,14 @@ add_section "Chores" "chore"
 add_section "CI" "ci"
 
 # Catch any commits that don't match conventional format
-OTHER=$(git log "$RANGE" --pretty=format:"%s|%h" --no-merges | grep -vE "^(feat|fix|perf|refactor|docs|test|chore|ci)" | while IFS='|' read -r msg hash; do
-    echo "- ${msg} (\`${hash}\`)"
-done)
+OTHER=""
+while IFS='|' read -r msg hash; do
+    if ! echo "$msg" | grep -qE "^(feat|fix|perf|refactor|docs|test|chore|ci)"; then
+        OTHER="${OTHER}- ${msg} (\`${hash}\`)\n"
+    fi
+done < "$COMMITS_FILE"
 if [ -n "$OTHER" ]; then
-    CHANGELOG="${CHANGELOG}### Other\n${OTHER}\n\n"
+    CHANGELOG="${CHANGELOG}### Other\n${OTHER}\n"
 fi
 
 if [ -z "$CHANGELOG" ]; then
