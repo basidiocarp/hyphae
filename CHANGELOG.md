@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.3.0
+
+### Added
+- **Shell completions**: `hyphae completions <bash|zsh|fish|powershell>` generates shell completions via clap_complete
+- **Init command**: `hyphae init` auto-detects editors (Claude Code, Cursor, VS Code, Zed, Windsurf, Amp, Claude Desktop, Codex CLI) and writes MCP server config with backup and merge
+- **Multi-project support**: Namespace memories and documents by project with `--project` flag, config `store.default_project`, or auto-detection from git repo name
+- **File watcher**: `hyphae watch <path>` monitors filesystem and auto-re-ingests changed files with debounced events and graceful shutdown
+- **Project filtering**: All search and list operations optionally filter by project; `None` returns all (backward compatible)
+- **MCP project scoping**: `hyphae serve --project <name>` scopes all MCP tool operations to a project namespace
+
+### Changed
+- CLI restructured with early-return commands (completions, config, init) that skip store/embedder initialization
+- `MemoryStore` and `ChunkStore` traits now accept `project: Option<&str>` on search/list methods
+- Schema auto-migrates to add `project` column on `memories` and `documents` tables
+
+### CI/CD
+- Add concurrency groups to all workflows to cancel stale runs on new pushes
+- Add MSRV (1.85) check job
+- Remove duplicate security-audit job from CI (covered by dedicated audit.yml)
+- Fix coverage workflow running tests twice; now uses single `--json` invocation
+- Combine binary-size and startup-time into single performance job
+- Replace `cargo install` with `taiki-e/install-action` for hyperfine and cross (pre-built binaries)
+- Add `rust-cache` and `--locked` to release builds for speed and reproducibility
+- Expand security audit triggers to push-to-main and workspace crate changes
+
 ## v0.2.0
 
 ### Added
