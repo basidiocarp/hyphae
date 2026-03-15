@@ -77,11 +77,9 @@ pub(crate) fn tool_store(
     // Dedup check: if a very similar memory exists in the same topic, update it instead
     if let Some(query_emb) = embedding {
         let text = format!("{topic} {content}");
-        if let Ok(similar) = store.search_hybrid(&text, &query_emb, 1, project)
-            && let Some((existing, score)) = similar.first()
-            && score > &0.85
-            && existing.topic == topic
-        {
+        if let Ok(similar) = store.search_hybrid(&text, &query_emb, 1, project) {
+        if let Some((existing, score)) = similar.first() {
+        if score > &0.85 && existing.topic == topic {
             // Very similar content in same topic — update instead of duplicate
             let mut updated = existing.clone();
             updated.summary = content.to_string();
@@ -109,6 +107,8 @@ pub(crate) fn tool_store(
                     updated.id
                 ))
             };
+        }
+        }
         }
     }
 
@@ -158,10 +158,9 @@ pub(crate) fn tool_recall(
     let keyword = get_str(args, "keyword");
 
     // Try hybrid search if embedder is available
-    if let Some(emb) = embedder
-        && let Ok(query_emb) = emb.embed(query)
-        && let Ok(results) = store.search_hybrid(query, &query_emb, limit, project)
-    {
+    if let Some(emb) = embedder {
+        if let Ok(query_emb) = emb.embed(query) {
+            if let Ok(results) = store.search_hybrid(query, &query_emb, limit, project) {
         let mut scored_results = results;
         if let Some(t) = topic {
             scored_results.retain(|(m, _)| m.topic == t);
@@ -202,6 +201,8 @@ pub(crate) fn tool_recall(
             }
         }
         return ToolResult::text(output);
+            }
+        }
     }
 
     // Fallback: FTS then keywords
@@ -361,10 +362,10 @@ pub(crate) fn tool_update(
     memory.updated_at = Utc::now();
     memory.weight = Weight::default(); // Reset weight on update (refreshed content)
 
-    if let Some(imp_str) = get_str(args, "importance")
-        && let Ok(imp) = imp_str.parse()
-    {
-        memory.importance = imp;
+    if let Some(imp_str) = get_str(args, "importance") {
+        if let Ok(imp) = imp_str.parse() {
+            memory.importance = imp;
+        }
     }
 
     if let Some(keywords_arr) = args.get("keywords").and_then(|v| v.as_array()) {
