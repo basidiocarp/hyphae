@@ -1,12 +1,23 @@
 name: Security audit
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "**/Cargo.toml"
   schedule:
     - cron: "0 8 * * 1" # Monday 8am UTC
   pull_request:
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
+      - "**/Cargo.toml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   audit:

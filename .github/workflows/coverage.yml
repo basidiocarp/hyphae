@@ -1,10 +1,14 @@
 name: Code Coverage
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    - cron: "0 6 * * 1" # Monday 6am UTC
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -27,21 +31,26 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Generate coverage report
-        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info --json --output-path coverage.json
 
-      - name: Extract coverage percentage
+      - name: Extract coverage and check threshold
         id: coverage
         run: |
-          COVERAGE=$(cargo llvm-cov --all-features --workspace --summary-only 2>&1 | grep 'TOTAL' | awk '{print $10}' | tr -d '%')
+          COVERAGE=$(python3 -c "
+          import json
+          with open('coverage.json') as f:
+              data = json.load(f)
+          totals = data['data'][0]['totals']['lines']
+          print(f'{totals[\"percent\"]:.1f}')
+          ")
           echo "percentage=${COVERAGE}" >> "$GITHUB_OUTPUT"
 
-      - name: Post coverage summary
-        run: |
-          COVERAGE="${{ steps.coverage.outputs.percentage }}"
           if (( $(echo "$COVERAGE >= $COVERAGE_THRESHOLD" | bc -l) )); then
-            STATUS="✅ Above threshold (${COVERAGE_THRESHOLD}%)"
+            STATUS="Above threshold (${COVERAGE_THRESHOLD}%)"
+            PASS=true
           else
-            STATUS="❌ Below threshold (${COVERAGE_THRESHOLD}%)"
+            STATUS="Below threshold (${COVERAGE_THRESHOLD}%)"
+            PASS=false
           fi
 
           {
@@ -52,10 +61,7 @@ jobs:
             echo "| Status | ${STATUS} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Fail if coverage below threshold
-        run: |
-          COVERAGE="${{ steps.coverage.outputs.percentage }}"
-          if (( $(echo "$COVERAGE < $COVERAGE_THRESHOLD" | bc -l) )); then
+          if [ "$PASS" = "false" ]; then
             echo "::error::Line coverage ${COVERAGE}% is below the required ${COVERAGE_THRESHOLD}% threshold"
             exit 1
           fi

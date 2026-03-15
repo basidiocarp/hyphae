@@ -4,19 +4,26 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   MAX_BINARY_SIZE_MB: 5
   MAX_STARTUP_MS: 15
 
 jobs:
-  binary-size:
-    name: Binary size check
+  perf-check:
+    name: Binary size & startup time
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+
+      - name: Install hyperfine
+        uses: taiki-e/install-action@hyperfine
 
       - name: Build release (no embeddings)
         run: cargo build --release --no-default-features
@@ -33,20 +40,6 @@ jobs:
           fi
 
           echo "### Binary size: ${SIZE_MB}MB (limit: ${MAX_BINARY_SIZE_MB}MB)" >> "$GITHUB_STEP_SUMMARY"
-
-  startup-time:
-    name: Startup time check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Install hyperfine
-        run: cargo install hyperfine
-
-      - name: Build release (no embeddings)
-        run: cargo build --release --no-default-features
 
       - name: Benchmark startup
         run: |
