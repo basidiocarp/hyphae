@@ -1,8 +1,7 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::Parser;
 #[cfg(feature = "embeddings")]
 use hyphae_core::Embedder;
-use hyphae_core::{ChunkStore, MemoryStore};
 use hyphae_store::SqliteStore;
 use std::path::PathBuf;
 
@@ -12,131 +11,16 @@ mod bench_data;
 #[cfg(test)]
 #[allow(unused)]
 mod bench_knowledge;
+mod cli;
+mod commands;
 mod config;
+mod display;
 mod extract;
+mod init;
+mod project;
+mod watch;
 
-#[derive(Parser)]
-#[command(name = "hyphae")]
-#[command(about = "Persistent memory system for AI agents", long_about = None)]
-struct Cli {
-    /// Path to database file
-    #[arg(short, long)]
-    db: Option<PathBuf>,
-
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    /// Store a memory in the system
-    Store {
-        /// Topic/category for the memory
-        #[arg(short, long)]
-        topic: String,
-
-        /// Memory content text
-        #[arg(short, long)]
-        content: String,
-
-        /// Importance level: critical, high, medium, low
-        #[arg(short, long, default_value = "medium")]
-        importance: String,
-    },
-
-    /// Search memories
-    Search {
-        /// Query text
-        #[arg(short, long)]
-        query: String,
-
-        /// Maximum results
-        #[arg(short, long, default_value = "10")]
-        limit: usize,
-    },
-
-    /// Extract facts from input text
-    Extract {
-        /// Input text file
-        #[arg(short, long)]
-        file: Option<PathBuf>,
-
-        /// Project name for extraction context
-        #[arg(short, long)]
-        project: String,
-    },
-
-    /// Get system statistics
-    Stats,
-
-    /// Show config
-    Config,
-
-    /// Test embedding functionality
-    #[cfg(feature = "embeddings")]
-    TestEmbed {
-        /// Text to embed
-        #[arg(short, long)]
-        text: String,
-    },
-
-    /// Ingest a file or directory into the document store
-    Ingest {
-        /// Path to file or directory to ingest
-        path: PathBuf,
-
-        /// Recursively ingest subdirectories
-        #[arg(short, long)]
-        recursive: bool,
-
-        /// Re-ingest even if source already exists
-        #[arg(short, long)]
-        force: bool,
-    },
-
-    /// Search ingested documents
-    SearchDocs {
-        /// Query text
-        query: String,
-
-        /// Maximum results
-        #[arg(short, long, default_value = "10")]
-        limit: u32,
-    },
-
-    /// List all ingested document sources
-    ListSources,
-
-    /// Remove an ingested document source
-    ForgetSource {
-        /// Source path to remove
-        path: String,
-    },
-
-    /// Search across memories and documents
-    SearchAll {
-        /// Query text
-        query: String,
-
-        /// Maximum total results
-        #[arg(short, long, default_value = "10")]
-        limit: usize,
-
-        /// Include document chunks in results
-        #[arg(long, default_value = "true")]
-        include_docs: bool,
-    },
-}
-
-fn parse_importance(s: &str) -> hyphae_core::Importance {
-    match s.parse() {
-        Ok(importance) => importance,
-        Err(_) => {
-            tracing::warn!("unrecognized importance level: {s}, defaulting to medium");
-            hyphae_core::Importance::Medium
-        }
-    }
-}
+use cli::{Cli, Commands};
 
 fn open_store(db: Option<PathBuf>, embedding_dims: usize) -> Result<SqliteStore> {
     let path = db.unwrap_or_else(|| {
@@ -181,6 +65,36 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let cfg = config::load_config()?;
 
+    let resolved_project: Option<String> = cli
+        .project
+        .clone()
+        .or_else(|| cfg.store.default_project.clone())
+        .or_else(project::detect_project);
+
+    // Early-return commands (no store/embedder needed)
+    match &cli.command {
+        Commands::Completions { shell } => {
+            use clap::CommandFactory;
+            use clap_complete::generate;
+            generate(
+                *shell,
+                &mut Cli::command(),
+                "hyphae",
+                &mut std::io::stdout(),
+            );
+            return Ok(());
+        }
+        Commands::Config => {
+            commands::cmd_config(&cfg);
+            return Ok(());
+        }
+        Commands::Init { editor } => {
+            init::run_init(editor.clone())?;
+            return Ok(());
+        }
+        _ => {}
+    }
+
     #[cfg(feature = "embeddings")]
     let embedder = init_embedder(&cfg.embeddings.model);
 
@@ -192,22 +106,23 @@ fn main() -> Result<()> {
 
     let store = open_store(cli.db, embedding_dims)?;
 
+    #[cfg(feature = "embeddings")]
+    let embedder_ref: Option<&dyn hyphae_core::Embedder> =
+        embedder.as_ref().map(|e| e as &dyn hyphae_core::Embedder);
+    #[cfg(not(feature = "embeddings"))]
+    let embedder_ref: Option<&dyn hyphae_core::Embedder> = None;
+
     match cli.command {
         Commands::Store {
             topic,
             content,
             importance,
         } => {
-            let mem = hyphae_core::Memory::new(topic, content, parse_importance(&importance));
-            store.store(mem)?;
-            println!("Memory stored");
+            commands::memory::cmd_store(&store, topic, content, &importance, resolved_project)?;
         }
 
         Commands::Search { query, limit } => {
-            let results = store.search_fts(&query, limit)?;
-            for mem in results {
-                println!("{}: {}", mem.topic, mem.summary);
-            }
+            commands::memory::cmd_search(&store, query, limit, resolved_project)?;
         }
 
         Commands::Extract { file, project } => {
@@ -219,44 +134,37 @@ fn main() -> Result<()> {
                 std::io::stdin().read_to_string(&mut buf)?;
                 buf
             };
-
             let stored = extract::extract_and_store(&store, &text, &project)?;
             println!("Extracted and stored {} facts", stored);
         }
 
         Commands::Stats => {
-            let stats = store.stats()?;
-            println!("Database Statistics:");
-            println!("  Total memories: {}", stats.total_memories);
+            commands::memory::cmd_stats(&store, resolved_project)?;
         }
 
-        Commands::Config => {
-            println!("Configuration:");
-            println!("  Config Path: {}", config::show_config_path());
-            println!();
-            println!("  Memory Settings:");
-            println!("    Default Importance: {}", cfg.memory.default_importance);
-            println!("    Decay Rate: {}", cfg.memory.decay_rate);
-            println!("    Prune Threshold: {}", cfg.memory.prune_threshold);
-            println!();
-            println!("  Extraction Settings:");
-            println!("    Enabled: {}", cfg.extraction.enabled);
-            println!("    Min Score: {}", cfg.extraction.min_score);
-            println!("    Max Facts: {}", cfg.extraction.max_facts);
-            println!();
-            println!("  Recall Settings:");
-            println!("    Enabled: {}", cfg.recall.enabled);
-            println!("    Limit: {}", cfg.recall.limit);
-            println!();
-            println!("  Embeddings Settings:");
-            println!("    Model: {}", cfg.embeddings.model);
-            println!();
-            println!("  MCP Settings:");
-            println!("    Transport: {}", cfg.mcp.transport);
-            println!("    Compact Mode: {}", cfg.mcp.compact);
-            if let Some(instructions) = &cfg.mcp.instructions {
-                println!("    Instructions: {}", instructions);
-            }
+        Commands::Config => unreachable!("handled in early-return block"),
+        Commands::Completions { .. } => unreachable!("handled in early-return block"),
+        Commands::Init { .. } => unreachable!("handled in early-return block"),
+
+        Commands::Watch { path, recursive } => {
+            watch::run_watch(
+                watch::WatchOptions {
+                    path,
+                    recursive,
+                    debounce_ms: cfg.watch.debounce_ms,
+                    project: resolved_project,
+                },
+                &store,
+            )?;
+        }
+
+        Commands::Serve { compact } => {
+            #[cfg(feature = "embeddings")]
+            let serve_embedder = embedder.as_ref().map(|e| e as &dyn hyphae_core::Embedder);
+            #[cfg(not(feature = "embeddings"))]
+            let serve_embedder: Option<&dyn hyphae_core::Embedder> = None;
+
+            hyphae_mcp::run_server(&store, serve_embedder, compact || cfg.mcp.compact, resolved_project)?;
         }
 
         #[cfg(feature = "embeddings")]
@@ -275,158 +183,64 @@ fn main() -> Result<()> {
             recursive,
             force,
         } => {
-            #[cfg(feature = "embeddings")]
-            let embedder_ref = embedder.as_ref().map(|e| e as &dyn hyphae_core::Embedder);
-            #[cfg(not(feature = "embeddings"))]
-            let embedder_ref: Option<&dyn hyphae_core::Embedder> = None;
-
-            let pairs: Vec<(hyphae_core::Document, Vec<hyphae_core::Chunk>)> = if path.is_dir() {
-                hyphae_ingest::ingest_directory(&path, embedder_ref, recursive)?
-            } else {
-                vec![hyphae_ingest::ingest_file(&path, embedder_ref)?]
-            };
-
-            let mut ingested = 0usize;
-            let mut skipped = 0usize;
-            for (doc, chunks) in pairs {
-                let existing = store.get_document_by_path(&doc.source_path)?;
-                if let Some(existing_doc) = existing {
-                    if !force {
-                        println!(
-                            "Already ingested: {}, use --force to re-ingest",
-                            doc.source_path
-                        );
-                        skipped += 1;
-                        continue;
-                    }
-                    store.delete_document(&existing_doc.id)?;
-                }
-                let n = chunks.len();
-                store.store_document(doc.clone())?;
-                store.store_chunks(chunks)?;
-                println!("✓ Ingested {}: {} chunks", doc.source_path, n);
-                ingested += 1;
-            }
-            if skipped > 0 {
-                println!("Skipped {} already-ingested source(s)", skipped);
-            }
-            println!("Done: {} source(s) ingested", ingested);
+            commands::docs::cmd_ingest(&store, path, recursive, force, resolved_project, embedder_ref)?;
         }
 
         Commands::SearchDocs { query, limit } => {
-            #[cfg(feature = "embeddings")]
-            let results = if let Some(ref e) = embedder {
-                let embedding = e.embed(&query)?;
-                store.search_chunks_hybrid(&query, &embedding, limit as usize)?
-            } else {
-                store.search_chunks_fts(&query, limit as usize)?
-            };
-            #[cfg(not(feature = "embeddings"))]
-            let results = store.search_chunks_fts(&query, limit as usize)?;
-
-            if results.is_empty() {
-                println!("No documents found");
-            } else {
-                for result in results {
-                    let meta = &result.chunk.metadata;
-                    let lines = match (meta.line_start, meta.line_end) {
-                        (Some(s), Some(e)) => format!(" (lines {s}-{e})"),
-                        (Some(s), None) => format!(" (line {s})"),
-                        _ => String::new(),
-                    };
-                    let snippet = if result.chunk.content.len() > 200 {
-                        format!("{}…", &result.chunk.content[..200])
-                    } else {
-                        result.chunk.content.clone()
-                    };
-                    println!(
-                        "[{:.2}] {}{}\n  {}",
-                        result.score, meta.source_path, lines, snippet
-                    );
-                }
-            }
+            commands::docs::cmd_search_docs(&store, query, limit, resolved_project, embedder_ref)?;
         }
 
         Commands::ListSources => {
-            let docs = store.list_documents()?;
-            if docs.is_empty() {
-                println!("No sources ingested yet");
-            } else {
-                println!("{:<60} {:<10} {:<8} Ingested", "Path", "Type", "Chunks");
-                println!("{}", "-".repeat(90));
-                for doc in docs {
-                    println!(
-                        "{:<60} {:<10} {:<8} {}",
-                        doc.source_path,
-                        format!("{:?}", doc.source_type),
-                        doc.chunk_count,
-                        doc.created_at.format("%Y-%m-%d %H:%M"),
-                    );
-                }
-            }
+            commands::docs::cmd_list_sources(&store, resolved_project)?;
         }
 
-        Commands::ForgetSource { path } => match store.get_document_by_path(&path)? {
-            None => eprintln!("Source not found: {path}"),
-            Some(doc) => {
-                store.delete_document(&doc.id)?;
-                println!("✓ Removed source: {path}");
-            }
-        },
+        Commands::ForgetSource { path } => {
+            commands::docs::cmd_forget_source(&store, path, resolved_project)?;
+        }
 
         Commands::SearchAll {
             query,
             limit,
             include_docs,
         } => {
-            #[cfg(feature = "embeddings")]
-            let embedding = embedder.as_ref().and_then(|e| e.embed(&query).ok());
-            #[cfg(not(feature = "embeddings"))]
-            let embedding: Option<Vec<f32>> = None;
+            commands::docs::cmd_search_all(
+                &store,
+                query,
+                limit,
+                include_docs,
+                resolved_project,
+                embedder_ref,
+            )?;
+        }
 
-            let emb_ref = embedding.as_deref();
-            let results = store.search_all(&query, emb_ref, limit, include_docs)?;
+        Commands::Memoir(args) => {
+            commands::memoir::dispatch(&store, args)?;
+        }
 
-            if results.is_empty() {
-                println!("No results found");
-            } else {
-                for (i, r) in results.iter().enumerate() {
-                    match r {
-                        hyphae_store::UnifiedSearchResult::Memory { memory, score } => {
-                            println!(
-                                "{}. [memory] [{:.3}] [{}] {}",
-                                i + 1,
-                                score,
-                                memory.topic,
-                                memory.summary,
-                            );
-                        }
-                        hyphae_store::UnifiedSearchResult::Chunk { chunk, score } => {
-                            let meta = &chunk.metadata;
-                            let lines = match (meta.line_start, meta.line_end) {
-                                (Some(s), Some(e)) => format!(":{s}-{e}"),
-                                (Some(s), None) => format!(":{s}"),
-                                _ => String::new(),
-                            };
-                            let snippet = if chunk.content.len() > 200 {
-                                format!("{}…", &chunk.content[..200])
-                            } else {
-                                chunk.content.clone()
-                            };
-                            println!(
-                                "{}. [doc: {}{}] [{:.3}]\n  {}",
-                                i + 1,
-                                meta.source_path,
-                                lines,
-                                score,
-                                snippet,
-                            );
-                        }
-                    }
-                }
-            }
+        Commands::Bench { count } => {
+            commands::bench::cmd_bench(count)?;
         }
     }
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::cli::Cli;
+    use clap::CommandFactory;
+    use clap_complete::{Shell, generate};
+
+    #[test]
+    fn test_completions_nonempty() {
+        for shell in [Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell] {
+            let mut buf = Vec::new();
+            generate(shell, &mut Cli::command(), "hyphae", &mut buf);
+            assert!(
+                !buf.is_empty(),
+                "completions should not be empty for {shell:?}"
+            );
+        }
+    }
+}
+

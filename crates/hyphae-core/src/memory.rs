@@ -55,6 +55,8 @@ pub struct Memory {
 
     pub related_ids: Vec<MemoryId>,
 
+    pub project: Option<String>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub embedding: Option<Vec<f32>>,
 }
@@ -80,6 +82,7 @@ pub struct MemoryBuilder {
     source: MemorySource,
     related_ids: Vec<MemoryId>,
     weight: Weight,
+    project: Option<String>,
 }
 
 impl MemoryBuilder {
@@ -94,6 +97,7 @@ impl MemoryBuilder {
             source: MemorySource::Manual,
             related_ids: Vec::new(),
             weight: Weight::default(),
+            project: None,
         }
     }
 
@@ -122,6 +126,11 @@ impl MemoryBuilder {
         self
     }
 
+    pub fn project(mut self, project: String) -> Self {
+        self.project = Some(project);
+        self
+    }
+
     pub fn weight(mut self, weight: f32) -> Self {
         self.weight = Weight::new_clamped(weight);
         self
@@ -143,6 +152,7 @@ impl MemoryBuilder {
             importance: self.importance,
             source: self.source,
             related_ids: self.related_ids,
+            project: self.project,
             embedding: self.embedding,
         }
     }

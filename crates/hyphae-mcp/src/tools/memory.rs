@@ -13,6 +13,7 @@ pub(crate) fn tool_store(
     embedder: Option<&dyn Embedder>,
     args: &Value,
     compact: bool,
+    project: Option<&str>,
 ) -> ToolResult {
     let topic = match validate_required_string(args, "topic") {
         Ok(t) => t,
@@ -59,6 +60,10 @@ pub(crate) fn tool_store(
 
     let mut builder = Memory::builder(topic.into(), content.into(), importance).keywords(keywords);
 
+    if let Some(p) = project {
+        builder = builder.project(p.to_string());
+    }
+
     if let Some(raw) = get_str(args, "raw_excerpt") {
         builder = builder.raw_excerpt(raw.into());
     }
@@ -72,7 +77,7 @@ pub(crate) fn tool_store(
     // Dedup check: if a very similar memory exists in the same topic, update it instead
     if let Some(query_emb) = embedding {
         let text = format!("{topic} {content}");
-        if let Ok(similar) = store.search_hybrid(&text, &query_emb, 1)
+        if let Ok(similar) = store.search_hybrid(&text, &query_emb, 1, project)
             && let Some((existing, score)) = similar.first()
             && score > &0.85
             && existing.topic == topic
@@ -113,7 +118,7 @@ pub(crate) fn tool_store(
                 ToolResult::text(format!("ok:{id}"))
             } else {
                 // Check if topic needs consolidation
-                let hint = if let Ok(count) = store.count_by_topic(topic) {
+                let hint = if let Ok(count) = store.count_by_topic(topic, project) {
                     if count > 7 {
                         format!(
                             "\n⚠ Topic '{topic}' has {count} entries — consider consolidating with hyphae_memory_consolidate."
@@ -136,6 +141,7 @@ pub(crate) fn tool_recall(
     embedder: Option<&dyn Embedder>,
     args: &Value,
     compact: bool,
+    project: Option<&str>,
 ) -> ToolResult {
     // Auto-decay if >24h since last decay
     if let Err(e) = store.maybe_auto_decay() {
@@ -154,7 +160,7 @@ pub(crate) fn tool_recall(
     // Try hybrid search if embedder is available
     if let Some(emb) = embedder
         && let Ok(query_emb) = emb.embed(query)
-        && let Ok(results) = store.search_hybrid(query, &query_emb, limit)
+        && let Ok(results) = store.search_hybrid(query, &query_emb, limit, project)
     {
         let mut scored_results = results;
         if let Some(t) = topic {
@@ -199,14 +205,14 @@ pub(crate) fn tool_recall(
     }
 
     // Fallback: FTS then keywords
-    let mut results = match store.search_fts(query, limit) {
+    let mut results = match store.search_fts(query, limit, project) {
         Ok(r) => r,
         Err(e) => return ToolResult::error(format!("search error: {e}")),
     };
 
     if results.is_empty() {
         let keywords: Vec<&str> = query.split_whitespace().collect();
-        results = match store.search_by_keywords(&keywords, limit) {
+        results = match store.search_by_keywords(&keywords, limit, project) {
             Ok(r) => r,
             Err(e) => return ToolResult::error(format!("search error: {e}")),
         };
@@ -292,8 +298,8 @@ pub(crate) fn tool_consolidate(store: &SqliteStore, args: &Value) -> ToolResult 
     }
 }
 
-pub(crate) fn tool_list_topics(store: &SqliteStore) -> ToolResult {
-    match store.list_topics() {
+pub(crate) fn tool_list_topics(store: &SqliteStore, project: Option<&str>) -> ToolResult {
+    match store.list_topics(project) {
         Ok(topics) => {
             if topics.is_empty() {
                 return ToolResult::text("No topics yet.".into());
@@ -308,8 +314,8 @@ pub(crate) fn tool_list_topics(store: &SqliteStore) -> ToolResult {
     }
 }
 
-pub(crate) fn tool_stats(store: &SqliteStore) -> ToolResult {
-    match store.stats() {
+pub(crate) fn tool_stats(store: &SqliteStore, project: Option<&str>) -> ToolResult {
+    match store.stats(project) {
         Ok(stats) => {
             let mut output = format!(
                 "Memories: {}\nTopics: {}\nAvg weight: {:.3}\n",
@@ -382,13 +388,13 @@ pub(crate) fn tool_update(
     }
 }
 
-pub(crate) fn tool_health(store: &SqliteStore, args: &Value) -> ToolResult {
+pub(crate) fn tool_health(store: &SqliteStore, args: &Value, project: Option<&str>) -> ToolResult {
     let specific_topic = get_str(args, "topic");
 
     let topics = if let Some(t) = specific_topic {
         vec![(t.to_string(), 0usize)]
     } else {
-        match store.list_topics() {
+        match store.list_topics(project) {
             Ok(t) => t,
             Err(e) => return ToolResult::error(format!("failed to list topics: {e}")),
         }
@@ -403,7 +409,7 @@ pub(crate) fn tool_health(store: &SqliteStore, args: &Value) -> ToolResult {
     let mut topics_needing_consolidation = 0usize;
 
     for (topic, _) in &topics {
-        match store.topic_health(topic) {
+        match store.topic_health(topic, project) {
             Ok(health) => {
                 let status = if health.needs_consolidation && health.stale_count > 0 {
                     "⚠ NEEDS ATTENTION"
@@ -445,6 +451,7 @@ pub(crate) fn tool_embed_all(
     store: &SqliteStore,
     embedder: Option<&dyn Embedder>,
     args: &Value,
+    project: Option<&str>,
 ) -> ToolResult {
     let embedder = match embedder {
         Some(e) => e,
@@ -455,19 +462,18 @@ pub(crate) fn tool_embed_all(
 
     // Get all memories, filtered by topic if specified
     let memories = if let Some(t) = topic_filter {
-        match store.get_by_topic(t) {
+        match store.get_by_topic(t, project) {
             Ok(m) => m,
             Err(e) => return ToolResult::error(format!("failed to list memories: {e}")),
         }
     } else {
-        // Get all by listing topics
-        let topics = match store.list_topics() {
+        let topics = match store.list_topics(project) {
             Ok(t) => t,
             Err(e) => return ToolResult::error(format!("failed to list topics: {e}")),
         };
         let mut all = Vec::new();
         for (t, _) in &topics {
-            if let Ok(mems) = store.get_by_topic(t) {
+            if let Ok(mems) = store.get_by_topic(t, project) {
                 all.extend(mems);
             }
         }

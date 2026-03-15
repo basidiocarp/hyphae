@@ -10,18 +10,30 @@ pub trait MemoryStore {
     fn delete(&self, id: &MemoryId) -> HyphaeResult<()>;
 
     // Search
-    fn search_by_keywords(&self, keywords: &[&str], limit: usize) -> HyphaeResult<Vec<Memory>>;
-    fn search_fts(&self, query: &str, limit: usize) -> HyphaeResult<Vec<Memory>>;
+    fn search_by_keywords(
+        &self,
+        keywords: &[&str],
+        limit: usize,
+        project: Option<&str>,
+    ) -> HyphaeResult<Vec<Memory>>;
+    fn search_fts(
+        &self,
+        query: &str,
+        limit: usize,
+        project: Option<&str>,
+    ) -> HyphaeResult<Vec<Memory>>;
     fn search_by_embedding(
         &self,
         embedding: &[f32],
         limit: usize,
+        project: Option<&str>,
     ) -> HyphaeResult<Vec<(Memory, f32)>>;
     fn search_hybrid(
         &self,
         query: &str,
         embedding: &[f32],
         limit: usize,
+        project: Option<&str>,
     ) -> HyphaeResult<Vec<(Memory, f32)>>;
 
     // Lifecycle
@@ -30,13 +42,13 @@ pub trait MemoryStore {
     fn prune(&self, weight_threshold: f32) -> HyphaeResult<usize>;
 
     // Organization
-    fn get_by_topic(&self, topic: &str) -> HyphaeResult<Vec<Memory>>;
-    fn list_topics(&self) -> HyphaeResult<Vec<(String, usize)>>;
+    fn get_by_topic(&self, topic: &str, project: Option<&str>) -> HyphaeResult<Vec<Memory>>;
+    fn list_topics(&self, project: Option<&str>) -> HyphaeResult<Vec<(String, usize)>>;
     fn consolidate_topic(&self, topic: &str, consolidated: Memory) -> HyphaeResult<()>;
 
     // Stats
-    fn count(&self) -> HyphaeResult<usize>;
-    fn count_by_topic(&self, topic: &str) -> HyphaeResult<usize>;
-    fn stats(&self) -> HyphaeResult<StoreStats>;
-    fn topic_health(&self, topic: &str) -> HyphaeResult<TopicHealth>;
+    fn count(&self, project: Option<&str>) -> HyphaeResult<usize>;
+    fn count_by_topic(&self, topic: &str, project: Option<&str>) -> HyphaeResult<usize>;
+    fn stats(&self, project: Option<&str>) -> HyphaeResult<StoreStats>;
+    fn topic_health(&self, topic: &str, project: Option<&str>) -> HyphaeResult<TopicHealth>;
 }

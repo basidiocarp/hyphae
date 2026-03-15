@@ -33,18 +33,19 @@ pub fn call_tool(
     name: &str,
     args: &Value,
     compact: bool,
+    project: Option<&str>,
 ) -> ToolResult {
     match name {
         // Memory tools
-        "hyphae_memory_store" => memory::tool_store(store, embedder, args, compact),
-        "hyphae_memory_recall" => memory::tool_recall(store, embedder, args, compact),
+        "hyphae_memory_store" => memory::tool_store(store, embedder, args, compact, project),
+        "hyphae_memory_recall" => memory::tool_recall(store, embedder, args, compact, project),
         "hyphae_memory_forget" => memory::tool_forget(store, args),
         "hyphae_memory_update" => memory::tool_update(store, embedder, args),
         "hyphae_memory_consolidate" => memory::tool_consolidate(store, args),
-        "hyphae_memory_list_topics" => memory::tool_list_topics(store),
-        "hyphae_memory_stats" => memory::tool_stats(store),
-        "hyphae_memory_health" => memory::tool_health(store, args),
-        "hyphae_memory_embed_all" => memory::tool_embed_all(store, embedder, args),
+        "hyphae_memory_list_topics" => memory::tool_list_topics(store, project),
+        "hyphae_memory_stats" => memory::tool_stats(store, project),
+        "hyphae_memory_health" => memory::tool_health(store, args, project),
+        "hyphae_memory_embed_all" => memory::tool_embed_all(store, embedder, args, project),
         // Memoir tools
         "hyphae_memoir_create" => memoir::tool_memoir_create(store, args),
         "hyphae_memoir_list" => memoir::tool_memoir_list(store),
@@ -56,11 +57,11 @@ pub fn call_tool(
         "hyphae_memoir_link" => memoir::tool_memoir_link(store, args),
         "hyphae_memoir_inspect" => memoir::tool_memoir_inspect(store, args),
         // RAG tools
-        "hyphae_ingest_file" => ingest::tool_ingest_file(store, embedder, args, compact),
-        "hyphae_search_docs" => ingest::tool_search_docs(store, embedder, args, compact),
-        "hyphae_list_sources" => ingest::tool_list_sources(store),
-        "hyphae_forget_source" => ingest::tool_forget_source(store, args),
-        "hyphae_search_all" => ingest::tool_search_all(store, embedder, args, compact),
+        "hyphae_ingest_file" => ingest::tool_ingest_file(store, embedder, args, compact, project),
+        "hyphae_search_docs" => ingest::tool_search_docs(store, embedder, args, compact, project),
+        "hyphae_list_sources" => ingest::tool_list_sources(store, project),
+        "hyphae_forget_source" => ingest::tool_forget_source(store, args, project),
+        "hyphae_search_all" => ingest::tool_search_all(store, embedder, args, compact, project),
         _ => ToolResult::error(format!("unknown tool: {name}")),
     }
 }
@@ -129,7 +130,7 @@ mod tests {
     #[test]
     fn test_unknown_tool_returns_error() {
         let store = test_store();
-        let result = call_tool(&store, None, "nonexistent_tool", &json!({}), false);
+        let result = call_tool(&store, None, "nonexistent_tool", &json!({}), false, None);
         assert!(result.is_error);
         assert!(result.content[0].text.contains("unknown tool"));
     }
@@ -143,6 +144,7 @@ mod tests {
             "hyphae_memory_store",
             &json!({"content": "hello"}),
             false,
+            None,
         );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("topic"));
@@ -157,6 +159,7 @@ mod tests {
             "hyphae_memory_store",
             &json!({"topic": "test"}),
             false,
+            None,
         );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("content"));
@@ -165,7 +168,14 @@ mod tests {
     #[test]
     fn test_recall_missing_query() {
         let store = test_store();
-        let result = call_tool(&store, None, "hyphae_memory_recall", &json!({}), false);
+        let result = call_tool(
+            &store,
+            None,
+            "hyphae_memory_recall",
+            &json!({}),
+            false,
+            None,
+        );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("query"));
     }
@@ -179,6 +189,7 @@ mod tests {
             "hyphae_memory_recall",
             &json!({"query": "anything"}),
             false,
+            None,
         );
         assert!(!result.is_error);
         assert!(result.content[0].text.contains("No memories"));
@@ -187,7 +198,14 @@ mod tests {
     #[test]
     fn test_forget_missing_id() {
         let store = test_store();
-        let result = call_tool(&store, None, "hyphae_memory_forget", &json!({}), false);
+        let result = call_tool(
+            &store,
+            None,
+            "hyphae_memory_forget",
+            &json!({}),
+            false,
+            None,
+        );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("id"));
     }
@@ -201,6 +219,7 @@ mod tests {
             "hyphae_memory_forget",
             &json!({"id": "does-not-exist"}),
             false,
+            None,
         );
         assert!(result.is_error);
     }
@@ -214,6 +233,7 @@ mod tests {
             "hyphae_memory_store",
             &json!({"topic": "test-project", "content": "Uses Rust and SQLite"}),
             false,
+            None,
         );
         assert!(!store_result.is_error);
         assert!(store_result.content[0].text.contains("Stored memory"));
@@ -224,6 +244,7 @@ mod tests {
             "hyphae_memory_recall",
             &json!({"query": "Rust SQLite"}),
             false,
+            None,
         );
         assert!(!recall_result.is_error);
         assert!(recall_result.content[0].text.contains("Rust"));
@@ -238,6 +259,7 @@ mod tests {
             "hyphae_memory_store",
             &json!({"topic": "t", "content": "c"}),
             true,
+            None,
         );
         assert!(!result.is_error);
         assert!(result.content[0].text.starts_with("ok:"));
@@ -252,6 +274,7 @@ mod tests {
             "hyphae_memory_store",
             &json!({"topic": "proj", "content": "Rust memory system"}),
             false,
+            None,
         );
         let result = call_tool(
             &store,
@@ -259,6 +282,7 @@ mod tests {
             "hyphae_memory_recall",
             &json!({"query": "Rust memory"}),
             true,
+            None,
         );
         assert!(!result.is_error);
         assert!(result.content[0].text.contains("[proj]"));
@@ -267,7 +291,7 @@ mod tests {
     #[test]
     fn test_stats_empty() {
         let store = test_store();
-        let result = call_tool(&store, None, "hyphae_memory_stats", &json!({}), false);
+        let result = call_tool(&store, None, "hyphae_memory_stats", &json!({}), false, None);
         assert!(!result.is_error);
         assert!(result.content[0].text.contains("Memories: 0"));
     }
@@ -275,7 +299,14 @@ mod tests {
     #[test]
     fn test_list_topics_empty() {
         let store = test_store();
-        let result = call_tool(&store, None, "hyphae_memory_list_topics", &json!({}), false);
+        let result = call_tool(
+            &store,
+            None,
+            "hyphae_memory_list_topics",
+            &json!({}),
+            false,
+            None,
+        );
         assert!(!result.is_error);
         assert!(result.content[0].text.contains("No topics"));
     }
@@ -283,7 +314,14 @@ mod tests {
     #[test]
     fn test_health_empty() {
         let store = test_store();
-        let result = call_tool(&store, None, "hyphae_memory_health", &json!({}), false);
+        let result = call_tool(
+            &store,
+            None,
+            "hyphae_memory_health",
+            &json!({}),
+            false,
+            None,
+        );
         assert!(!result.is_error);
         assert!(result.content[0].text.contains("No topics"));
     }
@@ -297,6 +335,7 @@ mod tests {
             "hyphae_memory_update",
             &json!({"id": "x"}),
             false,
+            None,
         );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("content"));
@@ -311,6 +350,7 @@ mod tests {
             "hyphae_memory_update",
             &json!({"id": "fake", "content": "new"}),
             false,
+            None,
         );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("not found"));
@@ -325,9 +365,10 @@ mod tests {
             "hyphae_memory_store",
             &json!({"topic": "'; DROP TABLE memories;--", "content": "pwned"}),
             false,
+            None,
         );
         assert!(!result.is_error);
-        let stats = call_tool(&store, None, "hyphae_memory_stats", &json!({}), false);
+        let stats = call_tool(&store, None, "hyphae_memory_stats", &json!({}), false, None);
         assert!(stats.content[0].text.contains("Memories: 1"));
     }
 
@@ -340,6 +381,7 @@ mod tests {
             "hyphae_memory_store",
             &json!({"topic": "safe", "content": "normal data"}),
             false,
+            None,
         );
         let result = call_tool(
             &store,
@@ -347,6 +389,7 @@ mod tests {
             "hyphae_memory_recall",
             &json!({"query": "') OR 1=1 --"}),
             false,
+            None,
         );
         assert!(!result.is_error);
     }
@@ -363,6 +406,7 @@ mod tests {
                 "content": "<script>alert('xss')</script>"
             }),
             false,
+            None,
         );
         assert!(!result.is_error);
         let recall = call_tool(
@@ -371,6 +415,7 @@ mod tests {
             "hyphae_memory_recall",
             &json!({"query": "script alert"}),
             false,
+            None,
         );
         assert!(recall.content[0].text.contains("<script>"));
     }
@@ -386,6 +431,7 @@ mod tests {
             "hyphae_memory_store",
             &json!({"topic": "big", "content": within_limit}),
             false,
+            None,
         );
         assert!(!result.is_error);
         // Content exceeding 32KB should be rejected
@@ -396,6 +442,7 @@ mod tests {
             "hyphae_memory_store",
             &json!({"topic": "big", "content": over_limit}),
             false,
+            None,
         );
         assert!(result2.is_error);
         assert!(result2.content[0].text.contains("content"));
@@ -410,9 +457,10 @@ mod tests {
             "hyphae_memoir_create",
             &json!({"name": "'; DROP TABLE memoirs;--", "description": "test"}),
             false,
+            None,
         );
         assert!(!result.is_error);
-        let list = call_tool(&store, None, "hyphae_memoir_list", &json!({}), false);
+        let list = call_tool(&store, None, "hyphae_memoir_list", &json!({}), false, None);
         assert!(!list.is_error);
         assert!(list.content[0].text.contains("DROP TABLE"));
     }
@@ -427,10 +475,11 @@ mod tests {
                 "hyphae_memory_store",
                 &json!({"topic": "perf", "content": format!("item {i}")}),
                 true,
+                None,
             );
             assert!(!result.is_error);
         }
-        let stats = call_tool(&store, None, "hyphae_memory_stats", &json!({}), false);
+        let stats = call_tool(&store, None, "hyphae_memory_stats", &json!({}), false, None);
         assert!(stats.content[0].text.contains("Memories: 50"));
     }
 
@@ -444,6 +493,7 @@ mod tests {
                 "hyphae_memory_store",
                 &json!({"topic": topic, "content": format!("data for {topic}")}),
                 false,
+                None,
             );
         }
         let result = call_tool(
@@ -452,6 +502,7 @@ mod tests {
             "hyphae_memory_recall",
             &json!({"query": "data", "topic": "beta"}),
             false,
+            None,
         );
         assert!(!result.is_error);
         assert!(result.content[0].text.contains("beta"));
@@ -468,6 +519,7 @@ mod tests {
                 "hyphae_memory_store",
                 &json!({"topic": "consolidate-me", "content": format!("detail {i}")}),
                 false,
+                None,
             );
         }
         let result = call_tool(
@@ -476,9 +528,10 @@ mod tests {
             "hyphae_memory_consolidate",
             &json!({"topic": "consolidate-me", "summary": "All 10 details merged"}),
             false,
+            None,
         );
         assert!(!result.is_error);
-        let stats = call_tool(&store, None, "hyphae_memory_stats", &json!({}), false);
+        let stats = call_tool(&store, None, "hyphae_memory_stats", &json!({}), false, None);
         assert!(stats.content[0].text.contains("Memories: 1"));
     }
 
@@ -501,12 +554,13 @@ mod tests {
                 "hyphae_memory_store",
                 &json!({"topic": topic, "content": "path traversal attempt"}),
                 false,
+                None,
             );
             // Should either store safely (topic is just a string label) or reject
             // but must NOT crash or access filesystem
             assert!(!result.content.is_empty());
         }
-        let stats = call_tool(&store, None, "hyphae_memory_stats", &json!({}), false);
+        let stats = call_tool(&store, None, "hyphae_memory_stats", &json!({}), false, None);
         assert!(!stats.is_error);
     }
 
@@ -520,6 +574,7 @@ mod tests {
             "hyphae_memory_store",
             &json!({"topic": "huge", "content": huge_content}),
             false,
+            None,
         );
         // Should either store or reject gracefully, never panic
         assert!(!result.content.is_empty());
@@ -534,6 +589,7 @@ mod tests {
             "hyphae_memory_store",
             &json!({"topic": "before\0after", "content": "null byte topic"}),
             false,
+            None,
         );
         assert!(!result.content.is_empty());
     }
@@ -547,6 +603,7 @@ mod tests {
             "hyphae_memory_store",
             &json!({"topic": "test", "content": "start\0middle\0end"}),
             false,
+            None,
         );
         assert!(!result.content.is_empty());
     }
@@ -560,6 +617,7 @@ mod tests {
             "hyphae_memory_store",
             &json!({"topic": "safe", "content": "normal data"}),
             false,
+            None,
         );
         let result = call_tool(
             &store,
@@ -567,6 +625,7 @@ mod tests {
             "hyphae_memory_recall",
             &json!({"query": "normal\0injected"}),
             false,
+            None,
         );
         assert!(!result.content.is_empty());
     }
@@ -589,10 +648,11 @@ mod tests {
                 "hyphae_memory_store",
                 &json!({"topic": s, "content": format!("content with {s}")}),
                 false,
+                None,
             );
             assert!(!result.is_error, "Failed on unicode string: {:?}", s);
         }
-        let stats = call_tool(&store, None, "hyphae_memory_stats", &json!({}), false);
+        let stats = call_tool(&store, None, "hyphae_memory_stats", &json!({}), false, None);
         assert!(!stats.is_error);
     }
 
@@ -612,6 +672,7 @@ mod tests {
                 "extra_unknown_field": "should be ignored"
             }),
             false,
+            None,
         );
         // Should store normally, ignoring unknown fields
         assert!(!result.is_error);
@@ -621,6 +682,7 @@ mod tests {
             "hyphae_memory_recall",
             &json!({"query": "legit"}),
             false,
+            None,
         );
         assert!(!recall.is_error);
         assert!(recall.content[0].text.contains("legit"));
@@ -635,6 +697,7 @@ mod tests {
             "hyphae_memory_store",
             &json!({"topic": "", "content": "empty topic"}),
             false,
+            None,
         );
         // Should either reject or store; must not panic
         assert!(!result.content.is_empty());
@@ -649,6 +712,7 @@ mod tests {
             "hyphae_memory_store",
             &json!({"topic": "   \t\n  ", "content": "   \n\t  "}),
             false,
+            None,
         );
         // Should either reject or store; must not panic
         assert!(!result.content.is_empty());
@@ -663,6 +727,7 @@ mod tests {
             "hyphae_memory_recall",
             &json!({"query": "   \t\n  "}),
             false,
+            None,
         );
         // Should return empty or error, not crash
         assert!(!result.content.is_empty());
@@ -677,11 +742,12 @@ mod tests {
             "hyphae_memoir_create",
             &json!({"name": "../../../etc/passwd", "description": "traversal"}),
             false,
+            None,
         );
         // Should store as a label, not access filesystem
         assert!(!result.content.is_empty());
         if !result.is_error {
-            let list = call_tool(&store, None, "hyphae_memoir_list", &json!({}), false);
+            let list = call_tool(&store, None, "hyphae_memoir_list", &json!({}), false, None);
             assert!(!list.is_error);
         }
     }
@@ -698,6 +764,7 @@ mod tests {
             "hyphae_memory_store",
             &json!({"topic": "test", "content": oversized}),
             false,
+            None,
         );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("content"));
@@ -714,6 +781,7 @@ mod tests {
             "hyphae_memory_store",
             &json!({"topic": "clamp-test", "content": "some data"}),
             false,
+            None,
         );
         // A negative limit should be clamped to 1 (minimum), not panic or error
         let result = call_tool(
@@ -722,6 +790,7 @@ mod tests {
             "hyphae_memory_recall",
             &json!({"query": "some data", "limit": -5}),
             false,
+            None,
         );
         assert!(!result.is_error);
     }
@@ -735,6 +804,7 @@ mod tests {
             "hyphae_memory_store",
             &json!({"topic": "   \t  ", "content": "some content"}),
             false,
+            None,
         );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("topic"));
@@ -751,6 +821,7 @@ mod tests {
             "hyphae_memoir_create",
             &json!({"name": "my-memoir", "description": "first"}),
             false,
+            None,
         );
         assert!(!result1.is_error);
         assert!(result1.content[0].text.contains("my-memoir"));
@@ -761,6 +832,7 @@ mod tests {
             "hyphae_memoir_create",
             &json!({"name": "my-memoir", "description": "duplicate"}),
             false,
+            None,
         );
         assert!(result2.is_error);
     }
@@ -778,6 +850,7 @@ mod tests {
                 "definition": "A concept in a nonexistent memoir"
             }),
             false,
+            None,
         );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("not found"));
@@ -792,6 +865,7 @@ mod tests {
             "hyphae_memoir_create",
             &json!({"name": "refine-memoir", "description": "for refine test"}),
             false,
+            None,
         );
         call_tool(
             &store,
@@ -803,6 +877,7 @@ mod tests {
                 "definition": "original definition"
             }),
             false,
+            None,
         );
 
         let refine_result = call_tool(
@@ -815,6 +890,7 @@ mod tests {
                 "definition": "updated definition"
             }),
             false,
+            None,
         );
         assert!(!refine_result.is_error);
         // Revision should have incremented; initial is 1, after refine should be 2
@@ -830,6 +906,7 @@ mod tests {
             "hyphae_memoir_create",
             &json!({"name": "link-memoir", "description": "for link test"}),
             false,
+            None,
         );
 
         let result = call_tool(
@@ -843,9 +920,51 @@ mod tests {
                 "relation": "related_to"
             }),
             false,
+            None,
         );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("not found"));
+    }
+
+    #[test]
+    fn test_memoir_link_self_referential_returns_error() {
+        let store = test_store();
+        call_tool(
+            &store,
+            None,
+            "hyphae_memoir_create",
+            &json!({"name": "self-link-memoir", "description": "for self-link test"}),
+            false,
+            None,
+        );
+        call_tool(
+            &store,
+            None,
+            "hyphae_memoir_add_concept",
+            &json!({
+                "memoir": "self-link-memoir",
+                "name": "ConceptA",
+                "definition": "a concept"
+            }),
+            false,
+            None,
+        );
+
+        let result = call_tool(
+            &store,
+            None,
+            "hyphae_memoir_link",
+            &json!({
+                "memoir": "self-link-memoir",
+                "from": "ConceptA",
+                "to": "ConceptA",
+                "relation": "related_to"
+            }),
+            false,
+            None,
+        );
+        assert!(result.is_error);
+        assert!(result.content[0].text.contains("itself"));
     }
 
     #[test]
@@ -857,6 +976,7 @@ mod tests {
             "hyphae_memoir_create",
             &json!({"name": "inspect-memoir", "description": "for inspect test"}),
             false,
+            None,
         );
         call_tool(
             &store,
@@ -868,6 +988,7 @@ mod tests {
                 "definition": "First concept"
             }),
             false,
+            None,
         );
         call_tool(
             &store,
@@ -879,6 +1000,7 @@ mod tests {
                 "definition": "Second concept"
             }),
             false,
+            None,
         );
         call_tool(
             &store,
@@ -891,6 +1013,7 @@ mod tests {
                 "relation": "related_to"
             }),
             false,
+            None,
         );
 
         let result = call_tool(
@@ -899,6 +1022,7 @@ mod tests {
             "hyphae_memoir_inspect",
             &json!({"memoir": "inspect-memoir", "name": "Alpha", "depth": 1}),
             false,
+            None,
         );
         assert!(!result.is_error);
         let text = &result.content[0].text;
@@ -916,6 +1040,7 @@ mod tests {
             "hyphae_memoir_create",
             &json!({"name": "search-memoir", "description": "for search test"}),
             false,
+            None,
         );
         call_tool(
             &store,
@@ -927,6 +1052,7 @@ mod tests {
                 "definition": "Fungal threads that form the mycelium network"
             }),
             false,
+            None,
         );
         call_tool(
             &store,
@@ -938,6 +1064,7 @@ mod tests {
                 "definition": "Reproductive unit of fungi"
             }),
             false,
+            None,
         );
 
         let result = call_tool(
@@ -946,6 +1073,7 @@ mod tests {
             "hyphae_memoir_search",
             &json!({"memoir": "search-memoir", "query": "fungal"}),
             false,
+            None,
         );
         assert!(!result.is_error);
         let text = &result.content[0].text;
@@ -962,6 +1090,7 @@ mod tests {
             "hyphae_memoir_create",
             &json!({"name": "memoir-one", "description": "first"}),
             false,
+            None,
         );
         call_tool(
             &store,
@@ -969,6 +1098,7 @@ mod tests {
             "hyphae_memoir_create",
             &json!({"name": "memoir-two", "description": "second"}),
             false,
+            None,
         );
         call_tool(
             &store,
@@ -980,6 +1110,7 @@ mod tests {
                 "definition": "A rare orchid found in the rainforest"
             }),
             false,
+            None,
         );
         call_tool(
             &store,
@@ -991,6 +1122,7 @@ mod tests {
                 "definition": "A rare beetle found in the rainforest"
             }),
             false,
+            None,
         );
 
         let result = call_tool(
@@ -999,6 +1131,7 @@ mod tests {
             "hyphae_memoir_search_all",
             &json!({"query": "rainforest"}),
             false,
+            None,
         );
         assert!(!result.is_error);
         let text = &result.content[0].text;
@@ -1017,6 +1150,7 @@ mod tests {
             "hyphae_memoir_create",
             &json!({"name": "", "description": "empty name"}),
             false,
+            None,
         );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("name"));
@@ -1031,6 +1165,7 @@ mod tests {
             "hyphae_memoir_create",
             &json!({"name": "val-memoir", "description": "for validation"}),
             false,
+            None,
         );
         let result = call_tool(
             &store,
@@ -1042,6 +1177,7 @@ mod tests {
                 "definition": "valid definition"
             }),
             false,
+            None,
         );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("name"));
@@ -1056,6 +1192,7 @@ mod tests {
             "hyphae_memoir_create",
             &json!({"name": "oversize-memoir", "description": "for size test"}),
             false,
+            None,
         );
         let oversized_def = "D".repeat(32769);
         let result = call_tool(
@@ -1068,6 +1205,7 @@ mod tests {
                 "definition": oversized_def
             }),
             false,
+            None,
         );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("definition"));
@@ -1092,6 +1230,7 @@ mod tests {
             "hyphae_ingest_file",
             &json!({"path": path.to_str().unwrap()}),
             false,
+            None,
         );
         assert!(
             !result.is_error,
@@ -1124,6 +1263,7 @@ mod tests {
             "hyphae_ingest_file",
             &json!({"path": path.to_str().unwrap()}),
             false,
+            None,
         );
 
         let result = call_tool(
@@ -1132,6 +1272,7 @@ mod tests {
             "hyphae_search_docs",
             &json!({"query": "mycelium fungus"}),
             false,
+            None,
         );
         assert!(
             !result.is_error,
@@ -1160,9 +1301,10 @@ mod tests {
             "hyphae_ingest_file",
             &json!({"path": path.to_str().unwrap()}),
             false,
+            None,
         );
 
-        let result = call_tool(&store, None, "hyphae_list_sources", &json!({}), false);
+        let result = call_tool(&store, None, "hyphae_list_sources", &json!({}), false, None);
         assert!(
             !result.is_error,
             "unexpected error: {}",
@@ -1192,6 +1334,7 @@ mod tests {
             "hyphae_ingest_file",
             &json!({"path": path_str}),
             false,
+            None,
         );
 
         let result = call_tool(
@@ -1200,6 +1343,7 @@ mod tests {
             "hyphae_forget_source",
             &json!({"path": path_str}),
             false,
+            None,
         );
         assert!(
             !result.is_error,
@@ -1209,7 +1353,7 @@ mod tests {
         assert!(result.content[0].text.contains("Deleted"));
 
         // Verify it's gone
-        let list_result = call_tool(&store, None, "hyphae_list_sources", &json!({}), false);
+        let list_result = call_tool(&store, None, "hyphae_list_sources", &json!({}), false, None);
         assert!(!list_result.content[0].text.contains("to_forget.txt"));
     }
 
@@ -1222,6 +1366,7 @@ mod tests {
             "hyphae_search_docs",
             &json!({"query": "nonexistent unicorn content"}),
             false,
+            None,
         );
         assert!(!result.is_error);
         assert!(result.content[0].text.contains("No results"));
@@ -1236,6 +1381,7 @@ mod tests {
             "hyphae_forget_source",
             &json!({"path": "/nonexistent/path.txt"}),
             false,
+            None,
         );
         assert!(result.is_error);
         assert!(
@@ -1253,6 +1399,7 @@ mod tests {
             "hyphae_search_all",
             &json!({"query": "anything"}),
             false,
+            None,
         );
         assert!(!result.is_error);
         assert!(result.content[0].text.contains("No results"));
@@ -1272,6 +1419,7 @@ mod tests {
             "hyphae_memory_store",
             &json!({"topic": "architecture", "content": "The system uses PostgreSQL for data storage"}),
             false,
+            None,
         );
 
         // Ingest a document
@@ -1288,6 +1436,7 @@ mod tests {
             "hyphae_ingest_file",
             &json!({"path": path.to_str().unwrap()}),
             false,
+            None,
         );
 
         // Search across both
@@ -1297,6 +1446,7 @@ mod tests {
             "hyphae_search_all",
             &json!({"query": "PostgreSQL database"}),
             false,
+            None,
         );
         assert!(
             !result.is_error,
@@ -1313,7 +1463,7 @@ mod tests {
     #[test]
     fn test_tool_search_all_missing_query() {
         let store = test_store();
-        let result = call_tool(&store, None, "hyphae_search_all", &json!({}), false);
+        let result = call_tool(&store, None, "hyphae_search_all", &json!({}), false, None);
         assert!(result.is_error);
         assert!(result.content[0].text.contains("query"));
     }
@@ -1331,6 +1481,7 @@ mod tests {
             "hyphae_memory_store",
             &json!({"topic": "test", "content": "Kubernetes cluster management"}),
             false,
+            None,
         );
 
         let dir = TempDir::new().unwrap();
@@ -1342,6 +1493,7 @@ mod tests {
             "hyphae_ingest_file",
             &json!({"path": path.to_str().unwrap()}),
             false,
+            None,
         );
 
         let result = call_tool(
@@ -1350,6 +1502,7 @@ mod tests {
             "hyphae_search_all",
             &json!({"query": "Kubernetes", "include_docs": false}),
             false,
+            None,
         );
         assert!(!result.is_error);
         let text = &result.content[0].text;

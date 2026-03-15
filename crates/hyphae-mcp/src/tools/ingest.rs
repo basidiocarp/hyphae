@@ -16,6 +16,7 @@ pub(crate) fn tool_ingest_file(
     embedder: Option<&dyn Embedder>,
     args: &Value,
     _compact: bool,
+    project: Option<&str>,
 ) -> ToolResult {
     let path_str = match validate_required_string(args, "path") {
         Ok(s) => s,
@@ -43,9 +44,10 @@ pub(crate) fn tool_ingest_file(
     let mut total_chunks = 0usize;
     let mut doc_count = 0usize;
 
-    for (doc, chunks) in results {
+    for (mut doc, chunks) in results {
+        doc.project = project.map(String::from);
         // Replace existing document at the same path
-        if let Ok(Some(existing)) = store.get_document_by_path(&doc.source_path) {
+        if let Ok(Some(existing)) = store.get_document_by_path(&doc.source_path, project) {
             if let Err(e) = store.delete_document(&existing.id) {
                 return ToolResult::error(format!(
                     "failed to delete existing document {}: {e}",
@@ -74,6 +76,7 @@ pub(crate) fn tool_search_docs(
     embedder: Option<&dyn Embedder>,
     args: &Value,
     compact: bool,
+    project: Option<&str>,
 ) -> ToolResult {
     let query = match validate_required_string(args, "query") {
         Ok(q) => q,
@@ -83,17 +86,17 @@ pub(crate) fn tool_search_docs(
 
     let results = if let Some(emb) = embedder {
         match emb.embed(query) {
-            Ok(embedding) => match store.search_chunks_hybrid(query, &embedding, limit) {
+            Ok(embedding) => match store.search_chunks_hybrid(query, &embedding, limit, project) {
                 Ok(r) => r,
                 Err(e) => return ToolResult::error(format!("search error: {e}")),
             },
-            Err(_) => match store.search_chunks_fts(query, limit) {
+            Err(_) => match store.search_chunks_fts(query, limit, project) {
                 Ok(r) => r,
                 Err(e) => return ToolResult::error(format!("search error: {e}")),
             },
         }
     } else {
-        match store.search_chunks_fts(query, limit) {
+        match store.search_chunks_fts(query, limit, project) {
             Ok(r) => r,
             Err(e) => return ToolResult::error(format!("search error: {e}")),
         }
@@ -131,8 +134,8 @@ pub(crate) fn tool_search_docs(
     ToolResult::text(out.trim_end().to_string())
 }
 
-pub(crate) fn tool_list_sources(store: &SqliteStore) -> ToolResult {
-    let docs = match store.list_documents() {
+pub(crate) fn tool_list_sources(store: &SqliteStore, project: Option<&str>) -> ToolResult {
+    let docs = match store.list_documents(project) {
         Ok(d) => d,
         Err(e) => return ToolResult::error(format!("db error: {e}")),
     };
@@ -160,13 +163,17 @@ pub(crate) fn tool_list_sources(store: &SqliteStore) -> ToolResult {
     ToolResult::text(out)
 }
 
-pub(crate) fn tool_forget_source(store: &SqliteStore, args: &Value) -> ToolResult {
+pub(crate) fn tool_forget_source(
+    store: &SqliteStore,
+    args: &Value,
+    project: Option<&str>,
+) -> ToolResult {
     let path = match validate_required_string(args, "path") {
         Ok(p) => p,
         Err(e) => return e,
     };
 
-    let doc = match store.get_document_by_path(path) {
+    let doc = match store.get_document_by_path(path, project) {
         Ok(Some(d)) => d,
         Ok(None) => return ToolResult::error(format!("Source not found: {path}")),
         Err(e) => return ToolResult::error(format!("db error: {e}")),
@@ -191,6 +198,7 @@ pub(crate) fn tool_search_all(
     embedder: Option<&dyn Embedder>,
     args: &Value,
     compact: bool,
+    project: Option<&str>,
 ) -> ToolResult {
     let query = match validate_required_string(args, "query") {
         Ok(q) => q,
@@ -205,7 +213,7 @@ pub(crate) fn tool_search_all(
     let embedding = embedder.and_then(|emb| emb.embed(query).ok());
     let emb_ref = embedding.as_deref();
 
-    let results = match store.search_all(query, emb_ref, limit, include_docs) {
+    let results = match store.search_all(query, emb_ref, limit, include_docs, project) {
         Ok(r) => r,
         Err(e) => return ToolResult::error(format!("search error: {e}")),
     };

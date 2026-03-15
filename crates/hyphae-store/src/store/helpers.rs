@@ -99,13 +99,14 @@ pub(crate) fn row_to_memory(row: &rusqlite::Row) -> rusqlite::Result<Memory> {
         importance,
         source,
         related_ids,
+        project: row.get("project").ok(),
         embedding,
     })
 }
 
 pub(crate) const SELECT_COLS: &str = "id, created_at, updated_at, last_accessed, access_count, weight, \
      topic, summary, raw_excerpt, keywords, \
-     importance, source_type, source_data, related_ids, embedding";
+     importance, source_type, source_data, related_ids, embedding, project";
 
 // ---------------------------------------------------------------------------
 // Memoir / Concept helpers
@@ -197,7 +198,7 @@ pub(crate) const LINK_COLS: &str = "id, source_id, target_id, relation, weight, 
 // ---------------------------------------------------------------------------
 
 pub(crate) const DOCUMENT_COLS: &str =
-    "id, source_path, source_type, chunk_count, created_at, updated_at";
+    "id, source_path, source_type, chunk_count, created_at, updated_at, project";
 
 pub(crate) const CHUNK_COLS: &str = "id, document_id, chunk_index, content, source_path, \
      source_type, language, heading, line_start, line_end, created_at";
@@ -214,6 +215,7 @@ pub(crate) fn row_to_document(row: &rusqlite::Row) -> rusqlite::Result<Document>
         chunk_count: row.get::<_, u32>(3)? as usize,
         created_at: parse_dt(&row.get::<_, String>(4)?),
         updated_at: parse_dt(&row.get::<_, String>(5)?),
+        project: row.get("project").ok(),
     })
 }
 

@@ -338,6 +338,10 @@ pub(crate) fn tool_memoir_link(store: &SqliteStore, args: &Value) -> ToolResult 
         Err(e) => return ToolResult::error(format!("invalid relation: {e}")),
     };
 
+    if from_name == to_name {
+        return ToolResult::error("cannot link a concept to itself".to_string());
+    }
+
     let memoir = match resolve_memoir(store, memoir_name) {
         Ok(m) => m,
         Err(e) => return e,

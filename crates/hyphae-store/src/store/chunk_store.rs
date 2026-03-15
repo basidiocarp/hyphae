@@ -20,7 +20,7 @@ impl ChunkStore for SqliteStore {
         self.conn
             .prepare_cached(&format!(
                 "INSERT OR REPLACE INTO documents ({DOCUMENT_COLS}) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
             ))
             .map_err(|e| HyphaeError::Database(e.to_string()))?
             .execute(params![
@@ -30,6 +30,7 @@ impl ChunkStore for SqliteStore {
                 doc.chunk_count as u32,
                 doc.created_at.to_rfc3339(),
                 doc.updated_at.to_rfc3339(),
+                doc.project.as_deref(),
             ])
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
         Ok(id)
@@ -109,13 +110,17 @@ impl ChunkStore for SqliteStore {
             .map_err(|e| HyphaeError::Database(e.to_string()))
     }
 
-    fn get_document_by_path(&self, path: &str) -> HyphaeResult<Option<Document>> {
+    fn get_document_by_path(
+        &self,
+        path: &str,
+        project: Option<&str>,
+    ) -> HyphaeResult<Option<Document>> {
         self.conn
             .prepare_cached(&format!(
-                "SELECT {DOCUMENT_COLS} FROM documents WHERE source_path = ?1"
+                "SELECT {DOCUMENT_COLS} FROM documents WHERE source_path = ?1 AND (project = ?2 OR ?2 IS NULL)"
             ))
             .map_err(|e| HyphaeError::Database(e.to_string()))?
-            .query_row(params![path], row_to_document)
+            .query_row(params![path, project], row_to_document)
             .optional()
             .map_err(|e| HyphaeError::Database(e.to_string()))
     }
@@ -165,23 +170,28 @@ impl ChunkStore for SqliteStore {
             .map_err(|e| HyphaeError::Database(e.to_string()))
     }
 
-    fn list_documents(&self) -> HyphaeResult<Vec<Document>> {
+    fn list_documents(&self, project: Option<&str>) -> HyphaeResult<Vec<Document>> {
         let mut stmt = self
             .conn
             .prepare_cached(&format!(
-                "SELECT {DOCUMENT_COLS} FROM documents ORDER BY created_at DESC"
+                "SELECT {DOCUMENT_COLS} FROM documents WHERE (project = ?1 OR ?1 IS NULL) ORDER BY created_at DESC"
             ))
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         let rows = stmt
-            .query_map([], row_to_document)
+            .query_map(params![project], row_to_document)
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|e| HyphaeError::Database(e.to_string()))
     }
 
-    fn search_chunks_fts(&self, query: &str, limit: usize) -> HyphaeResult<Vec<ChunkSearchResult>> {
+    fn search_chunks_fts(
+        &self,
+        query: &str,
+        limit: usize,
+        project: Option<&str>,
+    ) -> HyphaeResult<Vec<ChunkSearchResult>> {
         let sanitized = sanitize_fts_query(query);
         if sanitized.is_empty() {
             return Ok(Vec::new());
@@ -191,7 +201,9 @@ impl ChunkStore for SqliteStore {
             "SELECT {C_CHUNK_COLS}, fts.rank \
              FROM chunks_fts fts \
              JOIN chunks c ON c.id = fts.id \
+             JOIN documents d ON d.id = c.document_id \
              WHERE chunks_fts MATCH ?1 \
+             AND (d.project = ?3 OR ?3 IS NULL) \
              ORDER BY fts.rank \
              LIMIT ?2"
         );
@@ -202,7 +214,7 @@ impl ChunkStore for SqliteStore {
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         let rows = stmt
-            .query_map(params![sanitized, limit as i64], |row| {
+            .query_map(params![sanitized, limit as i64, project], |row| {
                 let chunk = row_to_chunk(row)?;
                 let rank: f32 = row.get(11)?;
                 Ok((chunk, rank))
@@ -222,6 +234,7 @@ impl ChunkStore for SqliteStore {
         &self,
         embedding: &[f32],
         limit: usize,
+        project: Option<&str>,
     ) -> HyphaeResult<Vec<ChunkSearchResult>> {
         let query_blob = embedding_to_blob(embedding);
 
@@ -247,20 +260,27 @@ impl ChunkStore for SqliteStore {
 
         let placeholders: Vec<String> = (1..=knn_rows.len()).map(|i| format!("?{i}")).collect();
         let in_clause = placeholders.join(", ");
-        let sql = format!("SELECT {CHUNK_COLS} FROM chunks WHERE id IN ({in_clause})");
+        let project_pos = knn_rows.len() + 1;
+        let sql = format!(
+            "SELECT {CHUNK_COLS} FROM chunks c \
+             JOIN documents d ON d.id = c.document_id \
+             WHERE c.id IN ({in_clause}) AND (d.project = ?{project_pos} OR ?{project_pos} IS NULL)"
+        );
 
         let mut stmt = self
             .conn
             .prepare(&sql)
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
-        let id_params: Vec<&dyn rusqlite::ToSql> = knn_rows
+        let mut id_params: Vec<Box<dyn rusqlite::ToSql>> = knn_rows
             .iter()
-            .map(|(id, _)| id as &dyn rusqlite::ToSql)
+            .map(|(id, _)| Box::new(id.clone()) as Box<dyn rusqlite::ToSql>)
             .collect();
+        id_params.push(Box::new(project.map(|s| s.to_string())));
+        let params_ref: Vec<&dyn rusqlite::ToSql> = id_params.iter().map(|p| p.as_ref()).collect();
 
         let chunk_map: HashMap<String, Chunk> = stmt
-            .query_map(id_params.as_slice(), row_to_chunk)
+            .query_map(params_ref.as_slice(), row_to_chunk)
             .map_err(|e| HyphaeError::Database(e.to_string()))?
             .filter_map(|r| r.ok())
             .map(|c| (c.id.to_string(), c))
@@ -284,6 +304,7 @@ impl ChunkStore for SqliteStore {
         query: &str,
         embedding: &[f32],
         limit: usize,
+        project: Option<&str>,
     ) -> HyphaeResult<Vec<ChunkSearchResult>> {
         let pool_size = limit * 4;
         let sanitized = sanitize_fts_query(query);
@@ -296,14 +317,16 @@ impl ChunkStore for SqliteStore {
                 "SELECT {C_CHUNK_COLS}, fts.rank \
                  FROM chunks_fts fts \
                  JOIN chunks c ON c.id = fts.id \
+                 JOIN documents d ON d.id = c.document_id \
                  WHERE chunks_fts MATCH ?1 \
+                 AND (d.project = ?3 OR ?3 IS NULL) \
                  ORDER BY fts.rank \
                  LIMIT ?2"
             );
 
             match self.conn.prepare_cached(&fts_sql) {
                 Ok(mut stmt) => {
-                    match stmt.query_map(params![sanitized, pool_size as i64], |row| {
+                    match stmt.query_map(params![sanitized, pool_size as i64, project], |row| {
                         let chunk = row_to_chunk(row)?;
                         let rank: f32 = row.get(11)?;
                         Ok((chunk, rank))
@@ -329,7 +352,7 @@ impl ChunkStore for SqliteStore {
             }
         }
 
-        let vec_results = self.search_chunks_by_embedding(embedding, pool_size)?;
+        let vec_results = self.search_chunks_by_embedding(embedding, pool_size, project)?;
         let mut vec_scores: HashMap<String, f32> = HashMap::new();
         for result in vec_results {
             vec_scores.insert(result.chunk.id.to_string(), result.score);
@@ -362,20 +385,24 @@ impl ChunkStore for SqliteStore {
         Ok(results)
     }
 
-    fn count_documents(&self) -> HyphaeResult<usize> {
+    fn count_documents(&self, project: Option<&str>) -> HyphaeResult<usize> {
         self.conn
-            .prepare_cached("SELECT COUNT(*) FROM documents")
+            .prepare_cached("SELECT COUNT(*) FROM documents WHERE (project = ?1 OR ?1 IS NULL)")
             .map_err(|e| HyphaeError::Database(e.to_string()))?
-            .query_row([], |row| row.get::<_, u32>(0))
+            .query_row(params![project], |row| row.get::<_, u32>(0))
             .map(|n| n as usize)
             .map_err(|e| HyphaeError::Database(e.to_string()))
     }
 
-    fn count_chunks(&self) -> HyphaeResult<usize> {
+    fn count_chunks(&self, project: Option<&str>) -> HyphaeResult<usize> {
         self.conn
-            .prepare_cached("SELECT COUNT(*) FROM chunks")
+            .prepare_cached(
+                "SELECT COUNT(*) FROM chunks c \
+                 JOIN documents d ON d.id = c.document_id \
+                 WHERE (d.project = ?1 OR ?1 IS NULL)",
+            )
             .map_err(|e| HyphaeError::Database(e.to_string()))?
-            .query_row([], |row| row.get::<_, u32>(0))
+            .query_row(params![project], |row| row.get::<_, u32>(0))
             .map(|n| n as usize)
             .map_err(|e| HyphaeError::Database(e.to_string()))
     }
@@ -399,6 +426,7 @@ pub(crate) mod test_helpers {
             chunk_count: 0,
             created_at: now,
             updated_at: now,
+            project: None,
         }
     }
 

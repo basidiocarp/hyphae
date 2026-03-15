@@ -40,28 +40,26 @@ impl SqliteStore {
         embedding: Option<&[f32]>,
         limit: usize,
         include_docs: bool,
+        project: Option<&str>,
     ) -> HyphaeResult<Vec<UnifiedSearchResult>> {
         const K: f32 = 60.0;
-        let pool = limit * 3; // fetch more than needed for better fusion
+        let pool = limit * 3;
 
-        // --- memory results ---
         let mem_results: Vec<(Memory, f32)> = if let Some(emb) = embedding {
-            self.search_hybrid(query, emb, pool)?
+            self.search_hybrid(query, emb, pool, project)?
         } else {
-            // FTS returns Vec<Memory> without scores — assign rank-based scores
-            self.search_fts(query, pool)?
+            self.search_fts(query, pool, project)?
                 .into_iter()
                 .enumerate()
                 .map(|(i, m)| (m, 1.0 / (K + i as f32)))
                 .collect()
         };
 
-        // --- chunk results ---
         let chunk_results = if include_docs {
             if let Some(emb) = embedding {
-                self.search_chunks_hybrid(query, emb, pool)?
+                self.search_chunks_hybrid(query, emb, pool, project)?
             } else {
-                self.search_chunks_fts(query, pool)?
+                self.search_chunks_fts(query, pool, project)?
             }
         } else {
             Vec::new()
@@ -301,6 +299,7 @@ mod tests {
             chunk_count: 1,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
+            project: None,
         }
     }
 
@@ -342,7 +341,7 @@ mod tests {
             .unwrap();
 
         let results = store
-            .search_all("Rust systems programming", None, 10, false)
+            .search_all("Rust systems programming", None, 10, false, None)
             .unwrap();
 
         assert!(!results.is_empty(), "should find at least one memory");
@@ -376,7 +375,9 @@ mod tests {
             .unwrap();
 
         // Search with no memories present
-        let results = store.search_all("SQLite database", None, 10, true).unwrap();
+        let results = store
+            .search_all("SQLite database", None, 10, true, None)
+            .unwrap();
 
         assert!(!results.is_empty(), "should find the chunk");
         assert!(
@@ -415,7 +416,7 @@ mod tests {
             )])
             .unwrap();
 
-        let results = store.search_all("SQLite", None, 10, true).unwrap();
+        let results = store.search_all("SQLite", None, 10, true, None).unwrap();
 
         assert!(results.len() >= 2, "should find results from both stores");
 
@@ -464,7 +465,9 @@ mod tests {
             )])
             .unwrap();
 
-        let results = store.search_all("cargo test", None, 10, false).unwrap();
+        let results = store
+            .search_all("cargo test", None, 10, false, None)
+            .unwrap();
 
         assert!(
             results
@@ -477,7 +480,7 @@ mod tests {
     #[test]
     fn test_search_all_empty_store() {
         let store = test_store();
-        let results = store.search_all("anything", None, 10, true).unwrap();
+        let results = store.search_all("anything", None, 10, true, None).unwrap();
         assert!(results.is_empty(), "empty store should return no results");
     }
 
@@ -494,7 +497,7 @@ mod tests {
                 .unwrap();
         }
 
-        let results = store.search_all("testing", None, 5, false).unwrap();
+        let results = store.search_all("testing", None, 5, false, None).unwrap();
 
         assert!(results.len() <= 5, "should respect the limit parameter");
     }

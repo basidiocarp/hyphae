@@ -200,14 +200,14 @@ mod tests {
             .store(make_memory("python", "python decorators"))
             .unwrap();
 
-        let results = store.search_by_keywords(&["rust"], 10).unwrap();
+        let results = store.search_by_keywords(&["rust"], 10, None).unwrap();
         assert_eq!(results.len(), 2);
     }
 
     #[test]
     fn test_search_by_keywords_empty() {
         let store = test_store();
-        let results = store.search_by_keywords(&[], 10).unwrap();
+        let results = store.search_by_keywords(&[], 10, None).unwrap();
         assert!(results.is_empty());
     }
 
@@ -224,14 +224,14 @@ mod tests {
             .store(make_memory("python", "python decorators are cool"))
             .unwrap();
 
-        let results = store.search_fts("ownership borrowing", 10).unwrap();
+        let results = store.search_fts("ownership borrowing", 10, None).unwrap();
         assert!(!results.is_empty());
     }
 
     #[test]
     fn test_search_fts_empty_query() {
         let store = test_store();
-        let results = store.search_fts("", 10).unwrap();
+        let results = store.search_fts("", 10, None).unwrap();
         assert!(results.is_empty());
     }
 
@@ -242,7 +242,7 @@ mod tests {
             .store(make_memory("deps", "sqlite-vec is a vector extension"))
             .unwrap();
 
-        let results = store.search_fts("sqlite-vec", 10).unwrap();
+        let results = store.search_fts("sqlite-vec", 10, None).unwrap();
         assert!(!results.is_empty());
     }
 
@@ -303,7 +303,7 @@ mod tests {
         store.store(make_memory("rust", "rust memory 2")).unwrap();
         store.store(make_memory("python", "python memory")).unwrap();
 
-        let results = store.get_by_topic("rust").unwrap();
+        let results = store.get_by_topic("rust", None).unwrap();
         assert_eq!(results.len(), 2);
     }
 
@@ -314,7 +314,7 @@ mod tests {
         store.store(make_memory("rust", "rust 2")).unwrap();
         store.store(make_memory("python", "python 1")).unwrap();
 
-        let topics = store.list_topics().unwrap();
+        let topics = store.list_topics(None).unwrap();
         assert_eq!(topics.len(), 2);
     }
 
@@ -327,7 +327,7 @@ mod tests {
         let consolidated = make_memory("rust", "consolidated rust knowledge");
         store.consolidate_topic("rust", consolidated).unwrap();
 
-        let results = store.get_by_topic("rust").unwrap();
+        let results = store.get_by_topic("rust", None).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].summary, "consolidated rust knowledge");
     }
@@ -335,11 +335,11 @@ mod tests {
     #[test]
     fn test_count() {
         let store = test_store();
-        assert_eq!(store.count().unwrap(), 0);
+        assert_eq!(store.count(None).unwrap(), 0);
 
         store.store(make_memory("test", "one")).unwrap();
         store.store(make_memory("test", "two")).unwrap();
-        assert_eq!(store.count().unwrap(), 2);
+        assert_eq!(store.count(None).unwrap(), 2);
     }
 
     #[test]
@@ -349,9 +349,9 @@ mod tests {
         store.store(make_memory("rust", "rust 2")).unwrap();
         store.store(make_memory("python", "python 1")).unwrap();
 
-        assert_eq!(store.count_by_topic("rust").unwrap(), 2);
-        assert_eq!(store.count_by_topic("python").unwrap(), 1);
-        assert_eq!(store.count_by_topic("go").unwrap(), 0);
+        assert_eq!(store.count_by_topic("rust", None).unwrap(), 2);
+        assert_eq!(store.count_by_topic("python", None).unwrap(), 1);
+        assert_eq!(store.count_by_topic("go", None).unwrap(), 0);
     }
 
     #[test]
@@ -360,7 +360,7 @@ mod tests {
         store.store(make_memory("rust", "rust 1")).unwrap();
         store.store(make_memory("rust", "rust 2")).unwrap();
 
-        let health = store.topic_health("rust").unwrap();
+        let health = store.topic_health("rust", None).unwrap();
         assert_eq!(health.entry_count, 2);
         assert!(health.avg_weight > 0.0);
     }
@@ -368,7 +368,7 @@ mod tests {
     #[test]
     fn test_topic_health_not_found() {
         let store = test_store();
-        let result = store.topic_health("nonexistent");
+        let result = store.topic_health("nonexistent", None);
         assert!(result.is_err());
     }
 
@@ -378,7 +378,7 @@ mod tests {
         store.store(make_memory("rust", "rust 1")).unwrap();
         store.store(make_memory("python", "python 1")).unwrap();
 
-        let stats = store.stats().unwrap();
+        let stats = store.stats(None).unwrap();
         assert_eq!(stats.total_memories, 2);
         assert_eq!(stats.total_topics, 2);
     }
@@ -386,7 +386,7 @@ mod tests {
     #[test]
     fn test_stats_empty() {
         let store = test_store();
-        let stats = store.stats().unwrap();
+        let stats = store.stats(None).unwrap();
         assert_eq!(stats.total_memories, 0);
         assert_eq!(stats.total_topics, 0);
         assert_eq!(stats.avg_weight, 0.0);
@@ -415,7 +415,7 @@ mod tests {
         store.store(mem).unwrap();
 
         let query_emb = vec![0.1; 384];
-        let results = store.search_by_embedding(&query_emb, 5).unwrap();
+        let results = store.search_by_embedding(&query_emb, 5, None).unwrap();
         assert!(!results.is_empty());
     }
 
@@ -427,7 +427,9 @@ mod tests {
         store.store(mem).unwrap();
 
         let query_emb = vec![0.1; 384];
-        let results = store.search_hybrid("hybrid search", &query_emb, 5).unwrap();
+        let results = store
+            .search_hybrid("hybrid search", &query_emb, 5, None)
+            .unwrap();
         assert!(!results.is_empty());
     }
 
@@ -967,19 +969,19 @@ mod tests {
             .store(make_memory("algorithms", "quicksort partitioning"))
             .unwrap();
 
-        assert_eq!(store.count_by_topic("algorithms").unwrap(), 3);
+        assert_eq!(store.count_by_topic("algorithms", None).unwrap(), 3);
 
         let consolidated = make_memory("algorithms", "comprehensive algorithms knowledge");
         store.consolidate_topic("algorithms", consolidated).unwrap();
 
-        let results = store.get_by_topic("algorithms").unwrap();
+        let results = store.get_by_topic("algorithms", None).unwrap();
         assert_eq!(
             results.len(),
             1,
             "Should have exactly one memory after consolidation"
         );
         assert_eq!(results[0].summary, "comprehensive algorithms knowledge");
-        assert_eq!(store.count_by_topic("algorithms").unwrap(), 1);
+        assert_eq!(store.count_by_topic("algorithms", None).unwrap(), 1);
     }
 
     // === Prune tests ===
@@ -1004,7 +1006,11 @@ mod tests {
 
         let pruned = store.prune(0.1).unwrap();
         assert_eq!(pruned, 2, "Should prune exactly 2 memories below threshold");
-        assert_eq!(store.count().unwrap(), 1, "Should have 1 memory remaining");
+        assert_eq!(
+            store.count(None).unwrap(),
+            1,
+            "Should have 1 memory remaining"
+        );
     }
 
     #[test]
@@ -1030,7 +1036,7 @@ mod tests {
         let pruned = store.prune(0.1).unwrap();
         assert_eq!(pruned, 1, "Should only prune the Low importance memory");
 
-        let remaining = store.count().unwrap();
+        let remaining = store.count(None).unwrap();
         assert_eq!(remaining, 2, "Critical and High memories should remain");
     }
 
@@ -1092,7 +1098,9 @@ mod tests {
         ];
         store.store_chunks(chunks).unwrap();
 
-        let results = store.search_chunks_fts("ownership borrowing", 10).unwrap();
+        let results = store
+            .search_chunks_fts("ownership borrowing", 10, None)
+            .unwrap();
         assert!(!results.is_empty());
         assert!(results[0].chunk.content.contains("ownership"));
     }
@@ -1110,12 +1118,12 @@ mod tests {
         store
             .store_chunks(vec![make_chunk(&doc_id, 0, "some content")])
             .unwrap();
-        assert_eq!(store.count_chunks().unwrap(), 1);
+        assert_eq!(store.count_chunks(None).unwrap(), 1);
 
         store.delete_document(&doc_id).unwrap();
 
         assert!(store.get_document(&doc_id).unwrap().is_none());
-        assert_eq!(store.count_chunks().unwrap(), 0);
+        assert_eq!(store.count_chunks(None).unwrap(), 0);
     }
 
     #[test]
@@ -1124,12 +1132,12 @@ mod tests {
         use hyphae_core::ChunkStore;
 
         let store = test_store();
-        assert_eq!(store.list_documents().unwrap().len(), 0);
+        assert_eq!(store.list_documents(None).unwrap().len(), 0);
 
         store.store_document(make_document("a.txt")).unwrap();
         store.store_document(make_document("b.txt")).unwrap();
 
-        let docs = store.list_documents().unwrap();
+        let docs = store.list_documents(None).unwrap();
         assert_eq!(docs.len(), 2);
     }
 
@@ -1139,8 +1147,8 @@ mod tests {
         use hyphae_core::ChunkStore;
 
         let store = test_store();
-        assert_eq!(store.count_documents().unwrap(), 0);
-        assert_eq!(store.count_chunks().unwrap(), 0);
+        assert_eq!(store.count_documents(None).unwrap(), 0);
+        assert_eq!(store.count_chunks(None).unwrap(), 0);
 
         let doc = make_document("counts.txt");
         let doc_id = doc.id.clone();
@@ -1153,8 +1161,8 @@ mod tests {
             ])
             .unwrap();
 
-        assert_eq!(store.count_documents().unwrap(), 1);
-        assert_eq!(store.count_chunks().unwrap(), 3);
+        assert_eq!(store.count_documents(None).unwrap(), 1);
+        assert_eq!(store.count_chunks(None).unwrap(), 3);
     }
 
     #[test]
@@ -1167,11 +1175,13 @@ mod tests {
         let doc_id = doc.id.clone();
         store.store_document(doc).unwrap();
 
-        let found = store.get_document_by_path("unique/path/file.txt").unwrap();
+        let found = store
+            .get_document_by_path("unique/path/file.txt", None)
+            .unwrap();
         assert!(found.is_some());
         assert_eq!(found.unwrap().id, doc_id);
 
-        let not_found = store.get_document_by_path("nonexistent.txt").unwrap();
+        let not_found = store.get_document_by_path("nonexistent.txt", None).unwrap();
         assert!(not_found.is_none());
     }
 
@@ -1201,7 +1211,7 @@ mod tests {
         ];
 
         for q in special_queries {
-            let _ = store.search_fts(q, 10);
+            let _ = store.search_fts(q, 10, None);
         }
     }
 
@@ -1254,11 +1264,11 @@ mod tests {
             make_chunk(&doc_id, 1, "chunk two content"),
         ];
         store.store_chunks(chunks).unwrap();
-        assert_eq!(store.count_chunks().unwrap(), 2);
+        assert_eq!(store.count_chunks(None).unwrap(), 2);
 
         store.delete_document(&doc_id).unwrap();
-        assert_eq!(store.count_chunks().unwrap(), 0);
-        assert_eq!(store.count_documents().unwrap(), 0);
+        assert_eq!(store.count_chunks(None).unwrap(), 0);
+        assert_eq!(store.count_documents(None).unwrap(), 0);
     }
 
     #[test]
@@ -1275,7 +1285,7 @@ mod tests {
         ];
         store.store_chunks(chunks).unwrap();
 
-        let results = store.search_chunks_fts("JWT token", 10).unwrap();
+        let results = store.search_chunks_fts("JWT token", 10, None).unwrap();
         assert!(!results.is_empty(), "FTS should find JWT-related chunks");
         // First result should be most relevant
         assert!(
@@ -1291,7 +1301,7 @@ mod tests {
         store.store_document(make_document("b.rs")).unwrap();
         store.store_document(make_document("c.rs")).unwrap();
 
-        let docs = store.list_documents().unwrap();
+        let docs = store.list_documents(None).unwrap();
         assert_eq!(docs.len(), 3);
     }
 
@@ -1301,18 +1311,18 @@ mod tests {
         let doc = make_document("unique/path.rs");
         store.store_document(doc).unwrap();
 
-        let found = store.get_document_by_path("unique/path.rs").unwrap();
+        let found = store.get_document_by_path("unique/path.rs", None).unwrap();
         assert!(found.is_some());
 
-        let not_found = store.get_document_by_path("nonexistent.rs").unwrap();
+        let not_found = store.get_document_by_path("nonexistent.rs", None).unwrap();
         assert!(not_found.is_none());
     }
 
     #[test]
     fn test_chunk_count() {
         let store = test_store();
-        assert_eq!(store.count_documents().unwrap(), 0);
-        assert_eq!(store.count_chunks().unwrap(), 0);
+        assert_eq!(store.count_documents(None).unwrap(), 0);
+        assert_eq!(store.count_chunks(None).unwrap(), 0);
 
         let doc = make_document("count.rs");
         let doc_id = doc.id.clone();
@@ -1325,8 +1335,8 @@ mod tests {
         ];
         store.store_chunks(chunks).unwrap();
 
-        assert_eq!(store.count_documents().unwrap(), 1);
-        assert_eq!(store.count_chunks().unwrap(), 3);
+        assert_eq!(store.count_documents(None).unwrap(), 1);
+        assert_eq!(store.count_chunks(None).unwrap(), 3);
     }
 
     #[test]

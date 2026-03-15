@@ -35,14 +35,13 @@ pub fn extract_and_store(store: &SqliteStore, text: &str, project: &str) -> Resu
 #[allow(dead_code)]
 pub fn recall_context(store: &SqliteStore, query: &str, limit: usize) -> Result<String> {
     // Try FTS search with the query
-    let results = store.search_fts(query, limit * 2)?;
+    let results = store.search_fts(query, limit * 2, None)?;
 
     let relevant: Vec<_> = if results.is_empty() {
-        // Fallback: get all memories sorted by weight
-        let topics = store.list_topics()?;
+        let topics = store.list_topics(None)?;
         let mut all = Vec::new();
         for (topic, _) in &topics {
-            all.extend(store.get_by_topic(topic)?);
+            all.extend(store.get_by_topic(topic, None)?);
         }
         all.sort_by(|a, b| {
             b.weight

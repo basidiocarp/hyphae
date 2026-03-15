@@ -20,6 +20,7 @@ pub struct Config {
     pub extraction: ExtractionConfig,
     pub recall: RecallConfig,
     pub mcp: McpConfig,
+    pub watch: WatchConfig,
 }
 
 /// Database storage settings.
@@ -28,6 +29,8 @@ pub struct Config {
 pub struct StoreConfig {
     /// SQLite database path. Default: platform-specific data dir.
     pub path: Option<String>,
+    /// Default project namespace for memory isolation.
+    pub default_project: Option<String>,
 }
 
 /// Memory decay and pruning settings.
@@ -84,6 +87,26 @@ pub struct McpConfig {
     pub compact: bool,
     /// Custom system instructions appended to MCP server info.
     pub instructions: Option<String>,
+}
+
+/// File-watch settings.
+#[derive(Debug, Deserialize)]
+#[serde(default)]
+pub struct WatchConfig {
+    /// Debounce window in milliseconds before re-ingesting a changed file.
+    pub debounce_ms: u64,
+}
+
+fn default_debounce_ms() -> u64 {
+    500
+}
+
+impl Default for WatchConfig {
+    fn default() -> Self {
+        Self {
+            debounce_ms: default_debounce_ms(),
+        }
+    }
 }
 
 // --- Defaults ---

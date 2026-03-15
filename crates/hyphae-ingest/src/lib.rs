@@ -57,6 +57,7 @@ pub fn ingest_file(
         chunk_count: chunks.len(),
         created_at: now,
         updated_at: now,
+        project: None,
     };
 
     Ok((document, chunks))
@@ -119,6 +120,21 @@ fn is_skipped_dir(entry: &walkdir::DirEntry) -> bool {
     }
     let name = entry.file_name().to_string_lossy();
     name.starts_with('.') || SKIP_DIRS.contains(&name.as_ref())
+}
+
+/// Returns true if the given path should be skipped during ingestion.
+///
+/// Skips paths that contain hidden components (starting with `.`) or known
+/// build/dependency directories (`target`, `node_modules`, `.git`).
+pub fn should_skip(path: &Path) -> bool {
+    path.components().any(|c| {
+        if let std::path::Component::Normal(name) = c {
+            let name = name.to_string_lossy();
+            name.starts_with('.') || SKIP_DIRS.contains(&name.as_ref())
+        } else {
+            false
+        }
+    })
 }
 
 #[cfg(test)]

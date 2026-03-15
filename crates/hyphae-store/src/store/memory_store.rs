@@ -23,8 +23,8 @@ impl MemoryStore for SqliteStore {
             .execute(
                 "INSERT INTO memories (id, created_at, updated_at, last_accessed, access_count, weight,
                  topic, summary, raw_excerpt, keywords,
-                 importance, source_type, source_data, related_ids, embedding)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                 importance, source_type, source_data, related_ids, embedding, project)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
                 params![
                     memory.id.as_ref(),
                     memory.created_at.to_rfc3339(),
@@ -41,6 +41,7 @@ impl MemoryStore for SqliteStore {
                     sd,
                     related_json,
                     emb_blob,
+                    memory.project.as_deref(),
                 ],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
@@ -161,7 +162,12 @@ impl MemoryStore for SqliteStore {
         Ok(())
     }
 
-    fn search_by_keywords(&self, keywords: &[&str], limit: usize) -> HyphaeResult<Vec<Memory>> {
+    fn search_by_keywords(
+        &self,
+        keywords: &[&str],
+        limit: usize,
+        project: Option<&str>,
+    ) -> HyphaeResult<Vec<Memory>> {
         if keywords.is_empty() {
             return Ok(Vec::new());
         }
@@ -173,10 +179,11 @@ impl MemoryStore for SqliteStore {
             })
             .collect();
         let where_clause = where_parts.join(" OR ");
+        let limit_pos = keywords.len() + 1;
+        let project_pos = keywords.len() + 2;
 
         let query = format!(
-            "SELECT {SELECT_COLS} FROM memories WHERE {where_clause} ORDER BY weight DESC LIMIT ?{}",
-            keywords.len() + 1
+            "SELECT {SELECT_COLS} FROM memories WHERE ({where_clause}) AND (project = ?{project_pos} OR ?{project_pos} IS NULL) ORDER BY weight DESC LIMIT ?{limit_pos}"
         );
 
         let mut stmt = self
@@ -189,6 +196,7 @@ impl MemoryStore for SqliteStore {
             .map(|k| Box::new(format!("%{k}%")) as Box<dyn rusqlite::types::ToSql>)
             .collect();
         param_values.push(Box::new(limit as i64));
+        param_values.push(Box::new(project.map(|s| s.to_string())));
 
         let params_ref: Vec<&dyn rusqlite::types::ToSql> =
             param_values.iter().map(|p| p.as_ref()).collect();
@@ -204,18 +212,24 @@ impl MemoryStore for SqliteStore {
         Ok(results)
     }
 
-    fn search_fts(&self, query: &str, limit: usize) -> HyphaeResult<Vec<Memory>> {
+    fn search_fts(
+        &self,
+        query: &str,
+        limit: usize,
+        project: Option<&str>,
+    ) -> HyphaeResult<Vec<Memory>> {
         let sanitized = sanitize_fts_query(query);
         if sanitized.is_empty() {
             return Ok(Vec::new());
         }
 
         let sql = format!(
-            "SELECT {SELECT_COLS} FROM memories
-             WHERE id IN (
+            "SELECT {SELECT_COLS} FROM memories m
+             WHERE m.id IN (
                  SELECT id FROM memories_fts WHERE memories_fts MATCH ?1
              )
-             ORDER BY weight DESC
+             AND (m.project = ?3 OR ?3 IS NULL)
+             ORDER BY m.weight DESC
              LIMIT ?2"
         );
 
@@ -225,7 +239,7 @@ impl MemoryStore for SqliteStore {
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         let rows = stmt
-            .query_map(params![sanitized, limit as i64], row_to_memory)
+            .query_map(params![sanitized, limit as i64, project], row_to_memory)
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         let mut results = Vec::new();
@@ -239,6 +253,7 @@ impl MemoryStore for SqliteStore {
         &self,
         embedding: &[f32],
         limit: usize,
+        project: Option<&str>,
     ) -> HyphaeResult<Vec<(Memory, f32)>> {
         let query_blob = embedding_to_blob(embedding);
 
@@ -265,20 +280,23 @@ impl MemoryStore for SqliteStore {
             return Ok(Vec::new());
         }
 
-        // Bulk SELECT instead of N individual get() calls
         let placeholders: Vec<String> = (1..=knn_rows.len()).map(|i| format!("?{i}")).collect();
         let in_clause = placeholders.join(",");
-        let sql = format!("SELECT {SELECT_COLS} FROM memories WHERE id IN ({in_clause})");
+        let project_pos = knn_rows.len() + 1;
+        let sql = format!(
+            "SELECT {SELECT_COLS} FROM memories WHERE id IN ({in_clause}) AND (project = ?{project_pos} OR ?{project_pos} IS NULL)"
+        );
 
         let mut stmt = self
             .conn
             .prepare(&sql)
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
-        let param_values: Vec<Box<dyn rusqlite::types::ToSql>> = knn_rows
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = knn_rows
             .iter()
             .map(|(id, _)| Box::new(id.clone()) as Box<dyn rusqlite::types::ToSql>)
             .collect();
+        param_values.push(Box::new(project.map(|s| s.to_string())));
         let params_ref: Vec<&dyn rusqlite::types::ToSql> =
             param_values.iter().map(|p| p.as_ref()).collect();
 
@@ -308,6 +326,7 @@ impl MemoryStore for SqliteStore {
         query: &str,
         embedding: &[f32],
         limit: usize,
+        project: Option<&str>,
     ) -> HyphaeResult<Vec<(Memory, f32)>> {
         let pool_size = limit * 4;
         let sanitized = sanitize_fts_query(query);
@@ -319,6 +338,7 @@ impl MemoryStore for SqliteStore {
              FROM memories_fts fts \
              JOIN memories m ON m.id = fts.id \
              WHERE memories_fts MATCH ?1 \
+             AND (m.project = ?3 OR ?3 IS NULL) \
              ORDER BY fts.rank \
              LIMIT ?2";
 
@@ -328,7 +348,7 @@ impl MemoryStore for SqliteStore {
         if !sanitized.is_empty() {
             match self.conn.prepare_cached(fts_sql) {
                 Ok(mut stmt) => {
-                    match stmt.query_map(params![sanitized, pool_size as i64], |row| {
+                    match stmt.query_map(params![sanitized, pool_size as i64, project], |row| {
                         let memory = row_to_memory(row)?;
                         let rank: f32 = row.get(15)?;
                         Ok((memory, rank))
@@ -348,7 +368,7 @@ impl MemoryStore for SqliteStore {
             }
         }
 
-        let vec_results = self.search_by_embedding(embedding, pool_size)?;
+        let vec_results = self.search_by_embedding(embedding, pool_size, project)?;
         let mut vec_scores: HashMap<String, f32> = HashMap::new();
         for (memory, similarity) in vec_results {
             vec_scores.insert(memory.id.to_string(), similarity);
@@ -437,16 +457,17 @@ impl MemoryStore for SqliteStore {
         Ok(changed)
     }
 
-    fn get_by_topic(&self, topic: &str) -> HyphaeResult<Vec<Memory>> {
-        let sql =
-            format!("SELECT {SELECT_COLS} FROM memories WHERE topic = ?1 ORDER BY weight DESC");
+    fn get_by_topic(&self, topic: &str, project: Option<&str>) -> HyphaeResult<Vec<Memory>> {
+        let sql = format!(
+            "SELECT {SELECT_COLS} FROM memories WHERE topic = ?1 AND (project = ?2 OR ?2 IS NULL) ORDER BY weight DESC"
+        );
         let mut stmt = self
             .conn
             .prepare_cached(&sql)
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         let rows = stmt
-            .query_map(params![topic], row_to_memory)
+            .query_map(params![topic, project], row_to_memory)
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         let mut results = Vec::new();
@@ -456,14 +477,14 @@ impl MemoryStore for SqliteStore {
         Ok(results)
     }
 
-    fn list_topics(&self) -> HyphaeResult<Vec<(String, usize)>> {
+    fn list_topics(&self, project: Option<&str>) -> HyphaeResult<Vec<(String, usize)>> {
         let mut stmt = self
             .conn
-            .prepare_cached("SELECT topic, COUNT(*) FROM memories GROUP BY topic ORDER BY topic")
+            .prepare_cached("SELECT topic, COUNT(*) FROM memories WHERE (project = ?1 OR ?1 IS NULL) GROUP BY topic ORDER BY topic")
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         let rows = stmt
-            .query_map([], |row| {
+            .query_map(params![project], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, usize>(1)?))
             })
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
@@ -502,8 +523,8 @@ impl MemoryStore for SqliteStore {
         tx.execute(
             "INSERT INTO memories (id, created_at, updated_at, last_accessed, access_count, weight,
              topic, summary, raw_excerpt, keywords,
-             importance, source_type, source_data, related_ids, embedding)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+             importance, source_type, source_data, related_ids, embedding, project)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 consolidated.id.as_ref(),
                 consolidated.created_at.to_rfc3339(),
@@ -520,6 +541,7 @@ impl MemoryStore for SqliteStore {
                 sd,
                 related_json,
                 emb_blob,
+                consolidated.project.as_deref(),
             ],
         )
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
@@ -538,25 +560,27 @@ impl MemoryStore for SqliteStore {
         Ok(())
     }
 
-    fn count(&self) -> HyphaeResult<usize> {
-        self.conn
-            .query_row("SELECT COUNT(*) FROM memories", [], |row| {
-                row.get::<_, usize>(0)
-            })
-            .map_err(|e| HyphaeError::Database(e.to_string()))
-    }
-
-    fn count_by_topic(&self, topic: &str) -> HyphaeResult<usize> {
+    fn count(&self, project: Option<&str>) -> HyphaeResult<usize> {
         self.conn
             .query_row(
-                "SELECT COUNT(*) FROM memories WHERE topic = ?1",
-                params![topic],
+                "SELECT COUNT(*) FROM memories WHERE (project = ?1 OR ?1 IS NULL)",
+                params![project],
                 |row| row.get::<_, usize>(0),
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))
     }
 
-    fn topic_health(&self, topic: &str) -> HyphaeResult<TopicHealth> {
+    fn count_by_topic(&self, topic: &str, project: Option<&str>) -> HyphaeResult<usize> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM memories WHERE topic = ?1 AND (project = ?2 OR ?2 IS NULL)",
+                params![topic, project],
+                |row| row.get::<_, usize>(0),
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))
+    }
+
+    fn topic_health(&self, topic: &str, project: Option<&str>) -> HyphaeResult<TopicHealth> {
         type HealthRow = (
             usize,
             Option<f32>,
@@ -587,8 +611,8 @@ impl MemoryStore for SqliteStore {
                     COUNT(CASE WHEN weight < 0.5
                         AND julianday('now') - julianday(last_accessed) > 14
                         THEN 1 END)
-                 FROM memories WHERE topic = ?1",
-                params![topic],
+                 FROM memories WHERE topic = ?1 AND (project = ?2 OR ?2 IS NULL)",
+                params![topic, project],
                 |row| {
                     Ok((
                         row.get(0)?,
@@ -625,7 +649,7 @@ impl MemoryStore for SqliteStore {
         })
     }
 
-    fn stats(&self) -> HyphaeResult<StoreStats> {
+    fn stats(&self, project: Option<&str>) -> HyphaeResult<StoreStats> {
         let (total_memories, total_topics, avg_weight, oldest_str, newest_str): (
             usize,
             usize,
@@ -641,8 +665,8 @@ impl MemoryStore for SqliteStore {
                     COALESCE(AVG(weight), 0.0),
                     MIN(created_at),
                     MAX(created_at)
-                 FROM memories",
-                [],
+                 FROM memories WHERE (project = ?1 OR ?1 IS NULL)",
+                params![project],
                 |row| {
                     Ok((
                         row.get(0)?,

@@ -13,6 +13,7 @@ pub struct Document {
     pub chunk_count: usize,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]

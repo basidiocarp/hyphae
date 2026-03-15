@@ -273,6 +273,40 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
     }
 
+    // Migration: add project column to memories
+    let has_project_memories: bool = tx
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name='project'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if !has_project_memories {
+        tx.execute_batch(
+            "ALTER TABLE memories ADD COLUMN project TEXT;
+             CREATE INDEX IF NOT EXISTS idx_memories_project ON memories(project);",
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    }
+
+    // Migration: add project column to documents
+    let has_project_documents: bool = tx
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('documents') WHERE name='project'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if !has_project_documents {
+        tx.execute_batch(
+            "ALTER TABLE documents ADD COLUMN project TEXT;
+             CREATE INDEX IF NOT EXISTS idx_documents_project ON documents(project);",
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    }
+
     // sqlite-vec virtual table for vector search (dimension-aware)
     let vec_exists: bool = tx
         .query_row(
@@ -373,5 +407,38 @@ mod tests {
         assert!(tables.contains(&"chunks".to_string()));
         assert!(tables.contains(&"chunks_fts".to_string()));
         assert!(tables.contains(&"vec_chunks".to_string()));
+    }
+
+    #[test]
+    fn test_project_columns_exist() {
+        ensure_vec_init();
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        let memories_has_project: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name='project'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0)
+            > 0;
+        assert!(
+            memories_has_project,
+            "memories table should have project column"
+        );
+
+        let documents_has_project: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('documents') WHERE name='project'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0)
+            > 0;
+        assert!(
+            documents_has_project,
+            "documents table should have project column"
+        );
     }
 }
