@@ -164,7 +164,12 @@ fn main() -> Result<()> {
             #[cfg(not(feature = "embeddings"))]
             let serve_embedder: Option<&dyn hyphae_core::Embedder> = None;
 
-            hyphae_mcp::run_server(&store, serve_embedder, compact || cfg.mcp.compact, resolved_project)?;
+            hyphae_mcp::run_server(
+                &store,
+                serve_embedder,
+                compact || cfg.mcp.compact,
+                resolved_project,
+            )?;
         }
 
         #[cfg(feature = "embeddings")]
@@ -183,7 +188,14 @@ fn main() -> Result<()> {
             recursive,
             force,
         } => {
-            commands::docs::cmd_ingest(&store, path, recursive, force, resolved_project, embedder_ref)?;
+            commands::docs::cmd_ingest(
+                &store,
+                path,
+                recursive,
+                force,
+                resolved_project,
+                embedder_ref,
+            )?;
         }
 
         Commands::SearchDocs { query, limit } => {
@@ -243,4 +255,3 @@ mod tests {
         }
     }
 }
-

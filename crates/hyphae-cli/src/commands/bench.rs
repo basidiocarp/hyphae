@@ -19,7 +19,10 @@ pub(crate) fn cmd_bench(count: usize) -> Result<()> {
         store.store(mem)?;
     }
     let write_ms = t0.elapsed().as_millis();
-    let write_per_s = write_ms.checked_div(1).map(|_| count as u128 * 1000 / write_ms.max(1)).unwrap_or(0);
+    let write_per_s = write_ms
+        .checked_div(1)
+        .map(|_| count as u128 * 1000 / write_ms.max(1))
+        .unwrap_or(0);
     println!("  Write:  {write_ms}ms total  ({write_per_s} writes/s)");
 
     // Search benchmark — query across stored memories

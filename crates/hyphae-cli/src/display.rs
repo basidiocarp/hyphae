@@ -4,7 +4,10 @@ pub(crate) fn print_memory(memory: &Memory, score: Option<f32>) {
     if let Some(s) = score {
         print!("[{s:.3}] ");
     }
-    println!("[{}] [{}] {}", memory.importance, memory.topic, memory.summary);
+    println!(
+        "[{}] [{}] {}",
+        memory.importance, memory.topic, memory.summary
+    );
     if let Some(p) = &memory.project {
         println!("  project: {p}");
     }

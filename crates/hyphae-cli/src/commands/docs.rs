@@ -21,8 +21,7 @@ pub(crate) fn cmd_ingest(
     let mut skipped = 0usize;
     for (mut doc, chunks) in pairs {
         doc.project = project.clone();
-        let existing =
-            store.get_document_by_path(&doc.source_path, project.as_deref())?;
+        let existing = store.get_document_by_path(&doc.source_path, project.as_deref())?;
         if let Some(existing_doc) = existing {
             if !force {
                 println!(
@@ -57,12 +56,7 @@ pub(crate) fn cmd_search_docs(
     #[cfg(feature = "embeddings")]
     let results = if let Some(e) = embedder {
         let embedding = e.embed(&query)?;
-        store.search_chunks_hybrid(
-            &query,
-            &embedding,
-            limit as usize,
-            project.as_deref(),
-        )?
+        store.search_chunks_hybrid(&query, &embedding, limit as usize, project.as_deref())?
     } else {
         store.search_chunks_fts(&query, limit as usize, project.as_deref())?
     };

@@ -237,7 +237,10 @@ pub(crate) fn cmd_memoir_inspect(
         let stats = store.memoir_stats(&memoir.id)?;
         println!("Memoir:      {}", memoir.name);
         println!("Description: {}", memoir.description);
-        println!("Created:     {}", memoir.created_at.format("%Y-%m-%d %H:%M"));
+        println!(
+            "Created:     {}",
+            memoir.created_at.format("%Y-%m-%d %H:%M")
+        );
         println!("\nStats:");
         println!("  Concepts:       {}", stats.total_concepts);
         println!("  Links:          {}", stats.total_links);
