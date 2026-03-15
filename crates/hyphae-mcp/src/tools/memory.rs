@@ -78,37 +78,37 @@ pub(crate) fn tool_store(
     if let Some(query_emb) = embedding {
         let text = format!("{topic} {content}");
         if let Ok(similar) = store.search_hybrid(&text, &query_emb, 1, project) {
-        if let Some((existing, score)) = similar.first() {
-        if score > &0.85 && existing.topic == topic {
-            // Very similar content in same topic — update instead of duplicate
-            let mut updated = existing.clone();
-            updated.summary = content.to_string();
-            updated.updated_at = Utc::now();
-            updated.weight = Weight::default(); // Reset weight on update
-            if let Some(raw) = get_str(args, "raw_excerpt") {
-                updated.raw_excerpt = Some(raw.into());
+            if let Some((existing, score)) = similar.first() {
+                if score > &0.85 && existing.topic == topic {
+                    // Very similar content in same topic — update instead of duplicate
+                    let mut updated = existing.clone();
+                    updated.summary = content.to_string();
+                    updated.updated_at = Utc::now();
+                    updated.weight = Weight::default(); // Reset weight on update
+                    if let Some(raw) = get_str(args, "raw_excerpt") {
+                        updated.raw_excerpt = Some(raw.into());
+                    }
+                    if let Some(keywords_arr) = args.get("keywords").and_then(|v| v.as_array()) {
+                        updated.keywords = keywords_arr
+                            .iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect();
+                    }
+                    updated.importance = importance;
+                    updated.embedding = Some(query_emb);
+                    if let Err(e) = store.update(&updated) {
+                        return ToolResult::error(format!("failed to update: {e}"));
+                    }
+                    return if compact {
+                        ToolResult::text(format!("ok:{}", updated.id))
+                    } else {
+                        ToolResult::text(format!(
+                            "Updated existing memory (similarity {score:.2}): {}",
+                            updated.id
+                        ))
+                    };
+                }
             }
-            if let Some(keywords_arr) = args.get("keywords").and_then(|v| v.as_array()) {
-                updated.keywords = keywords_arr
-                    .iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect();
-            }
-            updated.importance = importance;
-            updated.embedding = Some(query_emb);
-            if let Err(e) = store.update(&updated) {
-                return ToolResult::error(format!("failed to update: {e}"));
-            }
-            return if compact {
-                ToolResult::text(format!("ok:{}", updated.id))
-            } else {
-                ToolResult::text(format!(
-                    "Updated existing memory (similarity {score:.2}): {}",
-                    updated.id
-                ))
-            };
-        }
-        }
         }
     }
 
@@ -161,46 +161,46 @@ pub(crate) fn tool_recall(
     if let Some(emb) = embedder {
         if let Ok(query_emb) = emb.embed(query) {
             if let Ok(results) = store.search_hybrid(query, &query_emb, limit, project) {
-        let mut scored_results = results;
-        if let Some(t) = topic {
-            scored_results.retain(|(m, _)| m.topic == t);
-        }
-        if let Some(kw) = keyword {
-            scored_results.retain(|(m, _)| m.keywords.iter().any(|k| k.contains(kw)));
-        }
+                let mut scored_results = results;
+                if let Some(t) = topic {
+                    scored_results.retain(|(m, _)| m.topic == t);
+                }
+                if let Some(kw) = keyword {
+                    scored_results.retain(|(m, _)| m.keywords.iter().any(|k| k.contains(kw)));
+                }
 
-        // Update access counts
-        for (mem, _) in &scored_results {
-            if let Err(e) = store.update_access(&mem.id) {
-                tracing::warn!("update_access failed: {e}");
-            }
-        }
+                // Update access counts
+                for (mem, _) in &scored_results {
+                    if let Err(e) = store.update_access(&mem.id) {
+                        tracing::warn!("update_access failed: {e}");
+                    }
+                }
 
-        if scored_results.is_empty() {
-            return ToolResult::text("No memories found.".into());
-        }
+                if scored_results.is_empty() {
+                    return ToolResult::text("No memories found.".into());
+                }
 
-        let mut output = String::new();
-        if compact {
-            for (mem, _) in &scored_results {
-                output.push_str(&format!("[{}] {}\n", mem.topic, mem.summary));
-            }
-        } else {
-            for (mem, score) in &scored_results {
-                output.push_str(&format!(
+                let mut output = String::new();
+                if compact {
+                    for (mem, _) in &scored_results {
+                        output.push_str(&format!("[{}] {}\n", mem.topic, mem.summary));
+                    }
+                } else {
+                    for (mem, score) in &scored_results {
+                        output.push_str(&format!(
                     "--- {} [score: {:.3}] ---\n  topic: {}\n  importance: {}\n  weight: {:.3}\n  summary: {}\n",
                     mem.id, score, mem.topic, mem.importance, mem.weight.value(), mem.summary
                 ));
-                if !mem.keywords.is_empty() {
-                    output.push_str(&format!("  keywords: {}\n", mem.keywords.join(", ")));
+                        if !mem.keywords.is_empty() {
+                            output.push_str(&format!("  keywords: {}\n", mem.keywords.join(", ")));
+                        }
+                        if let Some(ref raw) = mem.raw_excerpt {
+                            output.push_str(&format!("  raw: {raw}\n"));
+                        }
+                        output.push('\n');
+                    }
                 }
-                if let Some(ref raw) = mem.raw_excerpt {
-                    output.push_str(&format!("  raw: {raw}\n"));
-                }
-                output.push('\n');
-            }
-        }
-        return ToolResult::text(output);
+                return ToolResult::text(output);
             }
         }
     }

@@ -198,15 +198,15 @@ impl Config {
 pub fn load_config() -> Result<Config> {
     let path = config_path();
 
-    if let Some(p) = &path
-        && p.exists()
-    {
-        let content =
-            std::fs::read_to_string(p).with_context(|| format!("reading {}", p.display()))?;
-        let config: Config =
-            toml::from_str(&content).with_context(|| format!("parsing {}", p.display()))?;
-        config.validate()?;
-        return Ok(config);
+    if let Some(p) = &path {
+        if p.exists() {
+            let content =
+                std::fs::read_to_string(p).with_context(|| format!("reading {}", p.display()))?;
+            let config: Config =
+                toml::from_str(&content).with_context(|| format!("parsing {}", p.display()))?;
+            config.validate()?;
+            return Ok(config);
+        }
     }
 
     Ok(Config::default())
