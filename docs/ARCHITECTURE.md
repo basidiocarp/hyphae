@@ -2,12 +2,13 @@
 
 ## Overview
 
-Hyphae is a Rust workspace of 4 crates that compile into a single binary. No runtime dependencies, no external services.
+Hyphae is a Rust workspace of 5 crates that compile into a single binary. No runtime dependencies, no external services.
 
 ```
 hyphae (binary)
 ├── hyphae-core      Types, traits, embedder
 ├── hyphae-store     SQLite + FTS5 + sqlite-vec
+├── hyphae-ingest    File readers + chunking logic
 ├── hyphae-mcp       MCP server (JSON-RPC 2.0 over stdio)
 └── hyphae-cli       CLI, config, extraction, benchmarks
 ```
@@ -15,12 +16,12 @@ hyphae (binary)
 ## Crate Dependency Graph
 
 ```
-hyphae-cli ──────► hyphae-core
+hyphae-cli ──► hyphae-ingest ──► hyphae-core
    │               ▲
-   ├──► hyphae-store ─┘
+   ├──► hyphae-store ─────────► hyphae-core
    │       ▲
-   └──► hyphae-mcp ──► hyphae-store
-            │
+   └──► hyphae-mcp ──► hyphae-ingest
+            ├──► hyphae-store
             └──► hyphae-core
 ```
 
@@ -221,7 +222,7 @@ SqliteStore::with_dims(path: &Path, dims: usize) -> HyphaeResult<Self>  // custo
 SqliteStore::in_memory() -> HyphaeResult<Self>                     // for tests
 ```
 
-### Schema (8 tables)
+### Schema (12 tables)
 
 | Table | Type | Purpose |
 |-------|------|---------|
@@ -233,6 +234,10 @@ SqliteStore::in_memory() -> HyphaeResult<Self>                     // for tests
 | `concepts_fts` | FTS5 virtual | Full-text search on concept id, name, definition, labels |
 | `concept_links` | regular | Typed edges with CHECK(source_id != target_id) |
 | `hyphae_metadata` | regular | Key-value store (embedding_dims, last_decay_at) |
+| `documents` | regular | Ingested file metadata (source_path, source_type, chunk_count) |
+| `chunks` | regular | Text chunks with line numbers, headings, language metadata |
+| `chunks_fts` | FTS5 virtual | Full-text search on chunk content |
+| `vec_chunks` | vec0 virtual | Cosine similarity search for chunk embeddings |
 
 FTS tables are synchronized via AFTER INSERT/UPDATE/DELETE triggers.
 
@@ -292,6 +297,26 @@ On store via MCP, if an existing memory in the same topic has >85% hybrid search
 ### Cascade Delete
 
 `DELETE memoir` → cascades to all concepts → cascades to all links (via `ON DELETE CASCADE`).
+
+## hyphae-ingest
+
+File readers and chunking logic. Pure logic — no database I/O.
+
+### Entry Points
+
+```rust
+pub fn ingest_file(path: &Path, options: &IngestOptions) -> HyphaeResult<Vec<Chunk>>;
+pub fn ingest_directory(path: &Path, options: &IngestOptions) -> HyphaeResult<Vec<Chunk>>;
+pub fn should_skip(path: &Path) -> bool;
+```
+
+### Chunking Strategies
+
+| Strategy | Description |
+|----------|-------------|
+| `SlidingWindow` | Fixed-size overlapping windows by token/character count |
+| `ByHeading` | Split on Markdown headings (`#`, `##`, etc.) |
+| `ByFunction` | Split on function/method boundaries (language-aware) |
 
 ## hyphae-mcp
 
