@@ -4,8 +4,8 @@ members = [
   "crates/hyphae-core",
   "crates/hyphae-store",
   "crates/hyphae-mcp",
-    "crates/hyphae-cli",
-    "crates/hyphae-ingest",
+  "crates/hyphae-cli",
+  "crates/hyphae-ingest",
 ]
 
 [profile.release]
