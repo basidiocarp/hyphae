@@ -9,11 +9,14 @@
 - **File watcher**: `hyphae watch <path>` monitors filesystem and auto-re-ingests changed files with debounced events and graceful shutdown
 - **Project filtering**: All search and list operations optionally filter by project; `None` returns all (backward compatible)
 - **MCP project scoping**: `hyphae serve --project <name>` scopes all MCP tool operations to a project namespace
+- **TTL/expiry on memories**: `expires_at` field with auto-expiry for ephemeral importance (default 4 hours), `prune_expired()` to clean up
+- **Ephemeral importance level**: New `Importance::Ephemeral` variant for short-lived context like sprint goals or temporary notes
 
 ### Changed
 - CLI restructured with early-return commands (completions, config, init) that skip store/embedder initialization
 - `MemoryStore` and `ChunkStore` traits now accept `project: Option<&str>` on search/list methods
-- Schema auto-migrates to add `project` column on `memories` and `documents` tables
+- Schema auto-migrates to add `project`, `expires_at` columns on `memories` table and `project` on `documents`
+- Hybrid search FTS query now includes all columns (`updated_at`, `project`, `expires_at`) for correct row mapping
 
 ### CI/CD
 - Add concurrency groups to all workflows to cancel stale runs on new pushes
