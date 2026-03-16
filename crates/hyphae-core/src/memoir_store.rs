@@ -2,6 +2,37 @@ use crate::error::HyphaeResult;
 use crate::ids::{ConceptId, LinkId, MemoirId, MemoryId};
 use crate::memoir::{Concept, ConceptLink, Label, Memoir, MemoirStats, Relation};
 
+// ===========================================================================
+// Bulk-upsert input types
+// ===========================================================================
+
+/// Input for bulk-upserting a concept into a memoir.
+#[derive(Debug, Clone)]
+pub struct ConceptInput {
+    pub name: String,
+    pub labels: Vec<Label>,
+    pub description: String,
+}
+
+/// Input for bulk-upserting a concept link into a memoir.
+/// Source and target are identified by concept name within the memoir.
+#[derive(Debug, Clone)]
+pub struct LinkInput {
+    pub source_name: String,
+    pub target_name: String,
+    pub relation: String,
+    pub weight: f32,
+}
+
+/// Summary of how many items were created, updated, or left unchanged
+/// during a bulk upsert operation.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UpsertReport {
+    pub created: usize,
+    pub updated: usize,
+    pub unchanged: usize,
+}
+
 pub trait MemoirStore {
     // --- Memoir CRUD ---
     fn create_memoir(&self, memoir: Memoir) -> HyphaeResult<MemoirId>;
@@ -66,4 +97,27 @@ pub trait MemoirStore {
 
     // --- Stats ---
     fn memoir_stats(&self, memoir_id: &MemoirId) -> HyphaeResult<MemoirStats>;
+
+    // --- Bulk upsert ---
+
+    /// Upsert concepts by `(memoir_id, name)` — create if absent, update
+    /// definition/labels if changed, skip if identical.  The entire batch
+    /// runs inside a single transaction.
+    fn upsert_concepts(
+        &self,
+        memoir_id: &MemoirId,
+        concepts: &[ConceptInput],
+    ) -> HyphaeResult<UpsertReport>;
+
+    /// Upsert concept links by `(source_id, target_id, relation)` — create
+    /// if absent, update weight if changed, skip if identical.  Concept
+    /// names are resolved to IDs within the memoir.  The entire batch runs
+    /// inside a single transaction.
+    fn upsert_links(&self, memoir_id: &MemoirId, links: &[LinkInput])
+    -> HyphaeResult<UpsertReport>;
+
+    /// Delete every concept in `memoir_id` whose name is NOT in
+    /// `keep_names`.  Cascades to orphaned links via `ON DELETE CASCADE`.
+    /// Returns the number of concepts deleted.
+    fn prune_concepts(&self, memoir_id: &MemoirId, keep_names: &[String]) -> HyphaeResult<usize>;
 }

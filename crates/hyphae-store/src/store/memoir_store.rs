@@ -1,11 +1,11 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
 use rusqlite::{OptionalExtension, params};
 
 use hyphae_core::{
-    Concept, ConceptId, ConceptLink, HyphaeError, HyphaeResult, Label, LinkId, Memoir, MemoirId,
-    MemoirStats, MemoirStore, MemoryId, Relation,
+    Concept, ConceptId, ConceptInput, ConceptLink, HyphaeError, HyphaeResult, Label, LinkId,
+    LinkInput, Memoir, MemoirId, MemoirStats, MemoirStore, MemoryId, Relation, UpsertReport,
 };
 
 use super::SqliteStore;
@@ -590,6 +590,164 @@ impl MemoirStore for SqliteStore {
         Ok((concepts, all_links))
     }
 
+    fn upsert_concepts(
+        &self,
+        memoir_id: &MemoirId,
+        concepts: &[ConceptInput],
+    ) -> HyphaeResult<UpsertReport> {
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let mut report = UpsertReport::default();
+
+        for input in concepts {
+            let existing = self.get_concept_by_name(memoir_id, &input.name)?;
+
+            if let Some(concept) = existing {
+                let same_definition = concept.definition == input.description;
+                let same_labels = concept.labels == input.labels;
+
+                if same_definition && same_labels {
+                    report.unchanged += 1;
+                } else {
+                    let updated = Concept {
+                        definition: input.description.clone(),
+                        labels: input.labels.clone(),
+                        revision: concept.revision + 1,
+                        updated_at: Utc::now(),
+                        ..concept
+                    };
+                    self.update_concept(&updated)?;
+                    report.updated += 1;
+                }
+            } else {
+                let mut concept = Concept::new(
+                    memoir_id.clone(),
+                    input.name.clone(),
+                    input.description.clone(),
+                );
+                concept.labels = input.labels.clone();
+                self.add_concept(concept)?;
+                report.created += 1;
+            }
+        }
+
+        tx.commit()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        Ok(report)
+    }
+
+    fn upsert_links(
+        &self,
+        memoir_id: &MemoirId,
+        links: &[LinkInput],
+    ) -> HyphaeResult<UpsertReport> {
+        // Build name → ConceptId map up-front (one query)
+        let all_concepts = self.list_concepts(memoir_id)?;
+        let name_to_id: HashMap<&str, &ConceptId> = all_concepts
+            .iter()
+            .map(|c| (c.name.as_str(), &c.id))
+            .collect();
+
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let mut report = UpsertReport::default();
+
+        for input in links {
+            let source_id = name_to_id
+                .get(input.source_name.as_str())
+                .ok_or_else(|| HyphaeError::NotFound(format!("concept '{}'", input.source_name)))?;
+            let target_id = name_to_id
+                .get(input.target_name.as_str())
+                .ok_or_else(|| HyphaeError::NotFound(format!("concept '{}'", input.target_name)))?;
+
+            let relation_str = input.relation.to_lowercase();
+
+            // Look for an existing link with the same (source, target, relation)
+            let existing: Option<(String, f32)> = self
+                .conn
+                .query_row(
+                    "SELECT id, weight FROM concept_links
+                     WHERE source_id = ?1 AND target_id = ?2 AND relation = ?3",
+                    params![source_id.as_ref(), target_id.as_ref(), relation_str],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, f32>(1)?)),
+                )
+                .optional()
+                .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+            if let Some((existing_id, existing_weight)) = existing {
+                let weight_changed = (existing_weight - input.weight).abs() > f32::EPSILON;
+                if weight_changed {
+                    self.conn
+                        .execute(
+                            "UPDATE concept_links SET weight = ?2 WHERE id = ?1",
+                            params![existing_id, input.weight],
+                        )
+                        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+                    report.updated += 1;
+                } else {
+                    report.unchanged += 1;
+                }
+            } else {
+                let relation: Relation = relation_str.parse().unwrap_or(Relation::RelatedTo);
+                let mut link =
+                    ConceptLink::new((*source_id).clone(), (*target_id).clone(), relation);
+                link.weight = hyphae_core::Weight::new_clamped(input.weight);
+                self.add_link(link)?;
+                report.created += 1;
+            }
+        }
+
+        tx.commit()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        Ok(report)
+    }
+
+    fn prune_concepts(&self, memoir_id: &MemoirId, keep_names: &[String]) -> HyphaeResult<usize> {
+        if keep_names.is_empty() {
+            // Delete all concepts in this memoir
+            let deleted = self
+                .conn
+                .execute(
+                    "DELETE FROM concepts WHERE memoir_id = ?1",
+                    params![memoir_id.as_ref()],
+                )
+                .map_err(|e| HyphaeError::Database(e.to_string()))?;
+            return Ok(deleted);
+        }
+
+        // Build a parameterized NOT IN clause
+        let placeholders: String = (1..=keep_names.len())
+            .map(|i| format!("?{}", i + 1))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let sql =
+            format!("DELETE FROM concepts WHERE memoir_id = ?1 AND name NOT IN ({placeholders})");
+
+        let mut param_values: Vec<&dyn rusqlite::types::ToSql> =
+            Vec::with_capacity(keep_names.len() + 1);
+        let memoir_id_str = memoir_id.to_string();
+        param_values.push(&memoir_id_str);
+        for name in keep_names {
+            param_values.push(name);
+        }
+
+        let deleted = self
+            .conn
+            .execute(&sql, param_values.as_slice())
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        Ok(deleted)
+    }
+
     fn memoir_stats(&self, memoir_id: &MemoirId) -> HyphaeResult<MemoirStats> {
         let total_concepts: usize = self
             .conn
@@ -647,5 +805,227 @@ impl MemoirStore for SqliteStore {
             avg_confidence,
             label_counts,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hyphae_core::{ConceptInput, Label, LinkInput, Memoir, MemoirStore};
+
+    use super::super::SqliteStore;
+
+    fn test_store() -> SqliteStore {
+        SqliteStore::in_memory().unwrap()
+    }
+
+    fn make_inputs(count: usize) -> Vec<ConceptInput> {
+        (0..count)
+            .map(|i| ConceptInput {
+                name: format!("concept_{i}"),
+                labels: vec![],
+                description: format!("description for concept_{i}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_upsert_concepts_creates_new() {
+        let store = test_store();
+        let memoir = Memoir::new("test".into(), "".into());
+        let memoir_id = store.create_memoir(memoir).unwrap();
+
+        let inputs = make_inputs(10);
+        let report = store.upsert_concepts(&memoir_id, &inputs).unwrap();
+
+        assert_eq!(report.created, 10);
+        assert_eq!(report.updated, 0);
+        assert_eq!(report.unchanged, 0);
+
+        let concepts = store.list_concepts(&memoir_id).unwrap();
+        assert_eq!(concepts.len(), 10);
+    }
+
+    #[test]
+    fn test_upsert_concepts_update_and_unchanged() {
+        let store = test_store();
+        let memoir = Memoir::new("test2".into(), "".into());
+        let memoir_id = store.create_memoir(memoir).unwrap();
+
+        // Create 10 concepts
+        let inputs = make_inputs(10);
+        store.upsert_concepts(&memoir_id, &inputs).unwrap();
+
+        // Second upsert: 2 changed descriptions + 1 new + 7 unchanged
+        let mut second_batch: Vec<ConceptInput> = make_inputs(10);
+        second_batch[0].description = "CHANGED description".into();
+        second_batch[3].description = "ALSO CHANGED".into();
+        second_batch.push(ConceptInput {
+            name: "concept_10".into(),
+            labels: vec![],
+            description: "brand new".into(),
+        });
+
+        let report = store.upsert_concepts(&memoir_id, &second_batch).unwrap();
+
+        assert_eq!(report.created, 1, "one new concept");
+        assert_eq!(report.updated, 2, "two changed concepts");
+        assert_eq!(report.unchanged, 8, "eight unchanged concepts");
+
+        let concepts = store.list_concepts(&memoir_id).unwrap();
+        assert_eq!(concepts.len(), 11);
+    }
+
+    #[test]
+    fn test_upsert_concepts_label_change_triggers_update() {
+        let store = test_store();
+        let memoir = Memoir::new("test3".into(), "".into());
+        let memoir_id = store.create_memoir(memoir).unwrap();
+
+        let initial = vec![ConceptInput {
+            name: "alpha".into(),
+            labels: vec![],
+            description: "same".into(),
+        }];
+        store.upsert_concepts(&memoir_id, &initial).unwrap();
+
+        let with_label = vec![ConceptInput {
+            name: "alpha".into(),
+            labels: vec![Label::new("code", "function").unwrap()],
+            description: "same".into(),
+        }];
+        let report = store.upsert_concepts(&memoir_id, &with_label).unwrap();
+
+        assert_eq!(report.updated, 1);
+        assert_eq!(report.created, 0);
+        assert_eq!(report.unchanged, 0);
+    }
+
+    #[test]
+    fn test_upsert_links_creates_and_updates() {
+        let store = test_store();
+        let memoir = Memoir::new("links_test".into(), "".into());
+        let memoir_id = store.create_memoir(memoir).unwrap();
+
+        // Create the concepts the links will reference
+        let concept_inputs = vec![
+            ConceptInput {
+                name: "a".into(),
+                labels: vec![],
+                description: "node a".into(),
+            },
+            ConceptInput {
+                name: "b".into(),
+                labels: vec![],
+                description: "node b".into(),
+            },
+            ConceptInput {
+                name: "c".into(),
+                labels: vec![],
+                description: "node c".into(),
+            },
+        ];
+        store.upsert_concepts(&memoir_id, &concept_inputs).unwrap();
+
+        let links = vec![
+            LinkInput {
+                source_name: "a".into(),
+                target_name: "b".into(),
+                relation: "depends_on".into(),
+                weight: 0.5,
+            },
+            LinkInput {
+                source_name: "b".into(),
+                target_name: "c".into(),
+                relation: "part_of".into(),
+                weight: 0.8,
+            },
+        ];
+        let report = store.upsert_links(&memoir_id, &links).unwrap();
+        assert_eq!(report.created, 2);
+        assert_eq!(report.updated, 0);
+        assert_eq!(report.unchanged, 0);
+
+        // Re-upsert same links — should be unchanged
+        let report2 = store.upsert_links(&memoir_id, &links).unwrap();
+        assert_eq!(report2.created, 0);
+        assert_eq!(report2.updated, 0);
+        assert_eq!(report2.unchanged, 2);
+
+        // Update weight on one link
+        let updated_links = vec![LinkInput {
+            source_name: "a".into(),
+            target_name: "b".into(),
+            relation: "depends_on".into(),
+            weight: 0.9,
+        }];
+        let report3 = store.upsert_links(&memoir_id, &updated_links).unwrap();
+        assert_eq!(report3.updated, 1);
+        assert_eq!(report3.unchanged, 0);
+    }
+
+    #[test]
+    fn test_prune_concepts_removes_missing_and_cascades_links() {
+        let store = test_store();
+        let memoir = Memoir::new("prune_test".into(), "".into());
+        let memoir_id = store.create_memoir(memoir).unwrap();
+
+        // Create concepts a, b, c
+        let concept_inputs = vec![
+            ConceptInput {
+                name: "a".into(),
+                labels: vec![],
+                description: "a".into(),
+            },
+            ConceptInput {
+                name: "b".into(),
+                labels: vec![],
+                description: "b".into(),
+            },
+            ConceptInput {
+                name: "c".into(),
+                labels: vec![],
+                description: "c".into(),
+            },
+        ];
+        store.upsert_concepts(&memoir_id, &concept_inputs).unwrap();
+
+        // Link a → b
+        let links = vec![LinkInput {
+            source_name: "a".into(),
+            target_name: "b".into(),
+            relation: "depends_on".into(),
+            weight: 0.5,
+        }];
+        store.upsert_links(&memoir_id, &links).unwrap();
+
+        // Prune — keep only b and c (remove a)
+        let keep = vec!["b".to_string(), "c".to_string()];
+        let deleted = store.prune_concepts(&memoir_id, &keep).unwrap();
+        assert_eq!(deleted, 1, "one concept deleted");
+
+        let remaining = store.list_concepts(&memoir_id).unwrap();
+        assert_eq!(remaining.len(), 2);
+        assert!(remaining.iter().all(|c| c.name != "a"));
+
+        // Link a → b should be gone via CASCADE
+        let concept_b = store.get_concept_by_name(&memoir_id, "b").unwrap().unwrap();
+        let links_to_b = store.get_links_to(&concept_b.id).unwrap();
+        assert!(links_to_b.is_empty(), "cascaded link should be deleted");
+    }
+
+    #[test]
+    fn test_prune_concepts_empty_keep_list_deletes_all() {
+        let store = test_store();
+        let memoir = Memoir::new("prune_all".into(), "".into());
+        let memoir_id = store.create_memoir(memoir).unwrap();
+
+        let inputs = make_inputs(5);
+        store.upsert_concepts(&memoir_id, &inputs).unwrap();
+
+        let deleted = store.prune_concepts(&memoir_id, &[]).unwrap();
+        assert_eq!(deleted, 5);
+
+        let remaining = store.list_concepts(&memoir_id).unwrap();
+        assert!(remaining.is_empty());
     }
 }
