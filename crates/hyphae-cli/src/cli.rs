@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use crate::commands::memoir::MemoirArgs;
 
 #[derive(Parser)]
-#[command(name = "hyphae")]
+#[command(name = "hyphae", version)]
 #[command(about = "Persistent memory system for AI agents", long_about = None)]
 pub(crate) struct Cli {
     /// Path to database file
