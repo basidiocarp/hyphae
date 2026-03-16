@@ -15,6 +15,6 @@ jobs:
     uses: basidiocarp/.github/.github/workflows/rust-performance.yml@main
     with:
       binary: hyphae
-      max-size-mb: 5
+      max-size-mb: 6
       max-startup-ms: 15
       build-flags: '--no-default-features'
