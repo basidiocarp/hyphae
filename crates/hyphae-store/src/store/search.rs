@@ -39,16 +39,17 @@ impl SqliteStore {
         query: &str,
         embedding: Option<&[f32]>,
         limit: usize,
+        offset: usize,
         include_docs: bool,
         project: Option<&str>,
     ) -> HyphaeResult<Vec<UnifiedSearchResult>> {
         const K: f32 = 60.0;
-        let pool = limit * 3;
+        let pool = (limit + offset) * 3;
 
         let mem_results: Vec<(Memory, f32)> = if let Some(emb) = embedding {
-            self.search_hybrid(query, emb, pool, project)?
+            self.search_hybrid(query, emb, pool, 0, project)?
         } else {
-            self.search_fts(query, pool, project)?
+            self.search_fts(query, pool, 0, project)?
                 .into_iter()
                 .enumerate()
                 .map(|(i, m)| (m, 1.0 / (K + i as f32)))
@@ -57,9 +58,9 @@ impl SqliteStore {
 
         let chunk_results = if include_docs {
             if let Some(emb) = embedding {
-                self.search_chunks_hybrid(query, emb, pool, project)?
+                self.search_chunks_hybrid(query, emb, pool, 0, project)?
             } else {
-                self.search_chunks_fts(query, pool, project)?
+                self.search_chunks_fts(query, pool, 0, project)?
             }
         } else {
             Vec::new()
@@ -87,10 +88,11 @@ impl SqliteStore {
         // --- merge and sort ---
         let mut ranked: Vec<(String, f32)> = scores.into_iter().collect();
         ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        ranked.truncate(limit);
 
         let results = ranked
             .into_iter()
+            .skip(offset)
+            .take(limit)
             .filter_map(|(key, score)| {
                 if let Some(mem) = memory_map.remove(&key) {
                     Some(UnifiedSearchResult::Memory { memory: mem, score })
@@ -341,7 +343,7 @@ mod tests {
             .unwrap();
 
         let results = store
-            .search_all("Rust systems programming", None, 10, false, None)
+            .search_all("Rust systems programming", None, 10, 0, false, None)
             .unwrap();
 
         assert!(!results.is_empty(), "should find at least one memory");
@@ -376,7 +378,7 @@ mod tests {
 
         // Search with no memories present
         let results = store
-            .search_all("SQLite database", None, 10, true, None)
+            .search_all("SQLite database", None, 10, 0, true, None)
             .unwrap();
 
         assert!(!results.is_empty(), "should find the chunk");
@@ -416,7 +418,7 @@ mod tests {
             )])
             .unwrap();
 
-        let results = store.search_all("SQLite", None, 10, true, None).unwrap();
+        let results = store.search_all("SQLite", None, 10, 0, true, None).unwrap();
 
         assert!(results.len() >= 2, "should find results from both stores");
 
@@ -466,7 +468,7 @@ mod tests {
             .unwrap();
 
         let results = store
-            .search_all("cargo test", None, 10, false, None)
+            .search_all("cargo test", None, 10, 0, false, None)
             .unwrap();
 
         assert!(
@@ -480,7 +482,9 @@ mod tests {
     #[test]
     fn test_search_all_empty_store() {
         let store = test_store();
-        let results = store.search_all("anything", None, 10, true, None).unwrap();
+        let results = store
+            .search_all("anything", None, 10, 0, true, None)
+            .unwrap();
         assert!(results.is_empty(), "empty store should return no results");
     }
 
@@ -497,8 +501,85 @@ mod tests {
                 .unwrap();
         }
 
-        let results = store.search_all("testing", None, 5, false, None).unwrap();
+        let results = store
+            .search_all("testing", None, 5, 0, false, None)
+            .unwrap();
 
         assert!(results.len() <= 5, "should respect the limit parameter");
+    }
+
+    #[test]
+    fn test_search_fts_offset_pagination() {
+        let store = test_store();
+        // Store 10 memories with distinct summaries
+        for i in 0..10 {
+            store
+                .store(Memory::new(
+                    "pagination".to_string(),
+                    format!("Pagination test memory number {i}"),
+                    hyphae_core::Importance::Medium,
+                ))
+                .unwrap();
+        }
+
+        // First page: offset=0, limit=5
+        let page1 = store
+            .search_fts("pagination test memory", 5, 0, None)
+            .unwrap();
+        assert_eq!(page1.len(), 5, "first page should have 5 results");
+
+        // Second page: offset=5, limit=5
+        let page2 = store
+            .search_fts("pagination test memory", 5, 5, None)
+            .unwrap();
+        assert_eq!(page2.len(), 5, "second page should have 5 results");
+
+        // Verify no overlap: collect IDs from both pages
+        let page1_ids: Vec<String> = page1.iter().map(|m| m.id.to_string()).collect();
+        let page2_ids: Vec<String> = page2.iter().map(|m| m.id.to_string()).collect();
+        for id in &page1_ids {
+            assert!(
+                !page2_ids.contains(id),
+                "pages should not overlap: {id} found in both"
+            );
+        }
+    }
+
+    #[test]
+    fn test_search_all_offset_pagination() {
+        let store = test_store();
+        for i in 0..10 {
+            store
+                .store(Memory::new(
+                    "offset_test".to_string(),
+                    format!("Offset pagination memory {i}"),
+                    hyphae_core::Importance::Medium,
+                ))
+                .unwrap();
+        }
+
+        let page1 = store
+            .search_all("offset pagination", None, 5, 0, false, None)
+            .unwrap();
+        let page2 = store
+            .search_all("offset pagination", None, 5, 5, false, None)
+            .unwrap();
+
+        assert_eq!(page1.len(), 5, "first page should have 5 results");
+        assert_eq!(page2.len(), 5, "second page should have 5 results");
+
+        // Extract IDs and verify no overlap
+        let get_id = |r: &UnifiedSearchResult| match r {
+            UnifiedSearchResult::Memory { memory, .. } => memory.id.to_string(),
+            UnifiedSearchResult::Chunk { chunk, .. } => chunk.id.to_string(),
+        };
+        let ids1: Vec<String> = page1.iter().map(get_id).collect();
+        let ids2: Vec<String> = page2.iter().map(get_id).collect();
+        for id in &ids1 {
+            assert!(
+                !ids2.contains(id),
+                "pages should not overlap: {id} found in both"
+            );
+        }
     }
 }

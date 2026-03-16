@@ -35,7 +35,7 @@ pub fn extract_and_store(store: &SqliteStore, text: &str, project: &str) -> Resu
 #[allow(dead_code)]
 pub fn recall_context(store: &SqliteStore, query: &str, limit: usize) -> Result<String> {
     // Try FTS search with the query
-    let results = store.search_fts(query, limit * 2, None)?;
+    let results = store.search_fts(query, limit * 2, 0, None)?;
 
     let relevant: Vec<_> = if results.is_empty() {
         let topics = store.list_topics(None)?;

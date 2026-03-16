@@ -190,6 +190,7 @@ impl ChunkStore for SqliteStore {
         &self,
         query: &str,
         limit: usize,
+        offset: usize,
         project: Option<&str>,
     ) -> HyphaeResult<Vec<ChunkSearchResult>> {
         let sanitized = sanitize_fts_query(query);
@@ -205,7 +206,7 @@ impl ChunkStore for SqliteStore {
              WHERE chunks_fts MATCH ?1 \
              AND (d.project = ?3 OR ?3 IS NULL) \
              ORDER BY fts.rank \
-             LIMIT ?2"
+             LIMIT ?2 OFFSET ?4"
         );
 
         let mut stmt = self
@@ -214,11 +215,14 @@ impl ChunkStore for SqliteStore {
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         let rows = stmt
-            .query_map(params![sanitized, limit as i64, project], |row| {
-                let chunk = row_to_chunk(row)?;
-                let rank: f32 = row.get(11)?;
-                Ok((chunk, rank))
-            })
+            .query_map(
+                params![sanitized, limit as i64, project, offset as i64],
+                |row| {
+                    let chunk = row_to_chunk(row)?;
+                    let rank: f32 = row.get(11)?;
+                    Ok((chunk, rank))
+                },
+            )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         let mut results = Vec::new();
@@ -234,9 +238,12 @@ impl ChunkStore for SqliteStore {
         &self,
         embedding: &[f32],
         limit: usize,
+        offset: usize,
         project: Option<&str>,
     ) -> HyphaeResult<Vec<ChunkSearchResult>> {
         let query_blob = embedding_to_blob(embedding);
+        // Fetch enough from KNN to apply offset on final results
+        let knn_limit = limit + offset;
 
         let knn_rows: Vec<(String, f32)> = self
             .conn
@@ -247,7 +254,7 @@ impl ChunkStore for SqliteStore {
                  LIMIT ?2",
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?
-            .query_map(params![query_blob, limit as i64], |row| {
+            .query_map(params![query_blob, knn_limit as i64], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, f32>(1)?))
             })
             .map_err(|e| HyphaeError::Database(e.to_string()))?
@@ -294,6 +301,8 @@ impl ChunkStore for SqliteStore {
                     score: 1.0 - distance,
                 })
             })
+            .skip(offset)
+            .take(limit)
             .collect();
 
         Ok(results)
@@ -304,9 +313,10 @@ impl ChunkStore for SqliteStore {
         query: &str,
         embedding: &[f32],
         limit: usize,
+        offset: usize,
         project: Option<&str>,
     ) -> HyphaeResult<Vec<ChunkSearchResult>> {
-        let pool_size = limit * 4;
+        let pool_size = (limit + offset) * 4;
         let sanitized = sanitize_fts_query(query);
 
         let mut fts_scores: HashMap<String, f32> = HashMap::new();
@@ -352,7 +362,7 @@ impl ChunkStore for SqliteStore {
             }
         }
 
-        let vec_results = self.search_chunks_by_embedding(embedding, pool_size, project)?;
+        let vec_results = self.search_chunks_by_embedding(embedding, pool_size, 0, project)?;
         let mut vec_scores: HashMap<String, f32> = HashMap::new();
         for result in vec_results {
             vec_scores.insert(result.chunk.id.to_string(), result.score);
@@ -371,10 +381,11 @@ impl ChunkStore for SqliteStore {
             .collect();
 
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        scored.truncate(limit);
 
         let results = scored
             .into_iter()
+            .skip(offset)
+            .take(limit)
             .filter_map(|(id, score)| {
                 all_chunks
                     .remove(&id)

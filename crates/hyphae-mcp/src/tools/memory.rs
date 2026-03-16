@@ -77,7 +77,7 @@ pub(crate) fn tool_store(
     // Dedup check: if a very similar memory exists in the same topic, update it instead
     if let Some(query_emb) = embedding {
         let text = format!("{topic} {content}");
-        if let Ok(similar) = store.search_hybrid(&text, &query_emb, 1, project) {
+        if let Ok(similar) = store.search_hybrid(&text, &query_emb, 1, 0, project) {
             if let Some((existing, score)) = similar.first() {
                 if score > &0.85 && existing.topic == topic {
                     // Very similar content in same topic — update instead of duplicate
@@ -153,6 +153,7 @@ pub(crate) fn tool_recall(
         None => return ToolResult::error("missing required field: query".into()),
     };
     let limit = get_bounded_i64(args, "limit", 5, 1, 100) as usize;
+    let offset = get_bounded_i64(args, "offset", 0, 0, 10000) as usize;
     let topic = get_str(args, "topic");
 
     let keyword = get_str(args, "keyword");
@@ -160,7 +161,7 @@ pub(crate) fn tool_recall(
     // Try hybrid search if embedder is available
     if let Some(emb) = embedder {
         if let Ok(query_emb) = emb.embed(query) {
-            if let Ok(results) = store.search_hybrid(query, &query_emb, limit, project) {
+            if let Ok(results) = store.search_hybrid(query, &query_emb, limit, offset, project) {
                 let mut scored_results = results;
                 if let Some(t) = topic {
                     scored_results.retain(|(m, _)| m.topic == t);
@@ -206,14 +207,14 @@ pub(crate) fn tool_recall(
     }
 
     // Fallback: FTS then keywords
-    let mut results = match store.search_fts(query, limit, project) {
+    let mut results = match store.search_fts(query, limit, offset, project) {
         Ok(r) => r,
         Err(e) => return ToolResult::error(format!("search error: {e}")),
     };
 
     if results.is_empty() {
         let keywords: Vec<&str> = query.split_whitespace().collect();
-        results = match store.search_by_keywords(&keywords, limit, project) {
+        results = match store.search_by_keywords(&keywords, limit, offset, project) {
             Ok(r) => r,
             Err(e) => return ToolResult::error(format!("search error: {e}")),
         };

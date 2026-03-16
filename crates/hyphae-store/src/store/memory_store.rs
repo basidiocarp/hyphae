@@ -168,6 +168,7 @@ impl MemoryStore for SqliteStore {
         &self,
         keywords: &[&str],
         limit: usize,
+        offset: usize,
         project: Option<&str>,
     ) -> HyphaeResult<Vec<Memory>> {
         if keywords.is_empty() {
@@ -182,10 +183,11 @@ impl MemoryStore for SqliteStore {
             .collect();
         let where_clause = where_parts.join(" OR ");
         let limit_pos = keywords.len() + 1;
-        let project_pos = keywords.len() + 2;
+        let offset_pos = keywords.len() + 2;
+        let project_pos = keywords.len() + 3;
 
         let query = format!(
-            "SELECT {SELECT_COLS} FROM memories WHERE ({where_clause}) AND (project = ?{project_pos} OR ?{project_pos} IS NULL) ORDER BY weight DESC LIMIT ?{limit_pos}"
+            "SELECT {SELECT_COLS} FROM memories WHERE ({where_clause}) AND (project = ?{project_pos} OR ?{project_pos} IS NULL) ORDER BY weight DESC LIMIT ?{limit_pos} OFFSET ?{offset_pos}"
         );
 
         let mut stmt = self
@@ -198,6 +200,7 @@ impl MemoryStore for SqliteStore {
             .map(|k| Box::new(format!("%{k}%")) as Box<dyn rusqlite::types::ToSql>)
             .collect();
         param_values.push(Box::new(limit as i64));
+        param_values.push(Box::new(offset as i64));
         param_values.push(Box::new(project.map(|s| s.to_string())));
 
         let params_ref: Vec<&dyn rusqlite::types::ToSql> =
@@ -218,6 +221,7 @@ impl MemoryStore for SqliteStore {
         &self,
         query: &str,
         limit: usize,
+        offset: usize,
         project: Option<&str>,
     ) -> HyphaeResult<Vec<Memory>> {
         let sanitized = sanitize_fts_query(query);
@@ -232,7 +236,7 @@ impl MemoryStore for SqliteStore {
              )
              AND (m.project = ?3 OR ?3 IS NULL)
              ORDER BY m.weight DESC
-             LIMIT ?2"
+             LIMIT ?2 OFFSET ?4"
         );
 
         let mut stmt = self
@@ -241,7 +245,10 @@ impl MemoryStore for SqliteStore {
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         let rows = stmt
-            .query_map(params![sanitized, limit as i64, project], row_to_memory)
+            .query_map(
+                params![sanitized, limit as i64, project, offset as i64],
+                row_to_memory,
+            )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         let mut results = Vec::new();
@@ -255,9 +262,12 @@ impl MemoryStore for SqliteStore {
         &self,
         embedding: &[f32],
         limit: usize,
+        offset: usize,
         project: Option<&str>,
     ) -> HyphaeResult<Vec<(Memory, f32)>> {
         let query_blob = embedding_to_blob(embedding);
+        // Fetch enough from KNN to apply offset on final results
+        let knn_limit = limit + offset;
 
         let mut knn_stmt = self
             .conn
@@ -271,7 +281,7 @@ impl MemoryStore for SqliteStore {
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         let knn_rows: Vec<(String, f32)> = knn_stmt
-            .query_map(params![query_blob, limit as i64], |row| {
+            .query_map(params![query_blob, knn_limit as i64], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, f32>(1)?))
             })
             .map_err(|e| HyphaeError::Database(e.to_string()))?
@@ -320,6 +330,8 @@ impl MemoryStore for SqliteStore {
                 results.push((memory, similarity));
             }
         }
+        // Apply offset on final results
+        let results = results.into_iter().skip(offset).take(limit).collect();
         Ok(results)
     }
 
@@ -328,9 +340,10 @@ impl MemoryStore for SqliteStore {
         query: &str,
         embedding: &[f32],
         limit: usize,
+        offset: usize,
         project: Option<&str>,
     ) -> HyphaeResult<Vec<(Memory, f32)>> {
-        let pool_size = limit * 4;
+        let pool_size = (limit + offset) * 4;
         let sanitized = sanitize_fts_query(query);
 
         let fts_sql = "SELECT m.id, m.created_at, m.updated_at, m.last_accessed, m.access_count, m.weight, \
@@ -370,7 +383,7 @@ impl MemoryStore for SqliteStore {
             }
         }
 
-        let vec_results = self.search_by_embedding(embedding, pool_size, project)?;
+        let vec_results = self.search_by_embedding(embedding, pool_size, 0, project)?;
         let mut vec_scores: HashMap<String, f32> = HashMap::new();
         for (memory, similarity) in vec_results {
             vec_scores.insert(memory.id.to_string(), similarity);
@@ -386,10 +399,11 @@ impl MemoryStore for SqliteStore {
         }
 
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        scored.truncate(limit);
 
         let results: Vec<(Memory, f32)> = scored
             .into_iter()
+            .skip(offset)
+            .take(limit)
             .filter_map(|(id, score)| all_memories.remove(&id).map(|mem| (mem, score)))
             .collect();
 

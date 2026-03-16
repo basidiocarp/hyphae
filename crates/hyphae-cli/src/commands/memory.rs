@@ -32,7 +32,7 @@ pub(crate) fn cmd_search(
     limit: usize,
     project: Option<String>,
 ) -> Result<()> {
-    let results = store.search_fts(&query, limit, project.as_deref())?;
+    let results = store.search_fts(&query, limit, 0, project.as_deref())?;
     for mem in &results {
         crate::display::print_memory(mem, None);
     }

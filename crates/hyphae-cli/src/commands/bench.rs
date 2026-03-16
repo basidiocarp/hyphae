@@ -29,7 +29,7 @@ pub(crate) fn cmd_bench(count: usize) -> Result<()> {
     let t1 = Instant::now();
     let stride = (count / 10).max(1);
     for i in 0..count {
-        let _ = store.search_fts(&format!("bench-topic-{}", i % stride), 5, None)?;
+        let _ = store.search_fts(&format!("bench-topic-{}", i % stride), 5, 0, None)?;
     }
     let search_ms = t1.elapsed().as_millis();
     let search_per_s = count as u128 * 1000 / search_ms.max(1);

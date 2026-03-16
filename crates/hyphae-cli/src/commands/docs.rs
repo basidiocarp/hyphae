@@ -56,14 +56,14 @@ pub(crate) fn cmd_search_docs(
     #[cfg(feature = "embeddings")]
     let results = if let Some(e) = embedder {
         let embedding = e.embed(&query)?;
-        store.search_chunks_hybrid(&query, &embedding, limit as usize, project.as_deref())?
+        store.search_chunks_hybrid(&query, &embedding, limit as usize, 0, project.as_deref())?
     } else {
-        store.search_chunks_fts(&query, limit as usize, project.as_deref())?
+        store.search_chunks_fts(&query, limit as usize, 0, project.as_deref())?
     };
     #[cfg(not(feature = "embeddings"))]
     let results = {
         let _ = embedder;
-        store.search_chunks_fts(&query, limit as usize, project.as_deref())?
+        store.search_chunks_fts(&query, limit as usize, 0, project.as_deref())?
     };
 
     if results.is_empty() {
@@ -142,7 +142,7 @@ pub(crate) fn cmd_search_all(
     };
 
     let emb_ref = embedding.as_deref();
-    let results = store.search_all(&query, emb_ref, limit, include_docs, project.as_deref())?;
+    let results = store.search_all(&query, emb_ref, limit, 0, include_docs, project.as_deref())?;
 
     if results.is_empty() {
         println!("No results found");

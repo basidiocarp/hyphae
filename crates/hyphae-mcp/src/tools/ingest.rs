@@ -83,20 +83,23 @@ pub(crate) fn tool_search_docs(
         Err(e) => return e,
     };
     let limit = get_bounded_i64(args, "limit", 10, 1, 100) as usize;
+    let offset = get_bounded_i64(args, "offset", 0, 0, 10000) as usize;
 
     let results = if let Some(emb) = embedder {
         match emb.embed(query) {
-            Ok(embedding) => match store.search_chunks_hybrid(query, &embedding, limit, project) {
-                Ok(r) => r,
-                Err(e) => return ToolResult::error(format!("search error: {e}")),
-            },
-            Err(_) => match store.search_chunks_fts(query, limit, project) {
+            Ok(embedding) => {
+                match store.search_chunks_hybrid(query, &embedding, limit, offset, project) {
+                    Ok(r) => r,
+                    Err(e) => return ToolResult::error(format!("search error: {e}")),
+                }
+            }
+            Err(_) => match store.search_chunks_fts(query, limit, offset, project) {
                 Ok(r) => r,
                 Err(e) => return ToolResult::error(format!("search error: {e}")),
             },
         }
     } else {
-        match store.search_chunks_fts(query, limit, project) {
+        match store.search_chunks_fts(query, limit, offset, project) {
             Ok(r) => r,
             Err(e) => return ToolResult::error(format!("search error: {e}")),
         }
@@ -205,6 +208,7 @@ pub(crate) fn tool_search_all(
         Err(e) => return e,
     };
     let limit = get_bounded_i64(args, "limit", 10, 1, 50) as usize;
+    let offset = get_bounded_i64(args, "offset", 0, 0, 10000) as usize;
     let include_docs = args
         .get("include_docs")
         .and_then(|v| v.as_bool())
@@ -213,7 +217,7 @@ pub(crate) fn tool_search_all(
     let embedding = embedder.and_then(|emb| emb.embed(query).ok());
     let emb_ref = embedding.as_deref();
 
-    let results = match store.search_all(query, emb_ref, limit, include_docs, project) {
+    let results = match store.search_all(query, emb_ref, limit, offset, include_docs, project) {
         Ok(r) => r,
         Err(e) => return ToolResult::error(format!("search error: {e}")),
     };

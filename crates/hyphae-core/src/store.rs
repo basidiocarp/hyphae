@@ -14,18 +14,21 @@ pub trait MemoryStore {
         &self,
         keywords: &[&str],
         limit: usize,
+        offset: usize,
         project: Option<&str>,
     ) -> HyphaeResult<Vec<Memory>>;
     fn search_fts(
         &self,
         query: &str,
         limit: usize,
+        offset: usize,
         project: Option<&str>,
     ) -> HyphaeResult<Vec<Memory>>;
     fn search_by_embedding(
         &self,
         embedding: &[f32],
         limit: usize,
+        offset: usize,
         project: Option<&str>,
     ) -> HyphaeResult<Vec<(Memory, f32)>>;
     fn search_hybrid(
@@ -33,6 +36,7 @@ pub trait MemoryStore {
         query: &str,
         embedding: &[f32],
         limit: usize,
+        offset: usize,
         project: Option<&str>,
     ) -> HyphaeResult<Vec<(Memory, f32)>>;
 

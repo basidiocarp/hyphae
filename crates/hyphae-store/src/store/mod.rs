@@ -200,14 +200,14 @@ mod tests {
             .store(make_memory("python", "python decorators"))
             .unwrap();
 
-        let results = store.search_by_keywords(&["rust"], 10, None).unwrap();
+        let results = store.search_by_keywords(&["rust"], 10, 0, None).unwrap();
         assert_eq!(results.len(), 2);
     }
 
     #[test]
     fn test_search_by_keywords_empty() {
         let store = test_store();
-        let results = store.search_by_keywords(&[], 10, None).unwrap();
+        let results = store.search_by_keywords(&[], 10, 0, None).unwrap();
         assert!(results.is_empty());
     }
 
@@ -224,14 +224,16 @@ mod tests {
             .store(make_memory("python", "python decorators are cool"))
             .unwrap();
 
-        let results = store.search_fts("ownership borrowing", 10, None).unwrap();
+        let results = store
+            .search_fts("ownership borrowing", 10, 0, None)
+            .unwrap();
         assert!(!results.is_empty());
     }
 
     #[test]
     fn test_search_fts_empty_query() {
         let store = test_store();
-        let results = store.search_fts("", 10, None).unwrap();
+        let results = store.search_fts("", 10, 0, None).unwrap();
         assert!(results.is_empty());
     }
 
@@ -242,7 +244,7 @@ mod tests {
             .store(make_memory("deps", "sqlite-vec is a vector extension"))
             .unwrap();
 
-        let results = store.search_fts("sqlite-vec", 10, None).unwrap();
+        let results = store.search_fts("sqlite-vec", 10, 0, None).unwrap();
         assert!(!results.is_empty());
     }
 
@@ -415,7 +417,7 @@ mod tests {
         store.store(mem).unwrap();
 
         let query_emb = vec![0.1; 384];
-        let results = store.search_by_embedding(&query_emb, 5, None).unwrap();
+        let results = store.search_by_embedding(&query_emb, 5, 0, None).unwrap();
         assert!(!results.is_empty());
     }
 
@@ -428,7 +430,7 @@ mod tests {
 
         let query_emb = vec![0.1; 384];
         let results = store
-            .search_hybrid("hybrid search", &query_emb, 5, None)
+            .search_hybrid("hybrid search", &query_emb, 5, 0, None)
             .unwrap();
         assert!(!results.is_empty());
     }
@@ -1099,7 +1101,7 @@ mod tests {
         store.store_chunks(chunks).unwrap();
 
         let results = store
-            .search_chunks_fts("ownership borrowing", 10, None)
+            .search_chunks_fts("ownership borrowing", 10, 0, None)
             .unwrap();
         assert!(!results.is_empty());
         assert!(results[0].chunk.content.contains("ownership"));
@@ -1211,7 +1213,7 @@ mod tests {
         ];
 
         for q in special_queries {
-            let _ = store.search_fts(q, 10, None);
+            let _ = store.search_fts(q, 10, 0, None);
         }
     }
 
@@ -1285,7 +1287,7 @@ mod tests {
         ];
         store.store_chunks(chunks).unwrap();
 
-        let results = store.search_chunks_fts("JWT token", 10, None).unwrap();
+        let results = store.search_chunks_fts("JWT token", 10, 0, None).unwrap();
         assert!(!results.is_empty(), "FTS should find JWT-related chunks");
         // First result should be most relevant
         assert!(

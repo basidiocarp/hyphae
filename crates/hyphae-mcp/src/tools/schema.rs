@@ -64,6 +64,12 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     "keyword": {
                         "type": "string",
                         "description": "Filter results by keyword (exact match on memory keywords)"
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "default": 0,
+                        "minimum": 0,
+                        "description": "Number of results to skip (for pagination)"
                     }
                 },
                 "required": ["query"]
@@ -385,6 +391,12 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     "minimum": 1,
                     "maximum": 100,
                     "description": "Maximum number of results to return"
+                },
+                "offset": {
+                    "type": "integer",
+                    "default": 0,
+                    "minimum": 0,
+                    "description": "Number of results to skip (for pagination)"
                 }
             },
             "required": ["query"]
@@ -433,6 +445,12 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     "type": "boolean",
                     "default": true,
                     "description": "Whether to include document chunks in results"
+                },
+                "offset": {
+                    "type": "integer",
+                    "default": 0,
+                    "minimum": 0,
+                    "description": "Number of results to skip (for pagination)"
                 }
             },
             "required": ["query"]

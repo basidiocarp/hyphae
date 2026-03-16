@@ -18,12 +18,14 @@ pub trait ChunkStore {
         &self,
         query: &str,
         limit: usize,
+        offset: usize,
         project: Option<&str>,
     ) -> HyphaeResult<Vec<ChunkSearchResult>>;
     fn search_chunks_by_embedding(
         &self,
         embedding: &[f32],
         limit: usize,
+        offset: usize,
         project: Option<&str>,
     ) -> HyphaeResult<Vec<ChunkSearchResult>>;
     fn search_chunks_hybrid(
@@ -31,6 +33,7 @@ pub trait ChunkStore {
         query: &str,
         embedding: &[f32],
         limit: usize,
+        offset: usize,
         project: Option<&str>,
     ) -> HyphaeResult<Vec<ChunkSearchResult>>;
     fn count_documents(&self, project: Option<&str>) -> HyphaeResult<usize>;
