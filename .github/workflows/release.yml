@@ -106,10 +106,60 @@ jobs:
           name: hyphae-${{ matrix.target }}
           path: hyphae-${{ matrix.target }}.${{ matrix.archive }}
 
+  packages:
+    name: Linux packages
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download linux x86_64 build
+        uses: actions/download-artifact@v4
+        with:
+          name: hyphae-x86_64-unknown-linux-musl
+          path: artifacts
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build release
+        run: cargo build --release --no-default-features
+
+      - name: Install packaging tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deb,cargo-generate-rpm
+
+      - name: Build DEB
+        run: cargo deb -p hyphae-cli --no-build --no-default-features
+
+      - name: Build RPM
+        run: cargo generate-rpm -p crates/hyphae-cli
+
+      - name: Upload DEB
+        uses: actions/upload-artifact@v4
+        with:
+          name: hyphae-deb
+          path: target/debian/*.deb
+
+      - name: Upload RPM
+        uses: actions/upload-artifact@v4
+        with:
+          name: hyphae-rpm
+          path: target/generate-rpm/*.rpm
+
   release:
     name: Publish release
     runs-on: ubuntu-latest
-    needs: [build]
+    needs: [build, packages]
     steps:
       - uses: actions/checkout@v4
 
@@ -121,7 +171,7 @@ jobs:
       - name: Collect release files
         run: |
           mkdir release
-          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec cp {} release/ \;
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.deb' -o -name '*.rpm' \) -exec cp {} release/ \;
           cd release && sha256sum * > SHA256SUMS
 
       - name: Extract release notes from tag
