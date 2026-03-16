@@ -46,9 +46,9 @@ jobs:
         with:
           key: release-${{ matrix.target }}
 
-      - name: Install musl-tools (Linux x86_64)
-        if: matrix.target == 'x86_64-unknown-linux-musl'
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Install musl-tools and OpenSSL (Linux musl)
+        if: contains(matrix.target, 'musl') && !matrix.cross
+        run: sudo apt-get update && sudo apt-get install -y musl-tools pkg-config libssl-dev
 
       - name: Install cross (aarch64-linux)
         if: matrix.cross
@@ -59,8 +59,10 @@ jobs:
         run: |
           mkdir -p .cargo
           cat > Cross.toml <<'TOML'
+          [target.aarch64-unknown-linux-musl]
+          pre-build = ["apt-get update && apt-get install -y pkg-config libssl-dev"]
           [target.aarch64-unknown-linux-musl.env]
-          passthrough = ["CFLAGS"]
+          passthrough = ["CFLAGS", "OPENSSL_DIR", "OPENSSL_LIB_DIR", "OPENSSL_INCLUDE_DIR"]
           TOML
 
       - name: Build
@@ -70,9 +72,9 @@ jobs:
             export CFLAGS="-Du_int8_t=uint8_t -Du_int16_t=uint16_t -Du_int64_t=uint64_t"
           fi
           if [ "${{ matrix.cross }}" = "true" ]; then
-            CROSS_CONTAINER_OPTS="--env CFLAGS" cross build --release --locked --no-default-features --target ${{ matrix.target }}
+            CROSS_CONTAINER_OPTS="--env CFLAGS" cross build --release --no-default-features --target ${{ matrix.target }}
           else
-            cargo build --release --locked --no-default-features --target ${{ matrix.target }}
+            cargo build --release --no-default-features --target ${{ matrix.target }}
           fi
         shell: bash
 

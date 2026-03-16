@@ -21,7 +21,7 @@ embeddings = ["hyphae-core/embeddings", "hyphae-mcp/embeddings", "hyphae-ingest/
 hyphae-core = { path = "../hyphae-core" }
 hyphae-store = { path = "../hyphae-store" }
 hyphae-mcp = { path = "../hyphae-mcp" }
-hyphae-ingest = { path = "../hyphae-ingest" }
+hyphae-ingest = { path = "../hyphae-ingest", default-features = false }
 anyhow = { workspace = true }
 clap = { workspace = true }
 clap_complete = "4"
