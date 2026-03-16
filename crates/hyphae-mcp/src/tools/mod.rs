@@ -62,6 +62,11 @@ pub fn call_tool(
         "hyphae_list_sources" => ingest::tool_list_sources(store, project),
         "hyphae_forget_source" => ingest::tool_forget_source(store, args, project),
         "hyphae_search_all" => ingest::tool_search_all(store, embedder, args, compact, project),
+        // Command output tools
+        "hyphae_store_command_output" => {
+            ingest::tool_store_command_output(store, args, compact, project)
+        }
+        "hyphae_get_command_chunks" => ingest::tool_get_command_chunks(store, args),
         _ => ToolResult::error(format!("unknown tool: {name}")),
     }
 }

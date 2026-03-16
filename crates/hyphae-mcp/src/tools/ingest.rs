@@ -1,13 +1,18 @@
 use std::path::Path;
 
-use serde_json::Value;
+use chrono::{Duration, Utc};
+use serde_json::{Value, json};
 
-use hyphae_core::{ChunkStore, Embedder};
+use hyphae_core::chunk::ChunkMetadata;
+use hyphae_core::{
+    ChunkStore, Document, DocumentId, Embedder, Importance, Memory, MemoryStore, SourceType,
+};
+use hyphae_ingest::chunker::{ChunkStrategy, detect_output_type};
 use hyphae_store::SqliteStore;
 
 use crate::protocol::ToolResult;
 
-use super::{get_bounded_i64, validate_required_string};
+use super::{get_bounded_i64, get_str, validate_required_string};
 
 use hyphae_store::UnifiedSearchResult;
 
@@ -194,6 +199,148 @@ fn truncate_path(path: &str, max: usize) -> String {
     } else {
         format!("…{}", &path[path.len() - (max - 1)..])
     }
+}
+
+pub(crate) fn tool_store_command_output(
+    store: &SqliteStore,
+    args: &Value,
+    _compact: bool,
+    project: Option<&str>,
+) -> ToolResult {
+    let command = match validate_required_string(args, "command") {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+    let output = match validate_required_string(args, "output") {
+        Ok(o) => o,
+        Err(e) => return e,
+    };
+    let ttl_hours = get_bounded_i64(args, "ttl_hours", 4, 1, 168);
+    let project_override = get_str(args, "project");
+    let effective_project = project_override.or(project);
+
+    // 1. Auto-detect output type and chunk
+    let output_type = detect_output_type(output);
+    let source_path = format!("cmd://{command}");
+    let metadata = ChunkMetadata {
+        source_path: source_path.clone(),
+        source_type: SourceType::Text,
+        language: None,
+        heading: None,
+        line_start: None,
+        line_end: None,
+    };
+    let strategy = ChunkStrategy::ByStructuredOutput {
+        output_type,
+        max_tokens: 500,
+    };
+    let mut chunks = hyphae_ingest::chunker::chunk_text(output, metadata, strategy);
+
+    // 2. Create document
+    let now = Utc::now();
+    let doc_id = DocumentId::new();
+    let chunk_count = chunks.len();
+
+    let doc = Document {
+        id: doc_id.clone(),
+        source_path,
+        source_type: SourceType::Text,
+        chunk_count,
+        created_at: now,
+        updated_at: now,
+        project: effective_project.map(String::from),
+    };
+
+    // Replace existing document at the same source path
+    if let Ok(Some(existing)) = store.get_document_by_path(&doc.source_path, effective_project) {
+        if let Err(e) = store.delete_document(&existing.id) {
+            return ToolResult::error(format!("failed to delete existing document: {e}"));
+        }
+    }
+
+    // 3. Fix chunk document_ids to point to our new document
+    for chunk in &mut chunks {
+        chunk.document_id = doc_id.clone();
+    }
+
+    // 4. Store document + chunks
+    if let Err(e) = store.store_document(doc) {
+        return ToolResult::error(format!("store error: {e}"));
+    }
+    if let Err(e) = store.store_chunks(chunks) {
+        return ToolResult::error(format!("store error: {e}"));
+    }
+
+    // 5. Create summary memory with Ephemeral importance
+    let first_lines: String = output.lines().take(3).collect::<Vec<_>>().join("\n");
+    let summary = format!("Command `{command}` output ({chunk_count} chunks):\n{first_lines}");
+
+    let expires_at = Utc::now() + Duration::hours(ttl_hours);
+    let mut builder = Memory::builder(
+        "command_output".to_string(),
+        summary.clone(),
+        Importance::Ephemeral,
+    )
+    .keywords(vec![command.to_string()])
+    .expires_at(expires_at);
+
+    if let Some(p) = effective_project {
+        builder = builder.project(p.to_string());
+    }
+
+    let memory = builder.build();
+    if let Err(e) = store.store(memory) {
+        tracing::warn!("failed to store summary memory: {e}");
+    }
+
+    // 6. Return result
+    let result = json!({
+        "summary": summary,
+        "document_id": doc_id.to_string(),
+        "chunk_count": chunk_count,
+    });
+    ToolResult::text(result.to_string())
+}
+
+pub(crate) fn tool_get_command_chunks(store: &SqliteStore, args: &Value) -> ToolResult {
+    let doc_id_str = match validate_required_string(args, "document_id") {
+        Ok(id) => id,
+        Err(e) => return e,
+    };
+    let offset = get_bounded_i64(args, "offset", 0, 0, 10000) as usize;
+    let limit = get_bounded_i64(args, "limit", 5, 1, 20) as usize;
+
+    let doc_id = DocumentId::from(doc_id_str);
+
+    // Get all chunks for the document (already sorted by chunk_index from store)
+    let chunks = match store.get_chunks(&doc_id) {
+        Ok(c) => c,
+        Err(e) => return ToolResult::error(format!("db error: {e}")),
+    };
+
+    let total = chunks.len();
+    let paginated: Vec<Value> = chunks
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .map(|c| {
+            json!({
+                "index": c.chunk_index,
+                "content": c.content,
+                "heading": c.metadata.heading,
+            })
+        })
+        .collect();
+
+    let has_more = offset + limit < total;
+
+    let result = json!({
+        "chunks": paginated,
+        "total": total,
+        "offset": offset,
+        "has_more": has_more,
+    });
+    ToolResult::text(result.to_string())
 }
 
 pub(crate) fn tool_search_all(

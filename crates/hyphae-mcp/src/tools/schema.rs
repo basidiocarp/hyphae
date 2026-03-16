@@ -457,6 +457,64 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }
     }));
 
+    // --- Command output tools ---
+    tools.push(json!({
+        "name": "hyphae_store_command_output",
+        "description": "Store command output as chunked documents with ephemeral importance. Automatically detects output type (test results, build errors, diffs, logs) and chunks accordingly.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "The command that produced this output (e.g. 'cargo test', 'git diff')"
+                },
+                "output": {
+                    "type": "string",
+                    "description": "The raw command output to store"
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project name for scoping (optional)"
+                },
+                "ttl_hours": {
+                    "type": "number",
+                    "default": 4,
+                    "minimum": 1,
+                    "maximum": 168,
+                    "description": "Hours before the summary memory expires (default 4)"
+                }
+            },
+            "required": ["command", "output"]
+        }
+    }));
+    tools.push(json!({
+        "name": "hyphae_get_command_chunks",
+        "description": "Retrieve chunks from a stored command output document by document_id with pagination.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "document_id": {
+                    "type": "string",
+                    "description": "Document ID returned by hyphae_store_command_output"
+                },
+                "offset": {
+                    "type": "integer",
+                    "default": 0,
+                    "minimum": 0,
+                    "description": "Number of chunks to skip"
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": 5,
+                    "minimum": 1,
+                    "maximum": 20,
+                    "description": "Maximum number of chunks to return"
+                }
+            },
+            "required": ["document_id"]
+        }
+    }));
+
     if has_embedder {
         tools.push(json!({
             "name": "hyphae_memory_embed_all",
