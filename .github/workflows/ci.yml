@@ -49,3 +49,5 @@ jobs:
       - run: cargo test --workspace
       - run: cargo test --workspace --no-default-features
       - run: cargo build --release
+      - name: Security audit
+        run: cargo install cargo-audit --locked && cargo audit
