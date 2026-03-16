@@ -364,7 +364,8 @@ pub(crate) fn tool_search_all(
     let embedding = embedder.and_then(|emb| emb.embed(query).ok());
     let emb_ref = embedding.as_deref();
 
-    let results = match store.search_all(query, emb_ref, limit, offset, include_docs, project) {
+    let results = match store.search_all(query, emb_ref, limit, offset, include_docs, project, None)
+    {
         Ok(r) => r,
         Err(e) => return ToolResult::error(format!("search error: {e}")),
     };

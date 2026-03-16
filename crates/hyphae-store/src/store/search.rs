@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use hyphae_core::{Chunk, ChunkStore, HyphaeResult, Memory, MemoryStore};
 
-use super::SqliteStore;
+use super::{SqliteStore, context};
 
 // ---------------------------------------------------------------------------
 // Unified search result
@@ -34,6 +34,14 @@ impl SqliteStore {
     /// Each store is searched independently and results are ranked with RRF:
     /// `score = 1 / (k + rank)` where k = 60 (standard constant).
     /// If a result appears in both sets the scores are summed.
+    ///
+    /// When `code_expand_project` is `Some(project)`, the query is expanded with
+    /// code symbols from the `code:{project}` memoir (if it exists and the query
+    /// looks code-related). Expanded FTS results are merged in with 0.5× weight.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "parameters mirror the MemoryStore search API"
+    )]
     pub fn search_all(
         &self,
         query: &str,
@@ -42,8 +50,10 @@ impl SqliteStore {
         offset: usize,
         include_docs: bool,
         project: Option<&str>,
+        code_expand_project: Option<&str>,
     ) -> HyphaeResult<Vec<UnifiedSearchResult>> {
         const K: f32 = 60.0;
+        const EXPANDED_WEIGHT: f32 = 0.5;
         let pool = (limit + offset) * 3;
 
         let mem_results: Vec<(Memory, f32)> = if let Some(emb) = embedding {
@@ -66,7 +76,7 @@ impl SqliteStore {
             Vec::new()
         };
 
-        // --- RRF scoring for memories ---
+        // --- RRF scoring for memories (weight 1.0) ---
         let mut scores: HashMap<String, f32> = HashMap::new();
         let mut memory_map: HashMap<String, Memory> = HashMap::new();
         for (rank, (mem, _original_score)) in mem_results.into_iter().enumerate() {
@@ -76,13 +86,43 @@ impl SqliteStore {
             memory_map.insert(key, mem);
         }
 
-        // --- RRF scoring for chunks ---
+        // --- RRF scoring for chunks (weight 1.0) ---
         let mut chunk_map: HashMap<String, Chunk> = HashMap::new();
         for (rank, csr) in chunk_results.into_iter().enumerate() {
             let rrf = 1.0 / (K + rank as f32);
             let key = format!("chunk:{}", csr.chunk.id);
             *scores.entry(key.clone()).or_default() += rrf;
             chunk_map.insert(key, csr.chunk);
+        }
+
+        // --- Optional code-context expansion (weight 0.5) ---
+        if let Some(expand_project) = code_expand_project {
+            if context::is_code_related(query) {
+                let extra_terms = context::expand_with_code_context(self, query, expand_project);
+                if !extra_terms.is_empty() {
+                    // Build a single expanded FTS query: sanitise each term and join with OR
+                    let expanded_query = extra_terms
+                        .iter()
+                        .map(|t| sanitize_fts_query(t))
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<_>>()
+                        .join(" OR ");
+
+                    if !expanded_query.is_empty() {
+                        let expanded_mems = self
+                            .search_fts(&expanded_query, pool, 0, project)
+                            .unwrap_or_default();
+
+                        for (rank, mem) in expanded_mems.into_iter().enumerate() {
+                            let rrf = EXPANDED_WEIGHT / (K + rank as f32);
+                            let key = format!("mem:{}", mem.id);
+                            *scores.entry(key.clone()).or_default() += rrf;
+                            // Only insert into map if not already present (original takes precedence)
+                            memory_map.entry(key).or_insert(mem);
+                        }
+                    }
+                }
+            }
         }
 
         // --- merge and sort ---
@@ -343,7 +383,7 @@ mod tests {
             .unwrap();
 
         let results = store
-            .search_all("Rust systems programming", None, 10, 0, false, None)
+            .search_all("Rust systems programming", None, 10, 0, false, None, None)
             .unwrap();
 
         assert!(!results.is_empty(), "should find at least one memory");
@@ -378,7 +418,7 @@ mod tests {
 
         // Search with no memories present
         let results = store
-            .search_all("SQLite database", None, 10, 0, true, None)
+            .search_all("SQLite database", None, 10, 0, true, None, None)
             .unwrap();
 
         assert!(!results.is_empty(), "should find the chunk");
@@ -418,7 +458,9 @@ mod tests {
             )])
             .unwrap();
 
-        let results = store.search_all("SQLite", None, 10, 0, true, None).unwrap();
+        let results = store
+            .search_all("SQLite", None, 10, 0, true, None, None)
+            .unwrap();
 
         assert!(results.len() >= 2, "should find results from both stores");
 
@@ -468,7 +510,7 @@ mod tests {
             .unwrap();
 
         let results = store
-            .search_all("cargo test", None, 10, 0, false, None)
+            .search_all("cargo test", None, 10, 0, false, None, None)
             .unwrap();
 
         assert!(
@@ -483,7 +525,7 @@ mod tests {
     fn test_search_all_empty_store() {
         let store = test_store();
         let results = store
-            .search_all("anything", None, 10, 0, true, None)
+            .search_all("anything", None, 10, 0, true, None, None)
             .unwrap();
         assert!(results.is_empty(), "empty store should return no results");
     }
@@ -502,7 +544,7 @@ mod tests {
         }
 
         let results = store
-            .search_all("testing", None, 5, 0, false, None)
+            .search_all("testing", None, 5, 0, false, None, None)
             .unwrap();
 
         assert!(results.len() <= 5, "should respect the limit parameter");
@@ -559,10 +601,10 @@ mod tests {
         }
 
         let page1 = store
-            .search_all("offset pagination", None, 5, 0, false, None)
+            .search_all("offset pagination", None, 5, 0, false, None, None)
             .unwrap();
         let page2 = store
-            .search_all("offset pagination", None, 5, 5, false, None)
+            .search_all("offset pagination", None, 5, 5, false, None, None)
             .unwrap();
 
         assert_eq!(page1.len(), 5, "first page should have 5 results");
@@ -581,5 +623,95 @@ mod tests {
                 "pages should not overlap: {id} found in both"
             );
         }
+    }
+
+    #[test]
+    fn test_search_all_code_context_expansion() {
+        use hyphae_core::memoir::{Concept, Memoir};
+        use hyphae_core::{MemoirStore, ids::MemoirId};
+
+        let store = test_store();
+
+        // Store a memory that mentions verify_token explicitly so expanded FTS can find it
+        store
+            .store(Memory::new(
+                "refactoring".to_string(),
+                "Refactored verify_token to improve performance in the auth pipeline".to_string(),
+                hyphae_core::Importance::Medium,
+            ))
+            .unwrap();
+
+        // Store an unrelated memory to verify selectivity
+        store
+            .store(Memory::new(
+                "other".to_string(),
+                "Database migration completed successfully".to_string(),
+                hyphae_core::Importance::Medium,
+            ))
+            .unwrap();
+
+        // Create a code memoir with a verify_token concept
+        let memoir = Memoir::new(
+            "code:myapp".to_string(),
+            "Code symbols for myapp".to_string(),
+        );
+        let memoir_id: MemoirId = store.create_memoir(memoir).unwrap();
+        let concept = Concept::new(
+            memoir_id,
+            "verify_token".to_string(),
+            "Validates JWT tokens for the auth pipeline".to_string(),
+        );
+        store.add_concept(concept).unwrap();
+
+        // Query using snake_case (is_code_related = true), expansion finds verify_token concept
+        // which in turn finds the memory containing "verify_token"
+        let results = store
+            .search_all(
+                "auth_pipeline performance",
+                None,
+                10,
+                0,
+                false,
+                None,
+                Some("myapp"),
+            )
+            .unwrap();
+
+        // The expanded FTS for "verify_token" should surface the memory about verify_token
+        assert!(!results.is_empty(), "should find at least one memory");
+        let found = results.iter().any(|r| {
+            if let UnifiedSearchResult::Memory { memory, .. } = r {
+                memory.summary.contains("verify_token")
+            } else {
+                false
+            }
+        });
+        assert!(
+            found,
+            "should find the verify_token memory via expanded code context; got: {results:?}"
+        );
+    }
+
+    #[test]
+    fn test_search_all_code_context_none_no_expansion() {
+        let store = test_store();
+
+        store
+            .store(Memory::new(
+                "test".to_string(),
+                "Some test memory".to_string(),
+                hyphae_core::Importance::Medium,
+            ))
+            .unwrap();
+
+        // With code_expand_project = None, should behave the same as before
+        let results = store
+            .search_all("test memory", None, 10, 0, false, None, None)
+            .unwrap();
+
+        assert!(
+            !results.is_empty(),
+            "should still find memories without code expansion"
+        );
     }
 }

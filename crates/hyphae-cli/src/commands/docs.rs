@@ -142,7 +142,15 @@ pub(crate) fn cmd_search_all(
     };
 
     let emb_ref = embedding.as_deref();
-    let results = store.search_all(&query, emb_ref, limit, 0, include_docs, project.as_deref())?;
+    let results = store.search_all(
+        &query,
+        emb_ref,
+        limit,
+        0,
+        include_docs,
+        project.as_deref(),
+        None,
+    )?;
 
     if results.is_empty() {
         println!("No results found");

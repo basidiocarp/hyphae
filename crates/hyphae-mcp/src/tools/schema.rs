@@ -70,6 +70,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                         "default": 0,
                         "minimum": 0,
                         "description": "Number of results to skip (for pagination)"
+                    },
+                    "code_context": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "When true, expands the search with code symbols from the project's code memoir (code:{project}). Only effective when a project is configured and the query looks code-related."
                     }
                 },
                 "required": ["query"]

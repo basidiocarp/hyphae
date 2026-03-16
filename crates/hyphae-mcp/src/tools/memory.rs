@@ -3,6 +3,7 @@ use serde_json::Value;
 
 use hyphae_core::{Embedder, Importance, Memory, MemoryId, MemoryStore, Weight};
 use hyphae_store::SqliteStore;
+use hyphae_store::context;
 
 use crate::protocol::ToolResult;
 
@@ -155,8 +156,11 @@ pub(crate) fn tool_recall(
     let limit = get_bounded_i64(args, "limit", 5, 1, 100) as usize;
     let offset = get_bounded_i64(args, "offset", 0, 0, 10000) as usize;
     let topic = get_str(args, "topic");
-
     let keyword = get_str(args, "keyword");
+    let code_context = args
+        .get("code_context")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     // Try hybrid search if embedder is available
     if let Some(emb) = embedder {
@@ -218,6 +222,72 @@ pub(crate) fn tool_recall(
             Ok(r) => r,
             Err(e) => return ToolResult::error(format!("search error: {e}")),
         };
+    }
+
+    // Optional code-context expansion: additional FTS pass with expanded terms
+    if code_context {
+        if let Some(expand_project) = project {
+            if context::is_code_related(query) {
+                let extra_terms = context::expand_with_code_context(store, query, expand_project);
+                if !extra_terms.is_empty() {
+                    // Build single expanded query and run a second FTS pass
+                    let expanded_query = extra_terms
+                        .iter()
+                        .map(|t| {
+                            // Quote each token for FTS
+                            let clean: String = t
+                                .chars()
+                                .map(|c| {
+                                    if matches!(
+                                        c,
+                                        '-' | '*'
+                                            | '"'
+                                            | '('
+                                            | ')'
+                                            | '{'
+                                            | '}'
+                                            | ':'
+                                            | '^'
+                                            | '+'
+                                            | '~'
+                                            | '\\'
+                                    ) {
+                                        ' '
+                                    } else {
+                                        c
+                                    }
+                                })
+                                .collect();
+                            let tokens: Vec<String> = clean
+                                .split_whitespace()
+                                .filter(|w| !w.is_empty())
+                                .map(|w| format!("\"{w}\""))
+                                .collect();
+                            tokens.join(" ")
+                        })
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<_>>()
+                        .join(" OR ");
+
+                    if !expanded_query.is_empty() {
+                        if let Ok(expanded) =
+                            store.search_fts(&expanded_query, limit, offset, project)
+                        {
+                            // Merge: append expanded results not already present
+                            let existing_ids: std::collections::HashSet<String> =
+                                results.iter().map(|m| m.id.to_string()).collect();
+                            for mem in expanded {
+                                if !existing_ids.contains(&mem.id.to_string()) {
+                                    results.push(mem);
+                                }
+                            }
+                            // Re-limit after merge
+                            results.truncate(limit);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     if let Some(t) = topic {
