@@ -23,8 +23,8 @@ impl MemoryStore for SqliteStore {
             .execute(
                 "INSERT INTO memories (id, created_at, updated_at, last_accessed, access_count, weight,
                  topic, summary, raw_excerpt, keywords,
-                 importance, source_type, source_data, related_ids, embedding, project)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                 importance, source_type, source_data, related_ids, embedding, project, expires_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
                 params![
                     memory.id.as_ref(),
                     memory.created_at.to_rfc3339(),
@@ -42,6 +42,7 @@ impl MemoryStore for SqliteStore {
                     related_json,
                     emb_blob,
                     memory.project.as_deref(),
+                    memory.expires_at.map(|dt| dt.to_rfc3339()),
                 ],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
@@ -92,7 +93,7 @@ impl MemoryStore for SqliteStore {
                  updated_at = ?2, last_accessed = ?3, access_count = ?4, weight = ?5,
                  topic = ?6, summary = ?7, raw_excerpt = ?8, keywords = ?9,
                  importance = ?10, source_type = ?11, source_data = ?12, related_ids = ?13,
-                 embedding = ?14
+                 embedding = ?14, expires_at = ?15
                  WHERE id = ?1",
                 params![
                     memory.id.as_ref(),
@@ -109,6 +110,7 @@ impl MemoryStore for SqliteStore {
                     sd,
                     related_json,
                     emb_blob,
+                    memory.expires_at.map(|dt| dt.to_rfc3339()),
                 ],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
@@ -331,10 +333,10 @@ impl MemoryStore for SqliteStore {
         let pool_size = limit * 4;
         let sanitized = sanitize_fts_query(query);
 
-        let fts_sql = "SELECT m.id, m.created_at, m.last_accessed, m.access_count, m.weight, \
+        let fts_sql = "SELECT m.id, m.created_at, m.updated_at, m.last_accessed, m.access_count, m.weight, \
                     m.topic, m.summary, m.raw_excerpt, m.keywords, \
                     m.importance, m.source_type, m.source_data, m.related_ids, m.embedding, \
-                    fts.rank \
+                    m.project, m.expires_at, fts.rank \
              FROM memories_fts fts \
              JOIN memories m ON m.id = fts.id \
              WHERE memories_fts MATCH ?1 \
@@ -350,7 +352,7 @@ impl MemoryStore for SqliteStore {
                 Ok(mut stmt) => {
                     match stmt.query_map(params![sanitized, pool_size as i64, project], |row| {
                         let memory = row_to_memory(row)?;
-                        let rank: f32 = row.get(15)?;
+                        let rank: f32 = row.get(17)?;
                         Ok((memory, rank))
                     }) {
                         Ok(rows) => {
@@ -523,8 +525,8 @@ impl MemoryStore for SqliteStore {
         tx.execute(
             "INSERT INTO memories (id, created_at, updated_at, last_accessed, access_count, weight,
              topic, summary, raw_excerpt, keywords,
-             importance, source_type, source_data, related_ids, embedding, project)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+             importance, source_type, source_data, related_ids, embedding, project, expires_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 consolidated.id.as_ref(),
                 consolidated.created_at.to_rfc3339(),
@@ -542,6 +544,7 @@ impl MemoryStore for SqliteStore {
                 related_json,
                 emb_blob,
                 consolidated.project.as_deref(),
+                consolidated.expires_at.map(|dt| dt.to_rfc3339()),
             ],
         )
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
@@ -691,5 +694,33 @@ impl MemoryStore for SqliteStore {
             oldest_memory: parse_opt_dt(oldest_str),
             newest_memory: parse_opt_dt(newest_str),
         })
+    }
+
+    fn prune_expired(&self) -> HyphaeResult<usize> {
+        let now = Utc::now().to_rfc3339();
+
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        tx.execute(
+            "DELETE FROM vec_memories WHERE memory_id IN (
+                SELECT id FROM memories WHERE expires_at IS NOT NULL AND expires_at < ?1
+            )",
+            params![now],
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let changed = tx
+            .execute(
+                "DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at < ?1",
+                params![now],
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        tx.commit()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        Ok(changed)
     }
 }

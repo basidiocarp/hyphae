@@ -40,6 +40,7 @@ pub trait MemoryStore {
     fn update_access(&self, id: &MemoryId) -> HyphaeResult<()>;
     fn apply_decay(&self, decay_factor: f32) -> HyphaeResult<usize>;
     fn prune(&self, weight_threshold: f32) -> HyphaeResult<usize>;
+    fn prune_expired(&self) -> HyphaeResult<usize>;
 
     // Organization
     fn get_by_topic(&self, topic: &str, project: Option<&str>) -> HyphaeResult<Vec<Memory>>;

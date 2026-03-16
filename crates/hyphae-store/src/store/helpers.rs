@@ -100,13 +100,18 @@ pub(crate) fn row_to_memory(row: &rusqlite::Row) -> rusqlite::Result<Memory> {
         source,
         related_ids,
         project: row.get("project").ok(),
+        expires_at: row
+            .get::<_, Option<String>>("expires_at")
+            .ok()
+            .flatten()
+            .map(|s| parse_dt(&s)),
         embedding,
     })
 }
 
 pub(crate) const SELECT_COLS: &str = "id, created_at, updated_at, last_accessed, access_count, weight, \
      topic, summary, raw_excerpt, keywords, \
-     importance, source_type, source_data, related_ids, embedding, project";
+     importance, source_type, source_data, related_ids, embedding, project, expires_at";
 
 // ---------------------------------------------------------------------------
 // Memoir / Concept helpers

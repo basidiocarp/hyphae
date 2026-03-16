@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -57,6 +57,8 @@ pub struct Memory {
 
     pub project: Option<String>,
 
+    pub expires_at: Option<DateTime<Utc>>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub embedding: Option<Vec<f32>>,
 }
@@ -83,6 +85,7 @@ pub struct MemoryBuilder {
     related_ids: Vec<MemoryId>,
     weight: Weight,
     project: Option<String>,
+    expires_at: Option<DateTime<Utc>>,
 }
 
 impl MemoryBuilder {
@@ -98,6 +101,7 @@ impl MemoryBuilder {
             related_ids: Vec::new(),
             weight: Weight::default(),
             project: None,
+            expires_at: None,
         }
     }
 
@@ -136,8 +140,18 @@ impl MemoryBuilder {
         self
     }
 
+    pub fn expires_at(mut self, dt: DateTime<Utc>) -> Self {
+        self.expires_at = Some(dt);
+        self
+    }
+
     pub fn build(self) -> Memory {
         let now = Utc::now();
+        let expires_at = if self.importance == Importance::Ephemeral && self.expires_at.is_none() {
+            Some(now + Duration::hours(4))
+        } else {
+            self.expires_at
+        };
         Memory {
             id: MemoryId::new(),
             created_at: now,
@@ -153,6 +167,7 @@ impl MemoryBuilder {
             source: self.source,
             related_ids: self.related_ids,
             project: self.project,
+            expires_at,
             embedding: self.embedding,
         }
     }
@@ -165,6 +180,7 @@ pub enum Importance {
     High,
     Medium,
     Low,
+    Ephemeral,
 }
 
 impl fmt::Display for Importance {
@@ -174,6 +190,7 @@ impl fmt::Display for Importance {
             Self::High => write!(f, "high"),
             Self::Medium => write!(f, "medium"),
             Self::Low => write!(f, "low"),
+            Self::Ephemeral => write!(f, "ephemeral"),
         }
     }
 }
@@ -187,6 +204,7 @@ impl std::str::FromStr for Importance {
             "high" => Ok(Self::High),
             "medium" => Ok(Self::Medium),
             "low" => Ok(Self::Low),
+            "ephemeral" => Ok(Self::Ephemeral),
             _ => Err(format!("invalid importance: {s}")),
         }
     }
@@ -263,6 +281,7 @@ mod tests {
             Importance::High,
             Importance::Medium,
             Importance::Low,
+            Importance::Ephemeral,
         ] {
             let s = variant.to_string();
             let parsed: Importance = s.parse().expect("should parse");

@@ -307,6 +307,23 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
     }
 
+    // Migration: add expires_at column to memories
+    let has_expires_at: bool = tx
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name='expires_at'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if !has_expires_at {
+        tx.execute_batch(
+            "ALTER TABLE memories ADD COLUMN expires_at TEXT;
+             CREATE INDEX IF NOT EXISTS idx_memories_expires_at ON memories(expires_at);",
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    }
+
     // sqlite-vec virtual table for vector search (dimension-aware)
     let vec_exists: bool = tx
         .query_row(
