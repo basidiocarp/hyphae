@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.2
+
+### Added
+- **Context-aware recall**: `code_context` parameter on `hyphae_memory_recall` expands search queries with matching symbol names from code memoirs for more relevant results
+- **Code-related query detection**: Heuristic (`is_code_related`) detects CamelCase, snake_case, file extensions, and path separators to decide when to apply code expansion
+- **Query expansion**: `expand_with_code_context` searches code memoirs for concepts matching query terms and adds them as FTS boost terms with 0.5 RRF weight
+
 ## v0.3.1
 
 ### Added
