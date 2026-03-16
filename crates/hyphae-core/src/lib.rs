@@ -18,7 +18,7 @@ pub use error::{HyphaeError, HyphaeResult};
 pub use fastembed_embedder::FastEmbedder;
 pub use ids::*;
 pub use memoir::{Concept, ConceptLink, Confidence, Label, Memoir, MemoirStats, Relation};
-pub use memoir_store::MemoirStore;
+pub use memoir_store::{ConceptInput, LinkInput, MemoirStore, UpsertReport};
 pub use memory::{
     Importance, Memory, MemoryBuilder, MemorySource, StoreStats, TopicHealth, Weight,
 };
