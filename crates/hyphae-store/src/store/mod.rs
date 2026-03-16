@@ -1,4 +1,5 @@
 mod chunk_store;
+pub mod context;
 mod helpers;
 mod memoir_store;
 mod memory_store;
