@@ -1,75 +1,20 @@
-name: Performance guard
+name: Performance
 
 on:
-  pull_request:
+  push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: performance-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  CARGO_TERM_COLOR: always
-  MAX_BINARY_SIZE_MB: 5
-  MAX_STARTUP_MS: 15
-
 jobs:
-  perf-check:
-    name: Binary size & startup time
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: Install hyperfine
-        uses: taiki-e/install-action@hyperfine
-
-      - name: Build release (no embeddings)
-        run: cargo build --release --no-default-features
-
-      - name: Check binary size
-        run: |
-          SIZE_BYTES=$(stat --format=%s target/release/hyphae)
-          SIZE_MB=$(echo "scale=2; $SIZE_BYTES / 1048576" | bc)
-          echo "Binary size: ${SIZE_MB}MB"
-
-          if (( $(echo "$SIZE_MB > $MAX_BINARY_SIZE_MB" | bc -l) )); then
-            echo "::error::Binary size ${SIZE_MB}MB exceeds ${MAX_BINARY_SIZE_MB}MB limit"
-            exit 1
-          fi
-
-          echo "### Binary size: ${SIZE_MB}MB (limit: ${MAX_BINARY_SIZE_MB}MB)" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Benchmark startup
-        run: |
-          RESULT=$(hyperfine --warmup 5 --min-runs 20 \
-            '${{ github.workspace }}/target/release/hyphae --version' \
-            --export-json /tmp/bench.json 2>&1)
-          echo "$RESULT"
-
-          MEDIAN_MS=$(python3 -c "
-          import json
-          with open('/tmp/bench.json') as f:
-              data = json.load(f)
-          median_s = data['results'][0]['median']
-          print(f'{median_s * 1000:.1f}')
-          ")
-
-          echo "Median startup: ${MEDIAN_MS}ms"
-
-          if (( $(echo "$MEDIAN_MS > $MAX_STARTUP_MS" | bc -l) )); then
-            echo "::error::Startup time ${MEDIAN_MS}ms exceeds ${MAX_STARTUP_MS}ms limit"
-            exit 1
-          fi
-
-          echo "### Startup time: ${MEDIAN_MS}ms (limit: ${MAX_STARTUP_MS}ms)" >> "$GITHUB_STEP_SUMMARY"
+  benchmark:
+    uses: basidiocarp/.github/.github/workflows/rust-performance.yml@main
+    with:
+      binary: hyphae
+      max-size-mb: 5
+      max-startup-ms: 15
+      build-flags: '--no-default-features'
