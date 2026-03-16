@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.1
+
+### Added
+- **Code graph import**: `hyphae_import_code_graph` MCP tool receives symbol graphs from Rhizome and stores them as memoirs with idempotent upsert (create/update/skip unchanged)
+- **Code intelligence queries**: `hyphae_code_query` MCP tool with 5 query types: `symbols` (list/filter by labels), `callers`, `callees`, `implementors` (link traversal), and `structure` (BFS neighborhood depth 2)
+- **Bulk memoir operations**: `upsert_concepts`, `upsert_links`, `prune_concepts` on `MemoirStore` trait for batch code graph imports with transactional atomicity
+- **Symbol pruning**: Automatically removes concepts and cascades link cleanup when symbols are deleted from the codebase
+
 ## v0.3.0
 
 ### Added
