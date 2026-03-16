@@ -424,11 +424,7 @@ And at `critical`: weight = 1.000 forever.
 
 ## Document Memory (RAG)
 
-### What is document memory?
-
-In addition to episodic memories (what happened) and memoirs (what's true), Hyphae supports **document memory** — the ability to ingest files and directories into a searchable vector store. This gives your agent instant access to project source code, documentation, and configuration without re-reading files each session.
-
-Document memory uses Retrieval-Augmented Generation (RAG): files are chunked, embedded, and stored in the same SQLite database. When the agent searches, relevant chunks are retrieved and provided as context.
+Hyphae ingests files and directories into a searchable vector store. Files are chunked, embedded, and stored in the same SQLite database. When the agent searches, relevant chunks are retrieved as context. This gives agents access to project source code, documentation, and configuration without re-reading files each session.
 
 ### When to use document memory
 

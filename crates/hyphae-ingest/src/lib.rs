@@ -45,7 +45,7 @@ pub fn ingest_file(
     let doc_id = DocumentId::new();
     let now = Utc::now();
 
-    // Set document_id on all chunks
+    // Chunks are created without a document_id; bind them before storing.
     for chunk in &mut chunks {
         chunk.document_id = doc_id.clone();
     }

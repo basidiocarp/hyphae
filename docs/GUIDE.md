@@ -2,7 +2,7 @@
 
 ## What is Hyphae?
 
-Hyphae gives your AI coding agent a persistent memory that survives across sessions. Without Hyphae, every time a session ends or the context window compacts, the agent forgets everything — your architecture decisions, resolved bugs, project conventions. With Hyphae, it remembers.
+Hyphae is persistent memory for AI coding agents. It stores what your agent learns across sessions so architecture decisions, resolved bugs, and project conventions survive context window compaction.
 
 ## Quick Start
 
@@ -316,65 +316,44 @@ hyphae bench-agent --sessions 10 --model haiku --runs 3
 
 All benchmarks use real API calls, no mocks. Each run uses its own tempdir and fresh DB.
 
-## Your First 5 Minutes with Hyphae
+## Quick walkthrough
 
-A quick-start guide to get up and running in 5 minutes.
-
-### Minute 1: Install
+### Install
 
 ```bash
 brew tap basidiocarp/tap && brew install hyphae
 ```
 
-Or, without Homebrew:
+Without Homebrew:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/basidiocarp/hyphae/main/install.sh | sh
 ```
 
-### Minute 2: Configure
+### Configure
 
 ```bash
 hyphae init
 ```
 
-Hyphae automatically detects your AI tools (Claude Code, Cursor, VS Code, etc.) and configures the MCP server for each. Check the output — each tool shows `configured` or `already configured`.
+This detects your AI tools (Claude Code, Cursor, VS Code, etc.) and writes the MCP config for each.
 
-### Minute 3: Store your first memory
+### Store and recall
 
 ```bash
 hyphae store -t "test" -c "My first Hyphae memory" -i high
-```
-
-Verify it was stored:
-
-```bash
-hyphae topics
-hyphae stats
-```
-
-### Minute 4: Recall a memory
-
-```bash
 hyphae recall "first memory"
 ```
 
-The memory should appear with its ID, topic, weight and content.
+The memory appears with its ID, topic, weight, and content. Verify with `hyphae topics` and `hyphae stats`.
 
-### Minute 5: Test with your agent
+### Test with your agent
 
-Restart your AI tool (Claude Code, Cursor...). Ask it:
+Restart your AI tool and ask it to "recall the Hyphae context." It should call `hyphae_memory_recall` automatically. If not, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
-> "Recall the Hyphae context"
+### From here
 
-The agent should automatically use `hyphae_memory_recall`. If it doesn't, see the Troubleshooting section below.
-
-### What's next?
-
-- Store your architecture decisions with `-i high`
-- Store invariant facts (ports, URLs) with `-i critical`
-- After each bug fix, store the resolution with keywords
-- To go further: create a **memoir** to structure knowledge as a graph
+Store architecture decisions with `-i high`, invariant facts (ports, URLs) with `-i critical`, and bug fixes with descriptive keywords. When you have enough decisions in a topic, create a memoir to structure them as a graph.
 
 ---
 

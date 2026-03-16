@@ -91,8 +91,6 @@ fn extract_facts(text: &str, project: &str) -> Vec<(String, String, Importance)>
         let mut score = 0.0f32;
         let mut importance = Importance::Medium;
 
-        // --- Generic knowledge signals ---
-
         // Sentences with numbers are often factual (ports, sizes, dates, metrics)
         let has_numbers = s.chars().any(|c| c.is_ascii_digit());
         if has_numbers {
