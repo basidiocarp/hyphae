@@ -11,22 +11,25 @@
 - **MCP project scoping**: `hyphae serve --project <name>` scopes all MCP tool operations to a project namespace
 - **TTL/expiry on memories**: `expires_at` field with auto-expiry for ephemeral importance (default 4 hours), `prune_expired()` to clean up
 - **Ephemeral importance level**: New `Importance::Ephemeral` variant for short-lived context like sprint goals or temporary notes
+- **Command output chunking**: `ByStructuredOutput` chunking strategy with auto-detection for test results, build errors, diffs, and log output
+- **Command output MCP tools**: `hyphae_store_command_output` stores chunked command output with ephemeral TTL; `hyphae_get_command_chunks` retrieves chunks with pagination
+- **Search pagination**: All search methods now accept `offset` parameter for paginated retrieval
 
 ### Changed
 - CLI restructured with early-return commands (completions, config, init) that skip store/embedder initialization
-- `MemoryStore` and `ChunkStore` traits now accept `project: Option<&str>` on search/list methods
+- `MemoryStore` and `ChunkStore` traits now accept `project: Option<&str>` and `offset: usize` on search methods
 - Schema auto-migrates to add `project`, `expires_at` columns on `memories` table and `project` on `documents`
 - Hybrid search FTS query now includes all columns (`updated_at`, `project`, `expires_at`) for correct row mapping
+- Removed cargo audit workflow (unmaintained transitive deps from fastembed are not actionable)
 
 ### CI/CD
 - Add concurrency groups to all workflows to cancel stale runs on new pushes
 - Add MSRV (1.85) check job
-- Remove duplicate security-audit job from CI (covered by dedicated audit.yml)
+- Remove duplicate security-audit job from CI
 - Fix coverage workflow running tests twice; now uses single `--json` invocation
 - Combine binary-size and startup-time into single performance job
 - Replace `cargo install` with `taiki-e/install-action` for hyperfine and cross (pre-built binaries)
 - Add `rust-cache` and `--locked` to release builds for speed and reproducibility
-- Expand security audit triggers to push-to-main and workspace crate changes
 
 ## v0.2.0
 
