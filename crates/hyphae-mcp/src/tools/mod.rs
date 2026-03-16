@@ -56,6 +56,7 @@ pub fn call_tool(
         "hyphae_memoir_search_all" => memoir::tool_memoir_search_all(store, args),
         "hyphae_memoir_link" => memoir::tool_memoir_link(store, args),
         "hyphae_memoir_inspect" => memoir::tool_memoir_inspect(store, args),
+        "hyphae_import_code_graph" => memoir::tool_import_code_graph(store, args, compact, project),
         // RAG tools
         "hyphae_ingest_file" => ingest::tool_ingest_file(store, embedder, args, compact, project),
         "hyphae_search_docs" => ingest::tool_search_docs(store, embedder, args, compact, project),

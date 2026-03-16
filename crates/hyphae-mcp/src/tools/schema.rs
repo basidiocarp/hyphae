@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 /// `hyphae_memory_embed_all` tool is omitted.
 pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
     let mut tools = vec![
-        // --- Memory tools ---
+        // Memory tools
         json!({
             "name": "hyphae_memory_store",
             "description": "Store important information in Hyphae long-term memory. Use to save decisions, preferences, project context, resolved errors — anything that should persist between sessions.",
@@ -13,12 +13,12 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                 "properties": {
                     "topic": {
                         "type": "string",
-                        "description": "Category/namespace (e.g. 'project-kexa', 'preferences', 'decisions-architecture', 'erreurs-resolues')"
+                        "description": "Category/namespace (e.g. 'project', 'preferences', 'decisions-architecture', 'resolved-errors')"
                     },
                     "content": {
                         "type": "string",
                         "maxLength": 32768,
-                        "description": "Information to memorize — be concise but complete"
+                        "description": "Information to memorize; be concise but complete"
                     },
                     "importance": {
                         "type": "string",
@@ -166,7 +166,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                 }
             }
         }),
-        // --- Memoir tools ---
+        // Memoir tools
         json!({
             "name": "hyphae_memoir_create",
             "description": "Create a new memoir — a permanent knowledge container. Memoirs hold concepts that never decay.",
@@ -313,7 +313,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }),
         json!({
             "name": "hyphae_memoir_inspect",
-            "description": "Inspect a concept and its graph neighborhood (BFS).",
+            "description": "Inspect a concept and its graph neighborhood using Breadth-First Search (BFS).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -353,9 +353,84 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                 "required": ["query"]
             }
         }),
+        json!({
+            "name": "hyphae_import_code_graph",
+            "description": "Import a code symbol graph from Rhizome (or similar tools) into Hyphae as a memoir. Creates or updates the memoir 'code:{project}' with concepts (symbols) and links (relationships). Idempotent — safe to re-import after incremental changes.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project": {
+                        "type": "string",
+                        "description": "Project name. Creates/updates memoir 'code:{project}'."
+                    },
+                    "nodes": {
+                        "type": "array",
+                        "description": "List of code symbols (concepts) to import.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string",
+                                    "description": "Unique symbol name within the project (e.g. function or type name)"
+                                },
+                                "labels": {
+                                    "type": "array",
+                                    "items": { "type": "string" },
+                                    "description": "Symbol kind tags (e.g. 'function', 'struct', 'public', 'async'). Stored with namespace 'code'."
+                                },
+                                "description": {
+                                    "type": "string",
+                                    "description": "Human-readable description or signature of the symbol"
+                                },
+                                "metadata": {
+                                    "type": "object",
+                                    "description": "Optional extra metadata (ignored by Hyphae, reserved for future use)"
+                                }
+                            },
+                            "required": ["name"]
+                        }
+                    },
+                    "edges": {
+                        "type": "array",
+                        "description": "List of directed relationships between symbols.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "source": {
+                                    "type": "string",
+                                    "description": "Source symbol name (must appear in nodes)"
+                                },
+                                "target": {
+                                    "type": "string",
+                                    "description": "Target symbol name (must appear in nodes)"
+                                },
+                                "relation": {
+                                    "type": "string",
+                                    "description": "Relationship type (e.g. 'calls', 'depends_on', 'implements', 'part_of'). Defaults to 'related_to'."
+                                },
+                                "weight": {
+                                    "type": "number",
+                                    "minimum": 0.0,
+                                    "maximum": 1.0,
+                                    "default": 1.0,
+                                    "description": "Edge strength (0.0–1.0). Defaults to 1.0."
+                                }
+                            },
+                            "required": ["source", "target"]
+                        }
+                    },
+                    "prune": {
+                        "type": "boolean",
+                        "default": true,
+                        "description": "If true (default), remove concepts whose names are not in this import (deleted or renamed symbols). Set to false for incremental partial imports."
+                    }
+                },
+                "required": ["project", "nodes", "edges"]
+            }
+        }),
     ];
 
-    // --- RAG tools ---
+    // RAG tools
     tools.push(json!({
         "name": "hyphae_ingest_file",
         "description": "Ingest a file or directory into Hyphae's document store for RAG search. Chunks the content and stores it for later retrieval.",
@@ -377,7 +452,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
     }));
     tools.push(json!({
         "name": "hyphae_search_docs",
-        "description": "Search ingested documents using hybrid (vector + FTS) or FTS search. Returns ranked chunks with source paths and scores.",
+        "description": "Search ingested documents using hybrid (vector + FTS) or Full-text Search (FTS) search. Returns ranked chunks with source paths and scores.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -457,7 +532,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }
     }));
 
-    // --- Command output tools ---
+    // Command output tools
     tools.push(json!({
         "name": "hyphae_store_command_output",
         "description": "Store command output as chunked documents with ephemeral importance. Automatically detects output type (test results, build errors, diffs, logs) and chunks accordingly.",

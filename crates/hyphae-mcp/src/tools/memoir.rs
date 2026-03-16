@@ -1,6 +1,11 @@
-use serde_json::Value;
+use std::collections::HashSet;
 
-use hyphae_core::{Concept, ConceptLink, Label, Memoir, MemoirStore, Relation};
+use serde_json::{Value, json};
+
+use hyphae_core::{
+    Concept, ConceptLink, Label, Memoir, MemoirStore, Relation,
+    memoir_store::{ConceptInput, LinkInput},
+};
 use hyphae_store::SqliteStore;
 
 use crate::protocol::ToolResult;
@@ -433,4 +438,334 @@ pub(crate) fn tool_memoir_inspect(store: &SqliteStore, args: &Value) -> ToolResu
     }
 
     ToolResult::text(output)
+}
+
+pub(crate) fn tool_import_code_graph(
+    store: &SqliteStore,
+    args: &Value,
+    compact: bool,
+    _project: Option<&str>,
+) -> ToolResult {
+    let project = match validate_required_string(args, "project") {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+
+    let nodes_raw = match args.get("nodes").and_then(|v| v.as_array()) {
+        Some(arr) => arr,
+        None => return ToolResult::error("missing required field: nodes".into()),
+    };
+
+    let edges_raw = match args.get("edges").and_then(|v| v.as_array()) {
+        Some(arr) => arr,
+        None => return ToolResult::error("missing required field: edges".into()),
+    };
+
+    // Default prune to true
+    let prune = args.get("prune").and_then(|v| v.as_bool()).unwrap_or(true);
+
+    // Parse nodes into ConceptInput
+    let mut concept_inputs: Vec<ConceptInput> = Vec::with_capacity(nodes_raw.len());
+    let mut node_names: HashSet<String> = HashSet::with_capacity(nodes_raw.len());
+
+    for (i, node) in nodes_raw.iter().enumerate() {
+        let name = match node.get("name").and_then(|v| v.as_str()) {
+            Some(n) if !n.trim().is_empty() => n.to_string(),
+            Some(_) => {
+                return ToolResult::error(format!("nodes[{i}]: name must not be empty"));
+            }
+            None => {
+                return ToolResult::error(format!("nodes[{i}]: missing field 'name'"));
+            }
+        };
+
+        let description = node
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        // Parse labels array: each element is a plain string → Label { namespace: "code", value: ... }
+        let labels: Vec<Label> =
+            if let Some(labels_arr) = node.get("labels").and_then(|v| v.as_array()) {
+                let mut parsed = Vec::with_capacity(labels_arr.len());
+                for lv in labels_arr {
+                    if let Some(s) = lv.as_str() {
+                        if !s.is_empty() {
+                            parsed.push(Label {
+                                namespace: "code".to_string(),
+                                value: s.to_string(),
+                            });
+                        }
+                    }
+                }
+                parsed
+            } else {
+                Vec::new()
+            };
+
+        node_names.insert(name.clone());
+        concept_inputs.push(ConceptInput {
+            name,
+            labels,
+            description,
+        });
+    }
+
+    // Parse edges into LinkInput
+    let mut link_inputs: Vec<LinkInput> = Vec::with_capacity(edges_raw.len());
+
+    for (i, edge) in edges_raw.iter().enumerate() {
+        let source = match edge.get("source").and_then(|v| v.as_str()) {
+            Some(s) if !s.trim().is_empty() => s.to_string(),
+            Some(_) => {
+                return ToolResult::error(format!("edges[{i}]: source must not be empty"));
+            }
+            None => {
+                return ToolResult::error(format!("edges[{i}]: missing field 'source'"));
+            }
+        };
+        let target = match edge.get("target").and_then(|v| v.as_str()) {
+            Some(t) if !t.trim().is_empty() => t.to_string(),
+            Some(_) => {
+                return ToolResult::error(format!("edges[{i}]: target must not be empty"));
+            }
+            None => {
+                return ToolResult::error(format!("edges[{i}]: missing field 'target'"));
+            }
+        };
+        let relation = edge
+            .get("relation")
+            .and_then(|v| v.as_str())
+            .unwrap_or("related_to")
+            .to_string();
+        let weight = edge
+            .get("weight")
+            .and_then(|v| v.as_f64())
+            .map(|f| f as f32)
+            .unwrap_or(1.0);
+
+        link_inputs.push(LinkInput {
+            source_name: source,
+            target_name: target,
+            relation,
+            weight,
+        });
+    }
+
+    // Validate: all edge source/target names must appear in nodes
+    for (i, link) in link_inputs.iter().enumerate() {
+        if !node_names.contains(&link.source_name) {
+            return ToolResult::error(format!(
+                "edges[{i}]: source '{}' not found in nodes",
+                link.source_name
+            ));
+        }
+        if !node_names.contains(&link.target_name) {
+            return ToolResult::error(format!(
+                "edges[{i}]: target '{}' not found in nodes",
+                link.target_name
+            ));
+        }
+    }
+
+    // Find or create memoir code:{project}
+    let memoir_name = format!("code:{project}");
+    let memoir = match store.get_memoir_by_name(&memoir_name) {
+        Ok(Some(m)) => m,
+        Ok(None) => {
+            let new_memoir = Memoir::new(
+                memoir_name.clone(),
+                format!("Code symbol graph for project '{project}'"),
+            );
+            match store.create_memoir(new_memoir) {
+                Ok(id) => match store.get_memoir(&id) {
+                    Ok(Some(m)) => m,
+                    Ok(None) => {
+                        return ToolResult::error(
+                            "failed to retrieve memoir after creation".into(),
+                        );
+                    }
+                    Err(e) => return ToolResult::error(format!("db error after create: {e}")),
+                },
+                Err(e) => return ToolResult::error(format!("failed to create memoir: {e}")),
+            }
+        }
+        Err(e) => return ToolResult::error(format!("db error looking up memoir: {e}")),
+    };
+
+    // Upsert concepts
+    let concept_report = match store.upsert_concepts(&memoir.id, &concept_inputs) {
+        Ok(r) => r,
+        Err(e) => return ToolResult::error(format!("failed to upsert concepts: {e}")),
+    };
+
+    // Upsert links
+    let link_report = match store.upsert_links(&memoir.id, &link_inputs) {
+        Ok(r) => r,
+        Err(e) => return ToolResult::error(format!("failed to upsert links: {e}")),
+    };
+
+    // Optionally prune concepts not in this graph
+    let pruned = if prune {
+        let keep_names: Vec<String> = concept_inputs.iter().map(|c| c.name.clone()).collect();
+        match store.prune_concepts(&memoir.id, &keep_names) {
+            Ok(n) => n,
+            Err(e) => return ToolResult::error(format!("failed to prune concepts: {e}")),
+        }
+    } else {
+        0
+    };
+
+    tracing::info!(
+        memoir = memoir_name,
+        concepts_created = concept_report.created,
+        concepts_updated = concept_report.updated,
+        concepts_unchanged = concept_report.unchanged,
+        concepts_pruned = pruned,
+        links_created = link_report.created,
+        links_updated = link_report.updated,
+        links_unchanged = link_report.unchanged,
+        "import_code_graph complete"
+    );
+
+    if compact {
+        let text = format!(
+            "Imported {memoir_name}: concepts +{}/{}/{} pruned={pruned} links +{}/{}/{}",
+            concept_report.created,
+            concept_report.updated,
+            concept_report.unchanged,
+            link_report.created,
+            link_report.updated,
+            link_report.unchanged,
+        );
+        return ToolResult::text(text);
+    }
+
+    let result = json!({
+        "memoir": memoir_name,
+        "concepts": {
+            "created": concept_report.created,
+            "updated": concept_report.updated,
+            "unchanged": concept_report.unchanged,
+            "pruned": pruned
+        },
+        "links": {
+            "created": link_report.created,
+            "updated": link_report.updated,
+            "unchanged": link_report.unchanged
+        }
+    });
+
+    ToolResult::text(result.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn test_store() -> SqliteStore {
+        SqliteStore::in_memory().unwrap()
+    }
+
+    #[test]
+    fn test_import_code_graph_creates_memoir_and_concepts() {
+        let store = test_store();
+        let args = json!({
+            "project": "mycelium",
+            "nodes": [
+                { "name": "dispatch", "labels": ["function", "public"], "description": "pub fn dispatch(...)" },
+                { "name": "run_fallback", "labels": ["function"], "description": "fn run_fallback(...)" },
+                { "name": "filter_output", "labels": ["function"], "description": "fn filter_output(...)" }
+            ],
+            "edges": [
+                { "source": "dispatch", "target": "run_fallback", "relation": "depends_on", "weight": 0.8 },
+                { "source": "dispatch", "target": "filter_output", "relation": "depends_on", "weight": 0.5 }
+            ],
+            "prune": false
+        });
+
+        let result = tool_import_code_graph(&store, &args, false, None);
+        assert!(
+            !result.is_error,
+            "Expected success, got: {:?}",
+            result.content
+        );
+
+        // Verify memoir was created
+        let memoir = store
+            .get_memoir_by_name("code:mycelium")
+            .unwrap()
+            .expect("memoir should exist");
+
+        // Verify concepts were created
+        let concepts = store.list_concepts(&memoir.id).unwrap();
+        assert_eq!(concepts.len(), 3);
+
+        let dispatch = store
+            .get_concept_by_name(&memoir.id, "dispatch")
+            .unwrap()
+            .expect("dispatch concept should exist");
+        assert_eq!(dispatch.definition, "pub fn dispatch(...)");
+        assert_eq!(dispatch.labels.len(), 2);
+        assert!(
+            dispatch
+                .labels
+                .iter()
+                .any(|l| l.namespace == "code" && l.value == "function")
+        );
+        assert!(
+            dispatch
+                .labels
+                .iter()
+                .any(|l| l.namespace == "code" && l.value == "public")
+        );
+
+        // Verify output is valid JSON with expected structure
+        let output_text = &result.content[0].text;
+        let output: serde_json::Value = serde_json::from_str(output_text).unwrap();
+        assert_eq!(output["memoir"], "code:mycelium");
+        assert_eq!(output["concepts"]["created"], 3);
+        assert_eq!(output["concepts"]["updated"], 0);
+        assert_eq!(output["links"]["created"], 2);
+    }
+
+    #[test]
+    fn test_import_code_graph_edge_validation_fails_for_unknown_source() {
+        let store = test_store();
+        let args = json!({
+            "project": "test",
+            "nodes": [
+                { "name": "a", "labels": [], "description": "node a" }
+            ],
+            "edges": [
+                { "source": "nonexistent", "target": "a", "relation": "depends_on", "weight": 1.0 }
+            ]
+        });
+
+        let result = tool_import_code_graph(&store, &args, false, None);
+        assert!(result.is_error);
+        assert!(result.content[0].text.contains("nonexistent"));
+    }
+
+    #[test]
+    fn test_import_code_graph_compact_mode() {
+        let store = test_store();
+        let args = json!({
+            "project": "compact_test",
+            "nodes": [
+                { "name": "foo", "labels": ["function"], "description": "fn foo()" }
+            ],
+            "edges": [],
+            "prune": false
+        });
+
+        let result = tool_import_code_graph(&store, &args, true, None);
+        assert!(!result.is_error);
+        let text = &result.content[0].text;
+        assert!(text.contains("code:compact_test"));
+        // Compact mode is plain text, not JSON
+        assert!(serde_json::from_str::<serde_json::Value>(text).is_err());
+    }
 }
