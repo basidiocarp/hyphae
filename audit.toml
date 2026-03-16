@@ -1,9 +1,0 @@
-# Cargo audit configuration
-# See: https://github.com/rustsec/rustsec/tree/main/cargo-audit
-
-[advisories]
-# Ignore unmaintained transitive dependencies we don't control
-ignore = [
-    "RUSTSEC-2025-0119", # number_prefix (transitive via fastembed → hf-hub → indicatif)
-    "RUSTSEC-2024-0436", # paste (transitive via fastembed → tokenizers, rav1e)
-]
