@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde_json::{Value, json};
 
@@ -660,6 +660,304 @@ pub(crate) fn tool_import_code_graph(
     ToolResult::text(result.to_string())
 }
 
+pub(crate) fn tool_code_query(
+    store: &SqliteStore,
+    args: &Value,
+    compact: bool,
+    _project: Option<&str>,
+) -> ToolResult {
+    let project = match validate_required_string(args, "project") {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+
+    let query_type = match validate_required_string(args, "query_type") {
+        Ok(qt) => qt,
+        Err(e) => return e,
+    };
+
+    // Look up memoir by name
+    let memoir_name = format!("code:{project}");
+    let memoir = match store.get_memoir_by_name(&memoir_name) {
+        Ok(Some(m)) => m,
+        Ok(None) => return ToolResult::error(format!("memoir not found: {memoir_name}")),
+        Err(e) => return ToolResult::error(format!("db error: {e}")),
+    };
+
+    // For symbol-based queries, resolve the concept
+    let concept_opt = if matches!(
+        query_type,
+        "callers" | "callees" | "implementors" | "structure"
+    ) {
+        let symbol = match validate_required_string(args, "symbol") {
+            Ok(s) => s,
+            Err(e) => return e,
+        };
+        match store.get_concept_by_name(&memoir.id, symbol) {
+            Ok(Some(c)) => Some(c),
+            Ok(None) => return ToolResult::error(format!("concept not found: {symbol}")),
+            Err(e) => return ToolResult::error(format!("db error: {e}")),
+        }
+    } else {
+        None
+    };
+
+    let result = match query_type {
+        "symbols" => query_symbols(store, &memoir, args),
+        "callers" => query_callers(store, concept_opt.as_ref().unwrap()),
+        "callees" => query_callees(store, concept_opt.as_ref().unwrap()),
+        "implementors" => query_implementors(store, concept_opt.as_ref().unwrap()),
+        "structure" => query_structure(store, concept_opt.as_ref().unwrap()),
+        _ => {
+            return ToolResult::error(format!(
+                "invalid query_type: {query_type}. Must be one of: symbols, callers, callees, implementors, structure"
+            ));
+        }
+    };
+
+    match result {
+        Ok(data) => {
+            if compact {
+                let text = match query_type {
+                    "symbols" => {
+                        if let Value::Array(concepts) = &data {
+                            let names: Vec<&str> = concepts
+                                .iter()
+                                .filter_map(|c| c.get("name").and_then(|n| n.as_str()))
+                                .collect();
+                            format!("{} symbols: {}", names.len(), names.join(", "))
+                        } else {
+                            "0 symbols".to_string()
+                        }
+                    }
+                    _ => {
+                        // For graph queries, show count and key relationships
+                        if let Value::Object(obj) = &data {
+                            let concepts = obj
+                                .get("concepts")
+                                .and_then(|c| c.as_array())
+                                .map(|a| a.len())
+                                .unwrap_or(0);
+                            let links = obj
+                                .get("links")
+                                .and_then(|l| l.as_array())
+                                .map(|a| a.len())
+                                .unwrap_or(0);
+                            format!("Graph: {concepts} concepts, {links} links")
+                        } else {
+                            "Graph query".to_string()
+                        }
+                    }
+                };
+                ToolResult::text(text)
+            } else {
+                ToolResult::text(data.to_string())
+            }
+        }
+        Err(e) => ToolResult::error(e),
+    }
+}
+
+fn query_symbols(store: &SqliteStore, memoir: &Memoir, args: &Value) -> Result<Value, String> {
+    let concepts = if let Some(labels_arr) = args.get("labels").and_then(|v| v.as_array()) {
+        if labels_arr.is_empty() {
+            store
+                .list_concepts(&memoir.id)
+                .map_err(|e| format!("db error: {e}"))
+        } else {
+            // Filter by each label, return intersection
+            let mut results: Option<Vec<Concept>> = None;
+
+            for label_val in labels_arr {
+                if let Some(label_str) = label_val.as_str() {
+                    let label = Label {
+                        namespace: "code".to_string(),
+                        value: label_str.to_string(),
+                    };
+                    let labeled = store
+                        .search_concepts_by_label(&memoir.id, &label, 1000)
+                        .map_err(|e| format!("db error: {e}"))?;
+
+                    if let Some(ref mut current) = results {
+                        let labeled_ids: HashSet<_> = labeled.iter().map(|c| &c.id).collect();
+                        current.retain(|c| labeled_ids.contains(&c.id));
+                    } else {
+                        results = Some(labeled);
+                    }
+                }
+            }
+
+            Ok(results.unwrap_or_default())
+        }
+    } else {
+        store
+            .list_concepts(&memoir.id)
+            .map_err(|e| format!("db error: {e}"))
+    }?;
+
+    let json_concepts: Vec<Value> = concepts
+        .iter()
+        .map(|c| {
+            let labels_strs: Vec<String> = c.labels.iter().map(|l| l.to_string()).collect();
+            json!({
+                "name": c.name,
+                "definition": c.definition,
+                "labels": labels_strs,
+                "confidence": c.confidence.value(),
+            })
+        })
+        .collect();
+
+    Ok(Value::Array(json_concepts))
+}
+
+fn matches_call_relation(relation: &Relation) -> bool {
+    // Code graphs use "calls", "call", etc., which parse as RelatedTo when unknown.
+    // Also match against depends_on which is a known variant.
+    matches!(relation, Relation::RelatedTo | Relation::DependsOn)
+}
+
+fn matches_implements_relation(relation: &Relation) -> bool {
+    // Code graphs use "implements", which parses as RelatedTo when unknown.
+    matches!(relation, Relation::RelatedTo | Relation::InstanceOf)
+}
+
+fn query_callers(store: &SqliteStore, concept: &Concept) -> Result<Value, String> {
+    let links = store
+        .get_links_to(&concept.id)
+        .map_err(|e| format!("db error: {e}"))?;
+
+    // For callers: filter for call-like relations
+    let calls_links: Vec<&ConceptLink> = links
+        .iter()
+        .filter(|link| matches_call_relation(&link.relation))
+        .collect();
+
+    let mut callers = Vec::new();
+    for link in calls_links {
+        if let Ok(Some(caller)) = store.get_concept(&link.source_id) {
+            callers.push(json!({
+                "name": caller.name,
+                "definition": caller.definition,
+                "weight": link.weight.value(),
+            }));
+        }
+    }
+
+    Ok(json!({
+        "symbol": concept.name,
+        "callers": callers,
+    }))
+}
+
+fn query_callees(store: &SqliteStore, concept: &Concept) -> Result<Value, String> {
+    let links = store
+        .get_links_from(&concept.id)
+        .map_err(|e| format!("db error: {e}"))?;
+
+    // For callees: filter for call-like relations
+    let calls_links: Vec<&ConceptLink> = links
+        .iter()
+        .filter(|link| matches_call_relation(&link.relation))
+        .collect();
+
+    let mut callees = Vec::new();
+    for link in calls_links {
+        if let Ok(Some(callee)) = store.get_concept(&link.target_id) {
+            callees.push(json!({
+                "name": callee.name,
+                "definition": callee.definition,
+                "weight": link.weight.value(),
+            }));
+        }
+    }
+
+    Ok(json!({
+        "symbol": concept.name,
+        "callees": callees,
+    }))
+}
+
+fn query_implementors(store: &SqliteStore, concept: &Concept) -> Result<Value, String> {
+    let links = store
+        .get_links_to(&concept.id)
+        .map_err(|e| format!("db error: {e}"))?;
+
+    // For implementors: filter for implementation-like relations
+    let implements_links: Vec<&ConceptLink> = links
+        .iter()
+        .filter(|link| matches_implements_relation(&link.relation))
+        .collect();
+
+    let mut implementors = Vec::new();
+    for link in implements_links {
+        if let Ok(Some(impl_concept)) = store.get_concept(&link.source_id) {
+            implementors.push(json!({
+                "name": impl_concept.name,
+                "definition": impl_concept.definition,
+                "weight": link.weight.value(),
+            }));
+        }
+    }
+
+    Ok(json!({
+        "symbol": concept.name,
+        "implementors": implementors,
+    }))
+}
+
+fn query_structure(store: &SqliteStore, concept: &Concept) -> Result<Value, String> {
+    let (neighbors, links) = store
+        .get_neighborhood(&concept.id, 2)
+        .map_err(|e| format!("db error: {e}"))?;
+
+    let concepts_json: Vec<Value> = neighbors
+        .iter()
+        .map(|c| {
+            let labels_strs: Vec<String> = c.labels.iter().map(|l| l.to_string()).collect();
+            json!({
+                "id": c.id.to_string(),
+                "name": c.name,
+                "definition": c.definition,
+                "labels": labels_strs,
+                "confidence": c.confidence.value(),
+            })
+        })
+        .collect();
+
+    // Build a map for name lookup
+    let id_to_name: HashMap<String, String> = neighbors
+        .iter()
+        .map(|c| (c.id.to_string(), c.name.clone()))
+        .collect();
+
+    let links_json: Vec<Value> = links
+        .iter()
+        .map(|link| {
+            let source_name = id_to_name
+                .get(link.source_id.as_ref())
+                .map(|s| s.as_str())
+                .unwrap_or("?");
+            let target_name = id_to_name
+                .get(link.target_id.as_ref())
+                .map(|s| s.as_str())
+                .unwrap_or("?");
+            json!({
+                "source": source_name,
+                "target": target_name,
+                "relation": link.relation.to_string(),
+                "weight": link.weight.value(),
+            })
+        })
+        .collect();
+
+    Ok(json!({
+        "symbol": concept.name,
+        "concepts": concepts_json,
+        "links": links_json,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -767,5 +1065,190 @@ mod tests {
         assert!(text.contains("code:compact_test"));
         // Compact mode is plain text, not JSON
         assert!(serde_json::from_str::<serde_json::Value>(text).is_err());
+    }
+
+    #[test]
+    fn test_code_query_symbols() {
+        let store = test_store();
+        let import_args = json!({
+            "project": "test_project",
+            "nodes": [
+                { "name": "foo", "labels": ["function", "public"], "description": "fn foo()" },
+                { "name": "bar", "labels": ["function"], "description": "fn bar()" },
+                { "name": "baz", "labels": ["struct"], "description": "struct baz" }
+            ],
+            "edges": [],
+            "prune": false
+        });
+
+        let _import_result = tool_import_code_graph(&store, &import_args, false, None);
+
+        // Query all symbols
+        let query_args = json!({
+            "project": "test_project",
+            "query_type": "symbols"
+        });
+        let result = tool_code_query(&store, &query_args, false, None);
+        assert!(!result.is_error);
+        let text = &result.content[0].text;
+        let symbols: Vec<Value> = serde_json::from_str(text).unwrap();
+        assert_eq!(symbols.len(), 3);
+        assert!(symbols.iter().any(|s| s["name"] == "foo"));
+
+        // Query with label filter
+        let query_args_filtered = json!({
+            "project": "test_project",
+            "query_type": "symbols",
+            "labels": ["function"]
+        });
+        let result = tool_code_query(&store, &query_args_filtered, false, None);
+        assert!(!result.is_error);
+        let text = &result.content[0].text;
+        let symbols: Vec<Value> = serde_json::from_str(text).unwrap();
+        assert_eq!(symbols.len(), 2);
+    }
+
+    #[test]
+    fn test_code_query_callers() {
+        let store = test_store();
+        let import_args = json!({
+            "project": "caller_test",
+            "nodes": [
+                { "name": "main", "labels": ["function"], "description": "fn main()" },
+                { "name": "helper", "labels": ["function"], "description": "fn helper()" },
+                { "name": "util", "labels": ["function"], "description": "fn util()" }
+            ],
+            "edges": [
+                { "source": "main", "target": "helper", "relation": "calls", "weight": 0.8 },
+                { "source": "main", "target": "util", "relation": "calls", "weight": 0.5 }
+            ],
+            "prune": false
+        });
+
+        let _import_result = tool_import_code_graph(&store, &import_args, false, None);
+
+        // Query callers of helper
+        let query_args = json!({
+            "project": "caller_test",
+            "query_type": "callers",
+            "symbol": "helper"
+        });
+        let result = tool_code_query(&store, &query_args, false, None);
+        assert!(!result.is_error);
+        let text = &result.content[0].text;
+        let data: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(data["symbol"], "helper");
+        let callers = data["callers"].as_array().unwrap();
+        assert_eq!(callers.len(), 1);
+        assert_eq!(callers[0]["name"], "main");
+    }
+
+    #[test]
+    fn test_code_query_callees() {
+        let store = test_store();
+        let import_args = json!({
+            "project": "callee_test",
+            "nodes": [
+                { "name": "main", "labels": ["function"], "description": "fn main()" },
+                { "name": "helper", "labels": ["function"], "description": "fn helper()" },
+                { "name": "util", "labels": ["function"], "description": "fn util()" }
+            ],
+            "edges": [
+                { "source": "main", "target": "helper", "relation": "calls", "weight": 0.8 },
+                { "source": "main", "target": "util", "relation": "calls", "weight": 0.5 }
+            ],
+            "prune": false
+        });
+
+        let _import_result = tool_import_code_graph(&store, &import_args, false, None);
+
+        // Query callees of main
+        let query_args = json!({
+            "project": "callee_test",
+            "query_type": "callees",
+            "symbol": "main"
+        });
+        let result = tool_code_query(&store, &query_args, false, None);
+        assert!(!result.is_error);
+        let text = &result.content[0].text;
+        let data: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(data["symbol"], "main");
+        let callees = data["callees"].as_array().unwrap();
+        assert_eq!(callees.len(), 2);
+        let names: Vec<&str> = callees.iter().filter_map(|c| c["name"].as_str()).collect();
+        assert!(names.contains(&"helper"));
+        assert!(names.contains(&"util"));
+    }
+
+    #[test]
+    fn test_code_query_structure() {
+        let store = test_store();
+        let import_args = json!({
+            "project": "structure_test",
+            "nodes": [
+                { "name": "a", "labels": ["function"], "description": "fn a()" },
+                { "name": "b", "labels": ["function"], "description": "fn b()" },
+                { "name": "c", "labels": ["function"], "description": "fn c()" }
+            ],
+            "edges": [
+                { "source": "a", "target": "b", "relation": "calls", "weight": 1.0 },
+                { "source": "b", "target": "c", "relation": "calls", "weight": 1.0 }
+            ],
+            "prune": false
+        });
+
+        let _import_result = tool_import_code_graph(&store, &import_args, false, None);
+
+        // Query structure around b
+        let query_args = json!({
+            "project": "structure_test",
+            "query_type": "structure",
+            "symbol": "b"
+        });
+        let result = tool_code_query(&store, &query_args, false, None);
+        assert!(!result.is_error);
+        let text = &result.content[0].text;
+        let data: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(data["symbol"], "b");
+        let concepts = data["concepts"].as_array().unwrap();
+        assert!(!concepts.is_empty());
+        let concept_names: Vec<&str> = concepts.iter().filter_map(|c| c["name"].as_str()).collect();
+        assert!(concept_names.contains(&"b"));
+    }
+
+    #[test]
+    fn test_code_query_nonexistent_memoir() {
+        let store = test_store();
+        let query_args = json!({
+            "project": "nonexistent",
+            "query_type": "symbols"
+        });
+        let result = tool_code_query(&store, &query_args, false, None);
+        assert!(result.is_error);
+        assert!(result.content[0].text.contains("not found"));
+    }
+
+    #[test]
+    fn test_code_query_nonexistent_symbol() {
+        let store = test_store();
+        let import_args = json!({
+            "project": "sym_test",
+            "nodes": [
+                { "name": "exists", "labels": ["function"], "description": "fn exists()" }
+            ],
+            "edges": [],
+            "prune": false
+        });
+
+        let _import_result = tool_import_code_graph(&store, &import_args, false, None);
+
+        let query_args = json!({
+            "project": "sym_test",
+            "query_type": "callers",
+            "symbol": "does_not_exist"
+        });
+        let result = tool_code_query(&store, &query_args, false, None);
+        assert!(result.is_error);
+        assert!(result.content[0].text.contains("not found"));
     }
 }

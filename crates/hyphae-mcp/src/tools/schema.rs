@@ -428,6 +428,34 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                 "required": ["project", "nodes", "edges"]
             }
         }),
+        json!({
+            "name": "hyphae_code_query",
+            "description": "Query a code symbol graph stored in a memoir. Supports symbol listing, call graph analysis, and neighborhood exploration.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project": {
+                        "type": "string",
+                        "description": "Project name. Looks up memoir 'code:{project}'."
+                    },
+                    "query_type": {
+                        "type": "string",
+                        "enum": ["symbols", "callers", "callees", "implementors", "structure"],
+                        "description": "Type of query: 'symbols' (list concepts), 'callers' (who calls symbol), 'callees' (who symbol calls), 'implementors' (who implements symbol), 'structure' (neighborhood subgraph)"
+                    },
+                    "symbol": {
+                        "type": "string",
+                        "description": "Symbol name. Required for callers/callees/implementors/structure; optional for symbols."
+                    },
+                    "labels": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Filter concepts by labels (e.g. ['function', 'public']). Only used with 'symbols' query. Returns intersection of all label filters."
+                    }
+                },
+                "required": ["project", "query_type"]
+            }
+        }),
     ];
 
     // RAG tools
