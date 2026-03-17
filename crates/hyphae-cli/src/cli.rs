@@ -150,6 +150,13 @@ pub(crate) enum Commands {
         count: usize,
     },
 
+    /// Check for and install updates
+    SelfUpdate {
+        /// Only check for updates, don't download
+        #[arg(long)]
+        check: bool,
+    },
+
     /// Prune expired and low-weight memories
     Prune {
         /// Also prune memories with weight below this threshold

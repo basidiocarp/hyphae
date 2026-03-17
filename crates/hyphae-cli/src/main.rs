@@ -92,6 +92,10 @@ fn main() -> Result<()> {
             init::run_init(editor.clone())?;
             return Ok(());
         }
+        Commands::SelfUpdate { check } => {
+            commands::self_update::run(*check)?;
+            return Ok(());
+        }
         _ => {}
     }
 
@@ -145,6 +149,7 @@ fn main() -> Result<()> {
         Commands::Config => unreachable!("handled in early-return block"),
         Commands::Completions { .. } => unreachable!("handled in early-return block"),
         Commands::Init { .. } => unreachable!("handled in early-return block"),
+        Commands::SelfUpdate { .. } => unreachable!("handled in early-return block"),
 
         Commands::Watch { path, recursive } => {
             watch::run_watch(

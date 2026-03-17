@@ -3,6 +3,7 @@ pub mod docs;
 pub mod memoir;
 pub mod memory;
 pub mod prune;
+pub mod self_update;
 
 use crate::config::Config;
 
