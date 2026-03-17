@@ -91,6 +91,29 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Count expired ephemeral memories without deleting them.
+    pub fn count_expired(&self) -> HyphaeResult<usize> {
+        let now = Utc::now().to_rfc3339();
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM memories WHERE expires_at IS NOT NULL AND expires_at < ?1",
+                params![now],
+                |row| row.get::<_, usize>(0),
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))
+    }
+
+    /// Count low-weight memories that would be pruned at the given threshold.
+    pub fn count_low_weight(&self, weight_threshold: f32) -> HyphaeResult<usize> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM memories WHERE weight < ?1 AND importance NOT IN ('critical', 'high')",
+                params![weight_threshold],
+                |row| row.get::<_, usize>(0),
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))
+    }
+
     pub fn in_memory() -> HyphaeResult<Self> {
         ensure_sqlite_vec();
         let conn = Connection::open_in_memory()

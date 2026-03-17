@@ -149,4 +149,14 @@ pub(crate) enum Commands {
         #[arg(long, default_value = "100")]
         count: usize,
     },
+
+    /// Prune expired and low-weight memories
+    Prune {
+        /// Also prune memories with weight below this threshold
+        #[arg(short, long)]
+        threshold: Option<f32>,
+        /// Show what would be pruned without deleting
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
