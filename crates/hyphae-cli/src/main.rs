@@ -96,6 +96,10 @@ fn main() -> Result<()> {
             commands::self_update::run(*check)?;
             return Ok(());
         }
+        Commands::Doctor { fix } => {
+            commands::doctor::run(*fix)?;
+            return Ok(());
+        }
         _ => {}
     }
 
@@ -150,6 +154,7 @@ fn main() -> Result<()> {
         Commands::Completions { .. } => unreachable!("handled in early-return block"),
         Commands::Init { .. } => unreachable!("handled in early-return block"),
         Commands::SelfUpdate { .. } => unreachable!("handled in early-return block"),
+        Commands::Doctor { .. } => unreachable!("handled in early-return block"),
 
         Commands::Watch { path, recursive } => {
             watch::run_watch(

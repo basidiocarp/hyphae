@@ -166,4 +166,11 @@ pub(crate) enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+
+    /// Diagnose common issues with the hyphae installation
+    Doctor {
+        /// Attempt to fix detected issues (e.g. rebuild FTS index)
+        #[arg(long)]
+        fix: bool,
+    },
 }

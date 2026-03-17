@@ -1,5 +1,6 @@
 pub mod bench;
 pub mod docs;
+pub mod doctor;
 pub mod memoir;
 pub mod memory;
 pub mod prune;
