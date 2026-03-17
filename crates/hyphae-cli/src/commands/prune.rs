@@ -2,11 +2,7 @@ use anyhow::Result;
 use hyphae_core::MemoryStore;
 use hyphae_store::SqliteStore;
 
-pub(crate) fn cmd_prune(
-    store: &SqliteStore,
-    threshold: Option<f32>,
-    dry_run: bool,
-) -> Result<()> {
+pub(crate) fn cmd_prune(store: &SqliteStore, threshold: Option<f32>, dry_run: bool) -> Result<()> {
     if dry_run {
         let expired_count = store.count_expired()?;
         println!("Expired ephemeral memories: {expired_count}");

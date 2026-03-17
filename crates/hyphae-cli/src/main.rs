@@ -238,10 +238,7 @@ fn main() -> Result<()> {
             commands::bench::cmd_bench(count)?;
         }
 
-        Commands::Prune {
-            threshold,
-            dry_run,
-        } => {
+        Commands::Prune { threshold, dry_run } => {
             commands::prune::cmd_prune(&store, threshold, dry_run)?;
         }
     }
