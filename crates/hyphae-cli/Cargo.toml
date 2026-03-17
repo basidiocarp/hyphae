@@ -36,3 +36,18 @@ ureq = "3"
 tempfile = "3"
 notify = "8"
 ctrlc = { version = "3", features = ["termination"] }
+
+[package.metadata.deb]
+maintainer = "William Newton"
+license-file = ["../../LICENSE", "0"]
+extended-description = "Persistent memory system for AI coding agents"
+section = "utility"
+priority = "optional"
+assets = [
+  ["target/release/hyphae", "usr/bin/", "755"],
+]
+
+[package.metadata.generate-rpm]
+assets = [
+  { source = "target/release/hyphae", dest = "/usr/bin/hyphae", mode = "755" },
+]
