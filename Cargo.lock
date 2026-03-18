@@ -1210,7 +1210,7 @@ dependencies = [
 
 [[package]]
 name = "hyphae-cli"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1226,6 +1226,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "toml",
  "tracing",
@@ -1285,6 +1286,7 @@ dependencies = [
  "sqlite-vec",
  "tempfile",
  "tracing",
+ "ulid",
  "zerocopy",
 ]
 

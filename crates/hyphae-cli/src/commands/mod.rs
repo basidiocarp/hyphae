@@ -1,6 +1,7 @@
 pub mod bench;
 pub mod docs;
 pub mod doctor;
+pub mod import_claude_memory;
 pub mod memoir;
 pub mod memory;
 pub mod prune;

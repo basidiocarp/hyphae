@@ -246,6 +246,19 @@ fn main() -> Result<()> {
         Commands::Prune { threshold, dry_run } => {
             commands::prune::cmd_prune(&store, threshold, dry_run)?;
         }
+
+        Commands::ImportClaudeMemory {
+            path,
+            dry_run,
+            force,
+            watch,
+        } => {
+            if watch {
+                commands::import_claude_memory::watch(&store, path, force)?;
+            } else {
+                commands::import_claude_memory::run(&store, path, dry_run, force)?;
+            }
+        }
     }
 
     Ok(())

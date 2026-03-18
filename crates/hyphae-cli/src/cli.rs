@@ -167,6 +167,22 @@ pub(crate) enum Commands {
         dry_run: bool,
     },
 
+    /// Import Claude Code auto-memories from ~/.claude/projects/*/memory/
+    ImportClaudeMemory {
+        /// Path to a specific Claude project memory directory
+        #[arg(short, long)]
+        path: Option<PathBuf>,
+        /// Show what would be imported without storing
+        #[arg(long)]
+        dry_run: bool,
+        /// Re-import even if already imported (skip deduplication)
+        #[arg(long)]
+        force: bool,
+        /// Watch for new/changed memory files and import continuously
+        #[arg(long)]
+        watch: bool,
+    },
+
     /// Diagnose common issues with the hyphae installation
     Doctor {
         /// Attempt to fix detected issues (e.g. rebuild FTS index)
