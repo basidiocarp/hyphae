@@ -194,12 +194,67 @@ fn check_config(warnings: &mut u32) {
     }
 
     // Check embeddings
-    if cfg!(feature = "embeddings") {
-        pass("Embeddings support compiled in");
-    } else {
-        warn("Embeddings not available (--no-default-features build)");
+    check_embeddings(warnings);
+}
+
+fn check_embeddings(warnings: &mut u32) {
+    // HTTP embedder check
+    let http_url = std::env::var("HYPHAE_EMBEDDING_URL").unwrap_or_default();
+    let http_model = std::env::var("HYPHAE_EMBEDDING_MODEL").unwrap_or_default();
+
+    if !http_url.is_empty() && !http_model.is_empty() {
+        pass(&format!(
+            "HTTP embedder configured: {http_url} ({http_model})"
+        ));
+    } else if !http_url.is_empty() {
+        warn("HYPHAE_EMBEDDING_URL set but HYPHAE_EMBEDDING_MODEL is missing");
         *warnings += 1;
     }
+
+    // FastEmbed check
+    if cfg!(feature = "embeddings") {
+        pass("FastEmbed support compiled in");
+
+        // Check model cache
+        if let Ok(home) = std::env::var("HOME") {
+            let cache_dir = PathBuf::from(home).join(".cache/hyphae/models");
+            if cache_dir.exists() {
+                let model_count = std::fs::read_dir(&cache_dir)
+                    .map(|entries| entries.count())
+                    .unwrap_or(0);
+                if model_count > 0 {
+                    pass(&format!(
+                        "Model cache: {} ({model_count} item(s))",
+                        cache_dir.display()
+                    ));
+                } else {
+                    pass(&format!(
+                        "Model cache: {} (empty, will download on first use)",
+                        cache_dir.display()
+                    ));
+                }
+            } else {
+                pass("Model cache: not yet created (will download on first use)");
+            }
+        }
+    } else if http_url.is_empty() {
+        warn("No embeddings available: fastembed not compiled, HTTP embedder not configured");
+        warn("  For HTTP: set HYPHAE_EMBEDDING_URL and HYPHAE_EMBEDDING_MODEL");
+        warn("  For local: cargo install hyphae (includes fastembed)");
+        *warnings += 1;
+    } else {
+        pass("FastEmbed not compiled (using HTTP embedder)");
+    }
+
+    // Report active backend
+    let backend = if !http_url.is_empty() && !http_model.is_empty() {
+        "http"
+    } else if cfg!(feature = "embeddings") {
+        "fastembed"
+    } else {
+        "none (FTS-only search)"
+    };
+    pass(&format!("Active embedding backend: {backend}"));
 }
 
 fn check_ecosystem(warnings: &mut u32) {

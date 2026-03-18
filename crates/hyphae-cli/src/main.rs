@@ -1,6 +1,5 @@
 use anyhow::Result;
 use clap::Parser;
-#[cfg(feature = "embeddings")]
 use hyphae_core::Embedder;
 use hyphae_store::SqliteStore;
 use std::path::PathBuf;
@@ -39,18 +38,34 @@ fn open_store(db: Option<PathBuf>, embedding_dims: usize) -> Result<SqliteStore>
         .map_err(|e| anyhow::anyhow!("failed to open database: {e}"))
 }
 
-#[cfg(feature = "embeddings")]
-fn init_embedder(model: &str) -> Option<hyphae_core::FastEmbedder> {
-    hyphae_core::FastEmbedder::with_model(model)
-        .map_err(|e| {
-            tracing::warn!("embedder init failed: {e}");
-        })
-        .ok()
-}
+/// Initialize the best available embedder.
+///
+/// Priority:
+/// 1. HTTP embedder (if `HYPHAE_EMBEDDING_URL` is set) — always available
+/// 2. FastEmbedder (if `embeddings` feature is compiled in)
+/// 3. None — FTS-only search
+fn init_embedder(model: &str) -> Option<Box<dyn Embedder>> {
+    // Try HTTP embedder first (always compiled)
+    match hyphae_core::HttpEmbedder::from_env() {
+        Ok(Some(http)) => return Some(Box::new(http)),
+        Ok(None) => {} // URL not set, try next
+        Err(e) => {
+            tracing::warn!("HTTP embedder config error: {e}");
+        }
+    }
 
-#[cfg(not(feature = "embeddings"))]
-#[allow(dead_code)]
-fn init_embedder(_model: &str) -> Option<()> {
+    // Try fastembed (feature-gated)
+    #[cfg(feature = "embeddings")]
+    {
+        match hyphae_core::FastEmbedder::with_model(model) {
+            Ok(fe) => return Some(Box::new(fe)),
+            Err(e) => {
+                tracing::warn!("fastembed init failed: {e}");
+            }
+        }
+    }
+
+    let _ = model; // suppress unused warning in no-default-features build
     None
 }
 
@@ -103,22 +118,12 @@ fn main() -> Result<()> {
         _ => {}
     }
 
-    #[cfg(feature = "embeddings")]
     let embedder = init_embedder(&cfg.embeddings.model);
-
-    #[cfg(feature = "embeddings")]
     let embedding_dims = embedder.as_ref().map(|e| e.dimensions()).unwrap_or(384);
-
-    #[cfg(not(feature = "embeddings"))]
-    let embedding_dims = 384;
 
     let store = open_store(cli.db, embedding_dims)?;
 
-    #[cfg(feature = "embeddings")]
-    let embedder_ref: Option<&dyn hyphae_core::Embedder> =
-        embedder.as_ref().map(|e| e as &dyn hyphae_core::Embedder);
-    #[cfg(not(feature = "embeddings"))]
-    let embedder_ref: Option<&dyn hyphae_core::Embedder> = None;
+    let embedder_ref: Option<&dyn Embedder> = embedder.as_ref().map(|e| e.as_ref());
 
     match cli.command {
         Commands::Store {
@@ -169,28 +174,30 @@ fn main() -> Result<()> {
         }
 
         Commands::Serve { compact } => {
-            #[cfg(feature = "embeddings")]
-            let serve_embedder = embedder.as_ref().map(|e| e as &dyn hyphae_core::Embedder);
-            #[cfg(not(feature = "embeddings"))]
-            let serve_embedder: Option<&dyn hyphae_core::Embedder> = None;
-
             hyphae_mcp::run_server(
                 &store,
-                serve_embedder,
+                embedder_ref,
                 compact || cfg.mcp.compact,
                 resolved_project,
             )?;
         }
 
-        #[cfg(feature = "embeddings")]
         Commands::TestEmbed { text } => {
-            if let Some(e) = embedder {
+            if let Some(e) = &embedder {
                 let embedding = e.embed(&text)?;
                 println!("Embedding dimensions: {}", embedding.len());
                 println!("First 5 values: {:?}", &embedding[..5.min(embedding.len())]);
             } else {
-                println!("Embeddings not enabled");
+                println!("Embeddings not available");
+                println!("Set HYPHAE_EMBEDDING_URL and HYPHAE_EMBEDDING_MODEL for HTTP embeddings");
+                if !cfg!(feature = "embeddings") {
+                    println!("Or build with: cargo install hyphae (includes fastembed)");
+                }
             }
+        }
+
+        Commands::EmbedAll { topic, batch } => {
+            commands::memory::cmd_embed_all(&store, embedder_ref, topic, batch, resolved_project)?;
         }
 
         Commands::Ingest {

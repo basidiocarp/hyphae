@@ -62,6 +62,16 @@ fn model_dimensions(model: &EmbeddingModel) -> usize {
     }
 }
 
+/// Resolve the cache directory for embedding models.
+///
+/// Uses `~/.cache/hyphae/models/` so models are shared across databases
+/// and not re-downloaded per project.
+fn cache_directory() -> Option<std::path::PathBuf> {
+    std::env::var("HOME")
+        .ok()
+        .map(|h| std::path::PathBuf::from(h).join(".cache/hyphae/models"))
+}
+
 impl FastEmbedder {
     /// Create with default model (bge-small-en-v1.5).
     pub fn new() -> HyphaeResult<Self> {
@@ -90,10 +100,16 @@ impl FastEmbedder {
         if let Some(m) = self.model.get() {
             return Ok(m);
         }
+        eprintln!("Downloading embedding model ({})...", self.model_name);
         let (emb_model, _) = resolve_model(&self.model_name)?;
-        let model =
-            TextEmbedding::try_new(InitOptions::new(emb_model).with_show_download_progress(true))
-                .map_err(|e| HyphaeError::Embedding(format!("failed to init model: {e}")))?;
+        let cache_dir = cache_directory();
+        let mut opts = InitOptions::new(emb_model).with_show_download_progress(true);
+        if let Some(dir) = &cache_dir {
+            let _ = std::fs::create_dir_all(dir);
+            opts = opts.with_cache_dir(dir.clone());
+        }
+        let model = TextEmbedding::try_new(opts)
+            .map_err(|e| HyphaeError::Embedding(format!("failed to init model: {e}")))?;
         let _ = self.model.set(model);
         self.model
             .get()

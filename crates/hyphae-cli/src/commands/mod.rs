@@ -30,7 +30,42 @@ pub(crate) fn cmd_config(cfg: &Config) {
     println!("    Limit: {}", cfg.recall.limit);
     println!();
     println!("  Embeddings Settings:");
-    println!("    Model: {}", cfg.embeddings.model);
+    println!("    FastEmbed Model: {}", cfg.embeddings.model);
+    println!(
+        "    FastEmbed Available: {}",
+        if cfg!(feature = "embeddings") {
+            "yes"
+        } else {
+            "no (--no-default-features build)"
+        }
+    );
+
+    let http_url = std::env::var("HYPHAE_EMBEDDING_URL").unwrap_or_default();
+    let http_model = std::env::var("HYPHAE_EMBEDDING_MODEL").unwrap_or_default();
+    if http_url.is_empty() {
+        println!("    HTTP Embedder: not configured");
+        println!("      Set HYPHAE_EMBEDDING_URL and HYPHAE_EMBEDDING_MODEL to enable");
+    } else {
+        println!("    HTTP Embedder: enabled");
+        println!("      URL: {http_url}");
+        println!(
+            "      Model: {}",
+            if http_model.is_empty() {
+                "(not set — will error)"
+            } else {
+                &http_model
+            }
+        );
+    }
+
+    let active_backend = if !http_url.is_empty() && !http_model.is_empty() {
+        "http"
+    } else if cfg!(feature = "embeddings") {
+        "fastembed"
+    } else {
+        "none (FTS-only search)"
+    };
+    println!("    Active Backend: {active_backend}");
     println!();
     println!("  MCP Settings:");
     println!("    Transport: {}", cfg.mcp.transport);

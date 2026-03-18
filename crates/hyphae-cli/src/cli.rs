@@ -61,12 +61,21 @@ pub(crate) enum Commands {
     /// Show config
     Config,
 
-    /// Test embedding functionality
-    #[cfg(feature = "embeddings")]
+    /// Test embedding functionality (HTTP or fastembed)
     TestEmbed {
         /// Text to embed
         #[arg(short, long)]
         text: String,
+    },
+
+    /// Generate embeddings for all memories that don't have one yet
+    EmbedAll {
+        /// Only embed memories in this topic
+        #[arg(short, long)]
+        topic: Option<String>,
+        /// Batch size for embedding requests
+        #[arg(short, long, default_value = "32")]
+        batch: usize,
     },
 
     /// Ingest a file or directory into the document store

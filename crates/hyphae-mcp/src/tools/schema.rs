@@ -751,6 +751,16 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }
     }));
 
+    // Onboarding tool
+    tools.push(json!({
+        "name": "hyphae_onboard",
+        "description": "Get a quick overview of the Hyphae memory system for onboarding. Returns total memories, memoirs, topics, available tools, and a quick-start guide. No parameters required.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {}
+        }
+    }));
+
     if has_embedder {
         tools.push(json!({
             "name": "hyphae_memory_embed_all",
