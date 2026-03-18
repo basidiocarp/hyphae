@@ -11,6 +11,7 @@ mod ingest;
 mod memoir;
 mod memory;
 mod schema;
+mod session;
 
 // ===========================================================================
 // Tool schemas for tools/list
@@ -69,6 +70,10 @@ pub fn call_tool(
             ingest::tool_store_command_output(store, args, compact, project)
         }
         "hyphae_get_command_chunks" => ingest::tool_get_command_chunks(store, args),
+        // Session lifecycle tools
+        "hyphae_session_start" => session::tool_session_start(store, args),
+        "hyphae_session_end" => session::tool_session_end(store, args),
+        "hyphae_session_context" => session::tool_session_context(store, args),
         _ => ToolResult::error(format!("unknown tool: {name}")),
     }
 }
@@ -1518,5 +1523,22 @@ mod tests {
             !text.contains("[doc:"),
             "should not include doc results when include_docs=false"
         );
+    }
+
+    #[test]
+    fn test_is_session_query_detects_keywords() {
+        assert!(memory::is_session_query("what did I do last session"));
+        assert!(memory::is_session_query("last time I worked on auth"));
+        assert!(memory::is_session_query("what happened yesterday"));
+        assert!(memory::is_session_query("earlier today I fixed a bug"));
+        assert!(memory::is_session_query("show me previous changes"));
+        assert!(memory::is_session_query("SESSION summary"));
+    }
+
+    #[test]
+    fn test_is_session_query_rejects_non_session() {
+        assert!(!memory::is_session_query("how to parse JSON"));
+        assert!(!memory::is_session_query("authentication flow"));
+        assert!(!memory::is_session_query("database schema design"));
     }
 }

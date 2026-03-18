@@ -4,6 +4,7 @@ mod helpers;
 mod memoir_store;
 mod memory_store;
 mod search;
+pub mod session;
 
 pub use search::UnifiedSearchResult;
 
@@ -112,6 +113,22 @@ impl SqliteStore {
                 |row| row.get::<_, usize>(0),
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))
+    }
+
+    /// Check if a memory exists with a specific hash keyword (for deduplication).
+    pub fn memory_exists_with_keyword(&self, keyword: &str) -> HyphaeResult<bool> {
+        let pattern = format!("%\"hash:{keyword}\"%");
+        let exists: bool = self
+            .conn
+            .query_row(
+                "SELECT 1 FROM memories WHERE keywords LIKE ?1 LIMIT 1",
+                params![pattern],
+                |_row| Ok(true),
+            )
+            .optional()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?
+            .unwrap_or(false);
+        Ok(exists)
     }
 
     pub fn in_memory() -> HyphaeResult<Self> {
@@ -1370,5 +1387,34 @@ mod tests {
         let store = test_store();
         let count = store.store_chunks(vec![]).unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_memory_exists_with_keyword_found() {
+        let store = test_store();
+        let mem = Memory::builder("test".into(), "summary".into(), Importance::Medium)
+            .keywords(vec!["hash:abc123def456".into(), "other".into()])
+            .build();
+        store.store(mem).unwrap();
+
+        assert!(store.memory_exists_with_keyword("abc123def456").unwrap());
+    }
+
+    #[test]
+    fn test_memory_exists_with_keyword_not_found() {
+        let store = test_store();
+        assert!(!store.memory_exists_with_keyword("nonexistent").unwrap());
+    }
+
+    #[test]
+    fn test_memory_exists_with_keyword_partial_no_match() {
+        let store = test_store();
+        let mem = Memory::builder("test".into(), "summary".into(), Importance::Medium)
+            .keywords(vec!["hash:abc123def456".into()])
+            .build();
+        store.store(mem).unwrap();
+
+        // Different hash should not match
+        assert!(!store.memory_exists_with_keyword("xyz789").unwrap());
     }
 }

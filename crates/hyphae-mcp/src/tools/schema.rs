@@ -623,6 +623,77 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }
     }));
 
+    // Session lifecycle tools
+    tools.push(json!({
+        "name": "hyphae_session_start",
+        "description": "Start a new coding session. Creates a session record that tracks project work. Call at the beginning of a task to enable session lifecycle tracking. Returns a session_id for use with hyphae_session_end.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Project identifier (e.g. repo name or workspace path)"
+                },
+                "task": {
+                    "type": "string",
+                    "description": "Brief description of the task being worked on (optional)"
+                }
+            },
+            "required": ["project"]
+        }
+    }));
+
+    tools.push(json!({
+        "name": "hyphae_session_end",
+        "description": "End a coding session and store a summary. Updates the session record with completion data and optionally stores the summary as a persistent memory for future context. Call when finishing a task.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "session_id": {
+                    "type": "string",
+                    "description": "Session ID returned by hyphae_session_start"
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "Brief summary of what was accomplished"
+                },
+                "files_modified": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "List of files that were modified during the session"
+                },
+                "errors_encountered": {
+                    "type": "integer",
+                    "description": "Number of errors encountered during the session",
+                    "default": 0
+                }
+            },
+            "required": ["session_id"]
+        }
+    }));
+
+    tools.push(json!({
+        "name": "hyphae_session_context",
+        "description": "Get recent session history for a project. Returns the last N sessions with their summaries, tasks, and status. Use at the start of a new session to understand recent project context.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Project identifier to query sessions for"
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": 5,
+                    "minimum": 1,
+                    "maximum": 50,
+                    "description": "Maximum number of recent sessions to return"
+                }
+            },
+            "required": ["project"]
+        }
+    }));
+
     if has_embedder {
         tools.push(json!({
             "name": "hyphae_memory_embed_all",

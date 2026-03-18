@@ -1,0 +1,196 @@
+//! Session lifecycle persistence.
+
+use chrono::Utc;
+use rusqlite::params;
+
+use hyphae_core::{HyphaeError, HyphaeResult};
+
+use super::SqliteStore;
+
+/// A session record.
+#[derive(Debug, Clone)]
+pub struct Session {
+    pub id: String,
+    pub project: String,
+    pub task: Option<String>,
+    pub started_at: String,
+    pub ended_at: Option<String>,
+    pub summary: Option<String>,
+    pub files_modified: Option<String>,
+    pub errors: Option<String>,
+    pub status: String,
+}
+
+impl SqliteStore {
+    /// Ensure the sessions table exists.
+    pub fn ensure_sessions_table(&self) -> HyphaeResult<()> {
+        self.conn
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS sessions (
+                    id TEXT PRIMARY KEY,
+                    project TEXT NOT NULL,
+                    task TEXT,
+                    started_at TEXT NOT NULL,
+                    ended_at TEXT,
+                    summary TEXT,
+                    files_modified TEXT,
+                    errors TEXT,
+                    status TEXT NOT NULL DEFAULT 'active'
+                )",
+            )
+            .map_err(|e| HyphaeError::Database(format!("failed to create sessions table: {e}")))
+    }
+
+    /// Start a new session. Returns (session_id, started_at).
+    pub fn session_start(
+        &self,
+        project: &str,
+        task: Option<&str>,
+    ) -> HyphaeResult<(String, String)> {
+        self.ensure_sessions_table()?;
+
+        let session_id = format!("ses_{}", ulid::Ulid::new());
+        let started_at = Utc::now().to_rfc3339();
+
+        self.conn
+            .execute(
+                "INSERT INTO sessions (id, project, task, started_at, status) VALUES (?1, ?2, ?3, ?4, 'active')",
+                params![session_id, project, task, started_at],
+            )
+            .map_err(|e| HyphaeError::Database(format!("failed to insert session: {e}")))?;
+
+        Ok((session_id, started_at))
+    }
+
+    /// End an active session. Returns (project, started_at, task, ended_at, duration_minutes).
+    pub fn session_end(
+        &self,
+        session_id: &str,
+        summary: Option<&str>,
+        files_modified: Option<&str>,
+        errors: Option<&str>,
+    ) -> HyphaeResult<(String, String, Option<String>, String, i64)> {
+        self.ensure_sessions_table()?;
+
+        // Fetch the active session
+        let row: (String, String, Option<String>) = self
+            .conn
+            .query_row(
+                "SELECT project, started_at, task FROM sessions WHERE id = ?1 AND status = 'active'",
+                params![session_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => {
+                    HyphaeError::NotFound(format!("no active session with id '{session_id}'"))
+                }
+                other => HyphaeError::Database(format!("failed to query session: {other}")),
+            })?;
+
+        let (project, started_at, task) = row;
+        let ended_at = Utc::now().to_rfc3339();
+
+        let duration_minutes = chrono::DateTime::parse_from_rfc3339(&ended_at)
+            .ok()
+            .zip(chrono::DateTime::parse_from_rfc3339(&started_at).ok())
+            .map(|(end, start)| (end - start).num_minutes())
+            .unwrap_or(0);
+
+        self.conn
+            .execute(
+                "UPDATE sessions SET ended_at = ?1, summary = ?2, files_modified = ?3, errors = ?4, status = 'completed' WHERE id = ?5",
+                params![ended_at, summary, files_modified, errors, session_id],
+            )
+            .map_err(|e| HyphaeError::Database(format!("failed to update session: {e}")))?;
+
+        Ok((project, started_at, task, ended_at, duration_minutes))
+    }
+
+    /// Get recent sessions for a project.
+    pub fn session_context(&self, project: &str, limit: i64) -> HyphaeResult<Vec<Session>> {
+        self.ensure_sessions_table()?;
+
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, project, task, started_at, ended_at, summary, files_modified, errors, status
+                 FROM sessions
+                 WHERE project = ?1
+                 ORDER BY started_at DESC
+                 LIMIT ?2",
+            )
+            .map_err(|e| HyphaeError::Database(format!("failed to prepare query: {e}")))?;
+
+        let rows = stmt
+            .query_map(params![project, limit], |row| {
+                Ok(Session {
+                    id: row.get(0)?,
+                    project: row.get(1)?,
+                    task: row.get(2)?,
+                    started_at: row.get(3)?,
+                    ended_at: row.get(4)?,
+                    summary: row.get(5)?,
+                    files_modified: row.get(6)?,
+                    errors: row.get(7)?,
+                    status: row.get(8)?,
+                })
+            })
+            .map_err(|e| HyphaeError::Database(format!("failed to query sessions: {e}")))?;
+
+        let sessions: Vec<Session> = rows.filter_map(Result::ok).collect();
+        Ok(sessions)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_store() -> SqliteStore {
+        SqliteStore::in_memory().expect("in-memory store")
+    }
+
+    #[test]
+    fn test_session_lifecycle() {
+        let store = test_store();
+
+        // Start
+        let (sid, started_at) = store
+            .session_start("test-project", Some("implement feature"))
+            .unwrap();
+        assert!(sid.starts_with("ses_"));
+        assert!(!started_at.is_empty());
+
+        // Context shows active session
+        let sessions = store.session_context("test-project", 10).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].status, "active");
+
+        // End
+        let (project, _, task, _, duration) = store
+            .session_end(&sid, Some("done"), Some("[\"file.rs\"]"), Some("0"))
+            .unwrap();
+        assert_eq!(project, "test-project");
+        assert_eq!(task.as_deref(), Some("implement feature"));
+        assert!(duration >= 0);
+
+        // Context shows completed
+        let sessions = store.session_context("test-project", 10).unwrap();
+        assert_eq!(sessions[0].status, "completed");
+    }
+
+    #[test]
+    fn test_session_end_invalid_id() {
+        let store = test_store();
+        store.ensure_sessions_table().unwrap();
+        let result = store.session_end("nonexistent", None, None, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_session_context_empty() {
+        let store = test_store();
+        let sessions = store.session_context("no-such-project", 5).unwrap();
+        assert!(sessions.is_empty());
+    }
+}
