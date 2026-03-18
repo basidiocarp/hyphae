@@ -224,6 +224,29 @@ pub(crate) fn tool_recall(
         };
     }
 
+    // Session-aware recall boost: when the query mentions sessions,
+    // prepend matching session/* memories so recent session context surfaces first.
+    if is_session_query(query) {
+        let session_limit = 5usize.min(limit);
+        if let Ok(session_hits) = store.search_fts(query, session_limit * 4, 0, project) {
+            let existing_ids: std::collections::HashSet<String> =
+                results.iter().map(|m| m.id.to_string()).collect();
+            let session_mems: Vec<_> = session_hits
+                .into_iter()
+                .filter(|m| {
+                    m.topic.starts_with("session/") && !existing_ids.contains(&m.id.to_string())
+                })
+                .take(session_limit)
+                .collect();
+            if !session_mems.is_empty() {
+                let mut boosted = session_mems;
+                boosted.append(&mut results);
+                results = boosted;
+                results.truncate(limit);
+            }
+        }
+    }
+
     // Optional code-context expansion: additional FTS pass with expanded terms
     if code_context {
         if let Some(expand_project) = project {
@@ -582,4 +605,17 @@ pub(crate) fn tool_embed_all(
     ToolResult::text(format!(
         "Embedded {embedded}/{total} memories ({errors} errors)"
     ))
+}
+
+/// Detect whether a recall query is asking about session history.
+pub(crate) fn is_session_query(query: &str) -> bool {
+    let lower = query.to_lowercase();
+    const SESSION_KEYWORDS: &[&str] = &[
+        "session",
+        "last time",
+        "previous",
+        "yesterday",
+        "earlier today",
+    ];
+    SESSION_KEYWORDS.iter().any(|kw| lower.contains(kw))
 }
