@@ -259,6 +259,14 @@ fn main() -> Result<()> {
                 commands::import_claude_memory::run(&store, path, dry_run, force)?;
             }
         }
+
+        Commands::IngestSessions {
+            path,
+            since,
+            dry_run,
+        } => {
+            commands::transcript::run(&store, path, since, dry_run, resolved_project.as_deref())?;
+        }
     }
 
     Ok(())

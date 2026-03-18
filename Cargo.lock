@@ -1251,9 +1251,11 @@ dependencies = [
 name = "hyphae-ingest"
 version = "0.3.2"
 dependencies = [
+ "anyhow",
  "chrono",
  "hyphae-core",
  "regex",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tracing",

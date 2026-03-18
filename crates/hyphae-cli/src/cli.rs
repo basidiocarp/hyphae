@@ -189,4 +189,17 @@ pub(crate) enum Commands {
         #[arg(long)]
         fix: bool,
     },
+
+    /// Ingest Claude Code session transcripts into hyphae memory
+    IngestSessions {
+        /// Path to a specific session directory
+        #[arg(short, long)]
+        path: Option<PathBuf>,
+        /// Only ingest sessions newer than this date (YYYY-MM-DD)
+        #[arg(short, long)]
+        since: Option<String>,
+        /// Show what would be ingested without storing
+        #[arg(long)]
+        dry_run: bool,
+    },
 }

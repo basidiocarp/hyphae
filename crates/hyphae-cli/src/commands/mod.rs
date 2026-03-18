@@ -6,6 +6,7 @@ pub mod memoir;
 pub mod memory;
 pub mod prune;
 pub mod self_update;
+pub mod transcript;
 
 use crate::config::Config;
 

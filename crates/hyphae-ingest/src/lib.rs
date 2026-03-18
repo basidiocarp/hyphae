@@ -1,5 +1,6 @@
 pub mod chunker;
 pub mod readers;
+pub mod transcript;
 
 use chrono::Utc;
 use hyphae_core::chunk::{ChunkMetadata, Document};
