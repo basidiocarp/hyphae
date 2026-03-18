@@ -14,7 +14,7 @@ use std::sync::Once;
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, ffi::sqlite3_auto_extension, params};
 
-use hyphae_core::{HyphaeError, HyphaeResult, MemoryStore};
+use hyphae_core::{HyphaeError, HyphaeResult, Memory, MemoryStore};
 
 use crate::schema::{init_db, init_db_with_dims};
 
@@ -139,6 +139,190 @@ impl SqliteStore {
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
         init_db(&conn)?;
         Ok(Self { conn })
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cross-project search and project management
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Name of the special shared knowledge pool project.
+pub const SHARED_PROJECT: &str = "_shared";
+
+impl SqliteStore {
+    /// FTS search across all projects (no project filter).
+    /// Results include the `project` field so the caller knows the source.
+    pub fn search_all_projects(&self, query: &str, limit: usize) -> HyphaeResult<Vec<Memory>> {
+        let sanitized = search::sanitize_fts_query(query);
+        if sanitized.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let sql = format!(
+            "SELECT {cols} FROM memories m
+             WHERE m.id IN (
+                 SELECT id FROM memories_fts WHERE memories_fts MATCH ?1
+             )
+             ORDER BY m.weight DESC
+             LIMIT ?2",
+            cols = helpers::SELECT_COLS,
+        );
+
+        let mut stmt = self
+            .conn
+            .prepare_cached(&sql)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![sanitized, limit as i64], helpers::row_to_memory)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| HyphaeError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
+    /// FTS search across a specific set of projects.
+    /// Results ranked by relevance (FTS score via weight), not project affinity.
+    pub fn search_related_projects(
+        &self,
+        query: &str,
+        projects: &[&str],
+        limit: usize,
+    ) -> HyphaeResult<Vec<Memory>> {
+        if projects.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let sanitized = search::sanitize_fts_query(query);
+        if sanitized.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let placeholders: Vec<String> =
+            (0..projects.len()).map(|i| format!("?{}", i + 3)).collect();
+        let in_clause = placeholders.join(",");
+
+        let sql = format!(
+            "SELECT {cols} FROM memories m
+             WHERE m.id IN (
+                 SELECT id FROM memories_fts WHERE memories_fts MATCH ?1
+             )
+             AND m.project IN ({in_clause})
+             ORDER BY m.weight DESC
+             LIMIT ?2",
+            cols = helpers::SELECT_COLS,
+        );
+
+        let mut stmt = self
+            .conn
+            .prepare(&sql)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        param_values.push(Box::new(sanitized));
+        param_values.push(Box::new(limit as i64));
+        for p in projects {
+            param_values.push(Box::new(p.to_string()));
+        }
+
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            param_values.iter().map(|p| p.as_ref()).collect();
+
+        let rows = stmt
+            .query_map(params_ref.as_slice(), helpers::row_to_memory)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| HyphaeError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
+    /// List all distinct projects with their memory counts.
+    pub fn list_projects(&self) -> HyphaeResult<Vec<(String, usize)>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached(
+                "SELECT COALESCE(project, '(none)'), COUNT(*) FROM memories GROUP BY project ORDER BY project",
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, usize>(1)?))
+            })
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| HyphaeError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
+    /// Link two projects together (bidirectional).
+    pub fn link_projects(&self, source: &str, target: &str) -> HyphaeResult<()> {
+        let now = Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                "INSERT OR IGNORE INTO project_links (source_project, target_project, created_at) VALUES (?1, ?2, ?3)",
+                params![source, target, now],
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        self.conn
+            .execute(
+                "INSERT OR IGNORE INTO project_links (source_project, target_project, created_at) VALUES (?1, ?2, ?3)",
+                params![target, source, now],
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Get linked projects for a given project.
+    pub fn get_linked_projects(&self, project: &str) -> HyphaeResult<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached(
+                "SELECT target_project FROM project_links WHERE source_project = ?1 ORDER BY target_project",
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![project], |row| row.get::<_, String>(0))
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| HyphaeError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
+    /// Promote (copy) a memory to the `_shared` project.
+    /// Returns the new memory ID.
+    pub fn promote_to_shared(
+        &self,
+        id: &hyphae_core::MemoryId,
+    ) -> HyphaeResult<hyphae_core::MemoryId> {
+        let original = self
+            .get(id)?
+            .ok_or_else(|| HyphaeError::NotFound(id.to_string()))?;
+
+        let shared = Memory::builder(
+            original.topic.clone(),
+            original.summary.clone(),
+            original.importance,
+        )
+        .keywords(original.keywords.clone())
+        .project(SHARED_PROJECT.to_string())
+        .build();
+
+        let new_id = self.store(shared)?;
+        Ok(new_id)
     }
 }
 
@@ -1416,5 +1600,185 @@ mod tests {
 
         // Different hash should not match
         assert!(!store.memory_exists_with_keyword("xyz789").unwrap());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Cross-project search tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    fn make_project_memory(topic: &str, summary: &str, project: &str) -> Memory {
+        Memory::builder(topic.into(), summary.into(), Importance::Medium)
+            .project(project.to_string())
+            .build()
+    }
+
+    #[test]
+    fn test_search_all_projects() {
+        let store = test_store();
+        store
+            .store(make_project_memory(
+                "rust",
+                "Use anyhow for application error handling",
+                "alpha",
+            ))
+            .unwrap();
+        store
+            .store(make_project_memory(
+                "rust",
+                "Use thiserror for library error handling",
+                "beta",
+            ))
+            .unwrap();
+        store
+            .store(make_project_memory(
+                "rust",
+                "Always derive Debug for error handling types",
+                SHARED_PROJECT,
+            ))
+            .unwrap();
+
+        // FTS matches on "error" token across all three
+        let results = store.search_all_projects("error handling", 10).unwrap();
+        assert_eq!(results.len(), 3, "should find memories across all projects");
+    }
+
+    #[test]
+    fn test_search_all_projects_empty_query() {
+        let store = test_store();
+        store
+            .store(make_project_memory("rust", "some content", "alpha"))
+            .unwrap();
+
+        let results = store.search_all_projects("", 10).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_search_related_projects() {
+        let store = test_store();
+        store
+            .store(make_project_memory(
+                "rust",
+                "anyhow error handling patterns",
+                "alpha",
+            ))
+            .unwrap();
+        store
+            .store(make_project_memory(
+                "rust",
+                "thiserror error handling patterns",
+                "beta",
+            ))
+            .unwrap();
+        store
+            .store(make_project_memory(
+                "rust",
+                "error handling formatting tips",
+                "gamma",
+            ))
+            .unwrap();
+
+        let results = store
+            .search_related_projects("error handling", &["alpha", "beta"], 10)
+            .unwrap();
+        assert_eq!(
+            results.len(),
+            2,
+            "should only find memories in alpha and beta"
+        );
+        for mem in &results {
+            let p = mem.project.as_deref().unwrap();
+            assert!(p == "alpha" || p == "beta");
+        }
+    }
+
+    #[test]
+    fn test_search_related_projects_empty_list() {
+        let store = test_store();
+        let results = store.search_related_projects("anything", &[], 10).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_list_projects() {
+        let store = test_store();
+        store
+            .store(make_project_memory("rust", "memory 1", "alpha"))
+            .unwrap();
+        store
+            .store(make_project_memory("rust", "memory 2", "alpha"))
+            .unwrap();
+        store
+            .store(make_project_memory("rust", "memory 3", "beta"))
+            .unwrap();
+
+        let projects = store.list_projects().unwrap();
+        assert_eq!(projects.len(), 2);
+
+        let alpha = projects.iter().find(|(name, _)| name == "alpha");
+        assert!(alpha.is_some());
+        assert_eq!(alpha.unwrap().1, 2);
+
+        let beta = projects.iter().find(|(name, _)| name == "beta");
+        assert!(beta.is_some());
+        assert_eq!(beta.unwrap().1, 1);
+    }
+
+    #[test]
+    fn test_link_projects() {
+        let store = test_store();
+        store.link_projects("alpha", "beta").unwrap();
+
+        let linked_from_alpha = store.get_linked_projects("alpha").unwrap();
+        assert_eq!(linked_from_alpha, vec!["beta"]);
+
+        let linked_from_beta = store.get_linked_projects("beta").unwrap();
+        assert_eq!(linked_from_beta, vec!["alpha"]);
+    }
+
+    #[test]
+    fn test_link_projects_idempotent() {
+        let store = test_store();
+        store.link_projects("alpha", "beta").unwrap();
+        store.link_projects("alpha", "beta").unwrap(); // should not error
+        let linked = store.get_linked_projects("alpha").unwrap();
+        assert_eq!(linked, vec!["beta"]);
+    }
+
+    #[test]
+    fn test_promote_to_shared() {
+        let store = test_store();
+        let mem = make_project_memory("rust", "important pattern", "alpha");
+        let id = mem.id.clone();
+        store.store(mem).unwrap();
+
+        let shared_id = store.promote_to_shared(&id).unwrap();
+        let shared = store.get(&shared_id).unwrap().unwrap();
+        assert_eq!(shared.project.as_deref(), Some(SHARED_PROJECT));
+        assert_eq!(shared.summary, "important pattern");
+        assert_eq!(shared.topic, "rust");
+    }
+
+    #[test]
+    fn test_promote_to_shared_not_found() {
+        let store = test_store();
+        let result = store.promote_to_shared(&MemoryId::from("nonexistent"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_search_all_projects_includes_project_field() {
+        let store = test_store();
+        store
+            .store(make_project_memory(
+                "rust",
+                "alpha content about rust",
+                "alpha",
+            ))
+            .unwrap();
+
+        let results = store.search_all_projects("rust", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].project.as_deref(), Some("alpha"));
     }
 }

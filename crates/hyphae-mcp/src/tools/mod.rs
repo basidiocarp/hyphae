@@ -7,6 +7,7 @@ use hyphae_store::SqliteStore;
 
 use crate::protocol::ToolResult;
 
+mod context;
 mod ingest;
 mod memoir;
 mod memory;
@@ -47,6 +48,8 @@ pub fn call_tool(
         "hyphae_memory_stats" => memory::tool_stats(store, project),
         "hyphae_memory_health" => memory::tool_health(store, args, project),
         "hyphae_memory_embed_all" => memory::tool_embed_all(store, embedder, args, project),
+        // Cross-project tools
+        "hyphae_recall_global" => memory::tool_recall_global(store, args, compact),
         // Memoir tools
         "hyphae_memoir_create" => memoir::tool_memoir_create(store, args),
         "hyphae_memoir_list" => memoir::tool_memoir_list(store),
@@ -70,6 +73,8 @@ pub fn call_tool(
             ingest::tool_store_command_output(store, args, compact, project)
         }
         "hyphae_get_command_chunks" => ingest::tool_get_command_chunks(store, args),
+        // Context gathering
+        "hyphae_gather_context" => context::tool_gather_context(store, args, project),
         // Session lifecycle tools
         "hyphae_session_start" => session::tool_session_start(store, args),
         "hyphae_session_end" => session::tool_session_end(store, args),

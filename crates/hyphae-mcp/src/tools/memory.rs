@@ -167,6 +167,18 @@ pub(crate) fn tool_recall(
         if let Ok(query_emb) = emb.embed(query) {
             if let Ok(results) = store.search_hybrid(query, &query_emb, limit, offset, project) {
                 let mut scored_results = results;
+
+                // Merge _shared results when searching a specific project
+                scored_results = merge_shared_hybrid(
+                    store,
+                    query,
+                    &query_emb,
+                    limit,
+                    offset,
+                    project,
+                    scored_results,
+                );
+
                 if let Some(t) = topic {
                     scored_results.retain(|(m, _)| m.topic == t);
                 }
@@ -199,6 +211,9 @@ pub(crate) fn tool_recall(
                         if !mem.keywords.is_empty() {
                             output.push_str(&format!("  keywords: {}\n", mem.keywords.join(", ")));
                         }
+                        if let Some(ref p) = mem.project {
+                            output.push_str(&format!("  project: {p}\n"));
+                        }
                         if let Some(ref raw) = mem.raw_excerpt {
                             output.push_str(&format!("  raw: {raw}\n"));
                         }
@@ -223,6 +238,9 @@ pub(crate) fn tool_recall(
             Err(e) => return ToolResult::error(format!("search error: {e}")),
         };
     }
+
+    // Merge _shared results when searching a specific project
+    results = merge_shared_fts(store, query, limit, project, results);
 
     // Session-aware recall boost: when the query mentions sessions,
     // prepend matching session/* memories so recent session context surfaces first.
@@ -618,4 +636,144 @@ pub(crate) fn is_session_query(query: &str) -> bool {
         "earlier today",
     ];
     SESSION_KEYWORDS.iter().any(|kw| lower.contains(kw))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cross-project shared knowledge helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Weight multiplier for _shared results relative to project-scoped results.
+const SHARED_WEIGHT: f32 = 0.7;
+
+/// Merge _shared results into hybrid search results when the caller is
+/// searching a specific project (not `_shared` itself, not global).
+fn merge_shared_hybrid(
+    store: &SqliteStore,
+    query: &str,
+    query_emb: &[f32],
+    limit: usize,
+    offset: usize,
+    project: Option<&str>,
+    mut scored_results: Vec<(Memory, f32)>,
+) -> Vec<(Memory, f32)> {
+    let should_merge = matches!(project, Some(p) if p != hyphae_store::SHARED_PROJECT);
+    if !should_merge {
+        return scored_results;
+    }
+
+    let shared = store.search_hybrid(
+        query,
+        query_emb,
+        limit,
+        offset,
+        Some(hyphae_store::SHARED_PROJECT),
+    );
+    if let Ok(shared_results) = shared {
+        let existing_ids: std::collections::HashSet<String> = scored_results
+            .iter()
+            .map(|(m, _)| m.id.to_string())
+            .collect();
+        for (mem, score) in shared_results {
+            if !existing_ids.contains(&mem.id.to_string()) {
+                scored_results.push((mem, score * SHARED_WEIGHT));
+            }
+        }
+        scored_results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored_results.truncate(limit);
+    }
+    scored_results
+}
+
+/// Merge _shared results into FTS search results when the caller is
+/// searching a specific project (not `_shared` itself, not global).
+fn merge_shared_fts(
+    store: &SqliteStore,
+    query: &str,
+    limit: usize,
+    project: Option<&str>,
+    mut results: Vec<Memory>,
+) -> Vec<Memory> {
+    let should_merge = matches!(project, Some(p) if p != hyphae_store::SHARED_PROJECT);
+    if !should_merge {
+        return results;
+    }
+
+    let shared = store.search_fts(query, limit, 0, Some(hyphae_store::SHARED_PROJECT));
+    if let Ok(shared_results) = shared {
+        let existing_ids: std::collections::HashSet<String> =
+            results.iter().map(|m| m.id.to_string()).collect();
+        for mem in shared_results {
+            if !existing_ids.contains(&mem.id.to_string()) {
+                results.push(mem);
+            }
+        }
+        results.truncate(limit);
+    }
+    results
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// hyphae_recall_global MCP tool
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Search all projects and return results grouped by project.
+pub(crate) fn tool_recall_global(store: &SqliteStore, args: &Value, compact: bool) -> ToolResult {
+    let query = match get_str(args, "query") {
+        Some(q) => q,
+        None => return ToolResult::error("missing required field: query".into()),
+    };
+    let limit = get_bounded_i64(args, "limit", 10, 1, 100) as usize;
+
+    let results = match store.search_all_projects(query, limit) {
+        Ok(r) => r,
+        Err(e) => return ToolResult::error(format!("search error: {e}")),
+    };
+
+    if results.is_empty() {
+        return ToolResult::text("No memories found across any project.".into());
+    }
+
+    // Update access counts
+    for mem in &results {
+        if let Err(e) = store.update_access(&mem.id) {
+            tracing::warn!("update_access failed: {e}");
+        }
+    }
+
+    // Group by project
+    let mut by_project: std::collections::BTreeMap<String, Vec<&Memory>> =
+        std::collections::BTreeMap::new();
+    for mem in &results {
+        let project_name = mem.project.as_deref().unwrap_or("(none)").to_string();
+        by_project.entry(project_name).or_default().push(mem);
+    }
+
+    let mut output = String::new();
+    if compact {
+        for (project_name, mems) in &by_project {
+            output.push_str(&format!("[{project_name}]\n"));
+            for mem in mems {
+                output.push_str(&format!("  [{}] {}\n", mem.topic, mem.summary));
+            }
+        }
+    } else {
+        for (project_name, mems) in &by_project {
+            output.push_str(&format!(
+                "== Project: {project_name} ({} results) ==\n",
+                mems.len()
+            ));
+            for mem in mems {
+                output.push_str(&format!(
+                    "  --- {} ---\n    topic: {}\n    importance: {}\n    weight: {:.3}\n    summary: {}\n",
+                    mem.id, mem.topic, mem.importance, mem.weight.value(), mem.summary
+                ));
+                if !mem.keywords.is_empty() {
+                    output.push_str(&format!("    keywords: {}\n", mem.keywords.join(", ")));
+                }
+                output.push('\n');
+            }
+        }
+    }
+
+    ToolResult::text(output)
 }

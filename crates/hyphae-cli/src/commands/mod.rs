@@ -4,6 +4,7 @@ pub mod doctor;
 pub mod import_claude_memory;
 pub mod memoir;
 pub mod memory;
+pub mod project;
 pub mod prune;
 pub mod self_update;
 pub mod transcript;

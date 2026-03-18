@@ -42,7 +42,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }),
         json!({
             "name": "hyphae_memory_recall",
-            "description": "Search Hyphae long-term memory. Use to find past decisions, project context, preferences, or solutions to previously encountered problems.",
+            "description": "Search Hyphae long-term memory. Use to find past decisions, project context, preferences, or solutions to previously encountered problems. Automatically includes results from the '_shared' knowledge pool alongside project-scoped results.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -169,6 +169,28 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                         "description": "Check a specific topic (optional — checks all if omitted)"
                     }
                 }
+            }
+        }),
+        // Cross-project tools
+        json!({
+            "name": "hyphae_recall_global",
+            "description": "Search memories across ALL projects. Returns results grouped by project. Use when knowledge may exist in another project, or to find cross-cutting patterns. The special '_shared' project holds globally visible knowledge.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Natural language search query"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 10,
+                        "minimum": 1,
+                        "maximum": 100,
+                        "description": "Max total results across all projects"
+                    }
+                },
+                "required": ["query"]
             }
         }),
         // Memoir tools
@@ -462,6 +484,41 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
             }
         }),
     ];
+
+    // Context gathering
+    tools.push(json!({
+        "name": "hyphae_gather_context",
+        "description": "Gather relevant context for a task from across all Hyphae stores (memories, errors, sessions, code). Returns ranked results within a token budget. Use at the start of a task to bootstrap context.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "Task description to gather context for (e.g. 'refactor auth middleware')"
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project name to scope the search (optional, uses configured project if omitted)"
+                },
+                "token_budget": {
+                    "type": "integer",
+                    "default": 2000,
+                    "minimum": 100,
+                    "maximum": 50000,
+                    "description": "Maximum tokens to include in context (rough estimate: 4 chars per token)"
+                },
+                "include": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["memories", "errors", "sessions", "code"]
+                    },
+                    "description": "Which sources to include (default: all). Options: memories, errors, sessions, code"
+                }
+            },
+            "required": ["task"]
+        }
+    }));
 
     // RAG tools
     tools.push(json!({

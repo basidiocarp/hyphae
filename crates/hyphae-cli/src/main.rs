@@ -239,6 +239,10 @@ fn main() -> Result<()> {
             commands::memoir::dispatch(&store, args)?;
         }
 
+        Commands::Project(args) => {
+            commands::project::dispatch(&store, args)?;
+        }
+
         Commands::Bench { count } => {
             commands::bench::cmd_bench(count)?;
         }

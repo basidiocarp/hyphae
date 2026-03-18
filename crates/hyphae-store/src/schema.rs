@@ -248,6 +248,18 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
     )
     .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
+    // Project links table for cross-project relationships
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS project_links (
+            source_project TEXT NOT NULL,
+            target_project TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (source_project, target_project),
+            CHECK(source_project != target_project)
+        );",
+    )
+    .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
     // Migration: add updated_at column if missing (existing DBs pre-0.3.1)
     let has_updated_at: bool = tx
         .prepare("SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name='updated_at'")

@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 use crate::commands::memoir::MemoirArgs;
+use crate::commands::project::ProjectArgs;
 
 #[derive(Parser)]
 #[command(name = "hyphae", version)]
@@ -142,6 +143,9 @@ pub(crate) enum Commands {
 
     /// Manage semantic knowledge graphs (memoirs)
     Memoir(MemoirArgs),
+
+    /// Cross-project knowledge management
+    Project(ProjectArgs),
 
     /// Benchmark memory store write and search throughput
     Bench {
