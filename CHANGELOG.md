@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.3.7
+
+### Added
+
+- **`hyphae import-claude-memory` CLI**: Imports Claude Code conversation memories from JSONL files, with `--watch` mode for continuous monitoring of new exports.
+- **`hyphae ingest-sessions` CLI**: Indexes Claude Code conversation transcripts for full-text search across past sessions.
+- **`hyphae project list/link/search/share` CLI**: Project management commands for listing linked projects, linking new ones, searching within project scope, and sharing memories across projects.
+- **`hyphae doctor` diagnostic command**: Health check that validates database integrity, embedder status, MCP connectivity, and configuration.
+- **`hyphae prune` CLI command**: Manual pruning of expired and low-importance memories with configurable thresholds.
+- **`hyphae_gather_context` MCP tool**: Aggregates relevant memories, code context, and session history for a given task description.
+- **`hyphae_recall_global` MCP tool**: Cross-project memory recall that searches the `_shared` pool for knowledge applicable across all projects.
+- **`hyphae_session_start/end/context` MCP tools**: Session lifecycle management for tracking conversation boundaries and retrieving session-scoped context.
+- **`hyphae_onboard` MCP tool**: Guided onboarding flow that detects the project environment and returns relevant memories and configuration hints.
+- **`hyphae_import_code_graph` and `hyphae_code_query` MCP tools**: Receive symbol graphs from Rhizome and query them with 5 query types (`symbols`, `callers`, `callees`, `implementors`, `structure`).
+- **Cross-project knowledge sharing**: `_shared` memory pool for facts and patterns that apply across all projects, with automatic promotion of frequently-accessed cross-project memories.
+- **Context-aware recall with code expansion**: `hyphae_memory_recall` expands queries with symbol names from code memoirs when the query appears code-related.
+- **HTTP embedder**: Ollama and OpenAI-compatible embedding endpoint support via configurable HTTP embedder, as an alternative to local FastEmbed.
+- **Lazy FastEmbed model download**: Embedding model is downloaded on first use rather than at startup, reducing cold-start time for non-embedding workflows.
+
 ## v0.3.2
 
 ### Added
