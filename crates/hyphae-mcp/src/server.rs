@@ -28,33 +28,59 @@ fn initial_context(store: &SqliteStore, project: Option<&str>) -> String {
 
     let proj = project.unwrap_or("default");
 
-    // Get recent session context
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Session Context (with fallback to session/{project} topic if table is empty)
+    // ─────────────────────────────────────────────────────────────────────────────
+    let mut session_summaries = Vec::new();
     let session_ctx = store.session_context(proj, 3).unwrap_or_default();
+    if !session_ctx.is_empty() {
+        for s in &session_ctx {
+            if let Some(summary) = &s.summary {
+                session_summaries.push(summary.clone());
+            }
+        }
+    }
+    // Fallback: query session/{project} topic if sessions table is empty
+    if session_summaries.is_empty() {
+        let session_topic = format!("session/{proj}");
+        if let Ok(session_memories) = store.get_by_topic(&session_topic, project) {
+            for m in session_memories.iter().take(3) {
+                session_summaries.push(m.summary.clone());
+            }
+        }
+    }
 
     // Get top memories for the project context topic
-    let project_topic = format!("context-{proj}");
+    let project_topic = format!("context/{proj}");
     let recent_memories = store
         .get_by_topic(&project_topic, project)
         .unwrap_or_default();
 
     // Get decision memories
-    let decisions_topic = format!("decisions-{proj}");
+    let decisions_topic = format!("decisions/{proj}");
     let decisions = store
         .get_by_topic(&decisions_topic, project)
         .unwrap_or_default();
 
-    if session_ctx.is_empty() && recent_memories.is_empty() && decisions.is_empty() {
+    // Get resolved errors
+    let resolved_errors = store
+        .get_by_topic("errors/resolved", project)
+        .unwrap_or_default();
+
+    if session_summaries.is_empty()
+        && recent_memories.is_empty()
+        && decisions.is_empty()
+        && resolved_errors.is_empty()
+    {
         return String::new();
     }
 
     let mut ctx = String::from("\n\n[Hyphae Auto-Recall for this session]\n");
 
-    if !session_ctx.is_empty() {
+    if !session_summaries.is_empty() {
         ctx.push_str("Recent sessions:\n");
-        for s in &session_ctx {
-            if let Some(summary) = &s.summary {
-                ctx.push_str(&format!("- {summary}\n"));
-            }
+        for summary in &session_summaries {
+            ctx.push_str(&format!("- {summary}\n"));
         }
     }
 
@@ -69,6 +95,13 @@ fn initial_context(store: &SqliteStore, project: Option<&str>) -> String {
     if !decisions.is_empty() {
         ctx.push_str("Key decisions:\n");
         for m in decisions.iter().take(3) {
+            ctx.push_str(&format!("- {}\n", truncate(&m.summary)));
+        }
+    }
+
+    if !resolved_errors.is_empty() {
+        ctx.push_str("Recently resolved errors:\n");
+        for m in resolved_errors.iter().take(3) {
             ctx.push_str(&format!("- {}\n", truncate(&m.summary)));
         }
     }
@@ -202,10 +235,10 @@ RECALL (hyphae_memory_recall): At the start of a task, search for relevant past 
 resolved errors, user preferences. Search only what is relevant, do not dump everything.\n\
 \n\
 STORE (hyphae_memory_store): Automatically store important information:\n\
-- Architecture decisions → topic: \"decisions-{project}\"\n\
-- Resolved errors with solutions → topic: \"errors-resolved\"\n\
+- Architecture decisions → topic: \"decisions/{project}\"\n\
+- Resolved errors with solutions → topic: \"errors/resolved\"\n\
 - User preferences discovered in session → topic: \"preferences\"\n\
-- Project context after significant work → topic: \"context-{project}\"\n\
+- Project context after significant work → topic: \"context/{project}\"\n\
 \n\
 Do NOT store: trivial details, information already in CLAUDE.md, ephemeral state.\n\
 \n\
