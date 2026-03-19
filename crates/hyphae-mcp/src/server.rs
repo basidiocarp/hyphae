@@ -3,7 +3,7 @@ use std::io::{self, BufRead, Write};
 use serde_json::{Value, json};
 use tracing::{debug, error};
 
-use hyphae_core::Embedder;
+use hyphae_core::{Embedder, MemoryStore};
 use hyphae_store::SqliteStore;
 
 use crate::protocol::{JsonRpcMessage, JsonRpcResponse};
@@ -13,8 +13,14 @@ const SERVER_NAME: &str = "hyphae";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const PROTOCOL_VERSION: &str = "2024-11-05";
 
-/// Number of non-store tool calls before we nudge the agent to store.
-const STORE_NUDGE_THRESHOLD: u32 = 10;
+/// Escalating nudge thresholds for store reminders.
+const NUDGE_HINT: u32 = 10;
+const NUDGE_WARN: u32 = 20;
+const NUDGE_STRONG: u32 = 30;
+/// After strong nudge, back off for this many calls before nudging again.
+const NUDGE_BACKOFF: u32 = 50;
+/// Topic memory count threshold for suggesting consolidation.
+const CONSOLIDATION_THRESHOLD: usize = 15;
 
 /// Build an initial context string with recent memories for the project.
 fn initial_context(store: &SqliteStore, project: Option<&str>) -> String {
@@ -247,13 +253,45 @@ fn handle_tools_call(
 
     let mut result = tools::call_tool(store, embedder, tool_name, &args, compact, project);
 
-    // Nudge: append a store reminder if too many calls without storing
-    if *calls_since_store >= STORE_NUDGE_THRESHOLD && tool_name != "hyphae_memory_store" {
-        result = result.with_hint(&format!(
-            "\n[Hyphae: {} tool calls since last store. \
-             Consider saving important context with hyphae_memory_store before it is lost.]",
-            calls_since_store
-        ));
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Gap 4: Escalating store nudge
+    // ─────────────────────────────────────────────────────────────────────────────
+    if tool_name != "hyphae_memory_store" && *calls_since_store < NUDGE_BACKOFF {
+        let nudge = match *calls_since_store {
+            n if n >= NUDGE_STRONG => Some(format!(
+                "\n⚠️ [Hyphae: {n} tool calls without storing. You SHOULD save important context now \
+                 with hyphae_memory_store. What decisions, errors, or patterns have you encountered?]"
+            )),
+            n if n >= NUDGE_WARN => Some(format!(
+                "\n[Hyphae: {n} tool calls since last store. Important context may be lost. \
+                 Save decisions, resolved errors, or architectural insights with hyphae_memory_store.]"
+            )),
+            n if n >= NUDGE_HINT => Some(format!(
+                "\n[Hyphae: {n} tool calls since last store. \
+                 Consider saving important context with hyphae_memory_store before it is lost.]"
+            )),
+            _ => None,
+        };
+        if let Some(hint) = nudge {
+            result = result.with_hint(&hint);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Gap 6: Auto-consolidation suggestion
+    // ─────────────────────────────────────────────────────────────────────────────
+    if tool_name == "hyphae_memory_store" || tool_name == "hyphae_memory_recall" {
+        if let Some(topic) = args.get("topic").and_then(|v| v.as_str()) {
+            if let Ok(memories) = <SqliteStore as MemoryStore>::get_by_topic(store, topic, project) {
+                if memories.len() >= CONSOLIDATION_THRESHOLD {
+                    result = result.with_hint(&format!(
+                        "\n[Hyphae: Topic \"{topic}\" has {} memories. Consider running \
+                         hyphae_memory_consolidate(topic: \"{topic}\") to merge redundant entries.]",
+                        memories.len()
+                    ));
+                }
+            }
+        }
     }
 
     let result_value = match serde_json::to_value(result) {
@@ -351,7 +389,7 @@ mod tests {
     #[test]
     fn test_store_nudge_after_threshold() {
         let store = test_store();
-        let mut counter = STORE_NUDGE_THRESHOLD;
+        let mut counter = NUDGE_HINT;
         let params = Some(json!({
             "name": "hyphae_memory_recall",
             "arguments": {"query": "test"}
