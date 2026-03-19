@@ -90,6 +90,13 @@ pub fn run_server(
     compact: bool,
     project: Option<String>,
 ) -> anyhow::Result<()> {
+    // Auto-detect project from spore if not explicitly provided
+    let project = project.or_else(|| {
+        let cwd = std::env::current_dir().ok()?;
+        let ctx = spore::ProjectContext::detect(&cwd);
+        Some(ctx.name)
+    });
+
     let stdin = io::stdin();
     let mut stdout = io::stdout();
     let mut calls_since_store: u32 = 0;

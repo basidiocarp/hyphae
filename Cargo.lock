@@ -1321,6 +1321,7 @@ dependencies = [
  "hyphae-store",
  "serde",
  "serde_json",
+ "spore",
  "tempfile",
  "tracing",
 ]
@@ -2834,6 +2835,18 @@ dependencies = [
  "nom 7.1.3",
  "serde",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "spore"
+version = "0.1.1"
+source = "git+https://github.com/basidiocarp/spore?tag=v0.1.1#79d1c1d41e216b523f026972ec63d64ba2edd409"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "serde",
+ "serde_json",
+ "which",
 ]
 
 [[package]]
