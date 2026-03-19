@@ -1,13 +1,30 @@
 use chrono::Utc;
 use serde_json::Value;
 
-use hyphae_core::{Embedder, Importance, Memory, MemoryId, MemoryStore, Weight};
+use hyphae_core::{Embedder, Importance, MemoirStore, Memory, MemoryId, MemoryStore, Weight};
 use hyphae_store::SqliteStore;
 use hyphae_store::context;
 
 use crate::protocol::ToolResult;
 
 use super::{get_bounded_i64, get_str, validate_max_length, validate_required_string};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Gap 10: Age indicator for stale memory feedback
+// ─────────────────────────────────────────────────────────────────────────────
+
+const STALE_DAYS_THRESHOLD: i64 = 30;
+
+fn age_indicator(mem: &Memory) -> Option<String> {
+    let days = (Utc::now() - mem.last_accessed).num_days();
+    if days >= STALE_DAYS_THRESHOLD {
+        Some(format!(
+            "  ⚠ last accessed {days}d ago — if outdated, use hyphae_memory_update to correct\n"
+        ))
+    } else {
+        None
+    }
+}
 
 pub(crate) fn tool_store(
     store: &SqliteStore,
@@ -217,6 +234,9 @@ pub(crate) fn tool_recall(
                         if let Some(ref raw) = mem.raw_excerpt {
                             output.push_str(&format!("  raw: {raw}\n"));
                         }
+                        if let Some(age) = age_indicator(mem) {
+                            output.push_str(&age);
+                        }
                         output.push('\n');
                     }
                 }
@@ -369,6 +389,9 @@ pub(crate) fn tool_recall(
             }
             if let Some(ref raw) = mem.raw_excerpt {
                 output.push_str(&format!("  raw: {raw}\n"));
+            }
+            if let Some(age) = age_indicator(mem) {
+                output.push_str(&age);
             }
             output.push('\n');
         }
@@ -774,6 +797,102 @@ pub(crate) fn tool_recall_global(store: &SqliteStore, args: &Value, compact: boo
             }
         }
     }
+
+    ToolResult::text(output)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Gap 8: Memory-to-memoir promotion
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PROMOTION_THRESHOLD: usize = 15;
+
+/// Suggest promoting a topic's memories into a structured memoir.
+/// Lists all memories so the agent can create the memoir with proper concepts.
+pub(crate) fn tool_promote_to_memoir(
+    store: &SqliteStore,
+    args: &Value,
+    project: Option<&str>,
+) -> ToolResult {
+    let topic = match validate_required_string(args, "topic") {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+
+    let memories = match store.get_by_topic(topic, project) {
+        Ok(m) => m,
+        Err(e) => return ToolResult::error(format!("failed to read topic: {e}")),
+    };
+
+    if memories.is_empty() {
+        return ToolResult::text(format!("Topic \"{topic}\" has no memories to promote."));
+    }
+
+    if memories.len() < PROMOTION_THRESHOLD {
+        return ToolResult::text(format!(
+            "Topic \"{topic}\" has {} memories (threshold: {PROMOTION_THRESHOLD}). \
+             Not enough to warrant promotion yet.",
+            memories.len()
+        ));
+    }
+
+    // Check if a memoir already exists for this topic
+    let memoir_name = topic.replace('/', "-");
+    if let Ok(memoirs) = store.list_memoirs() {
+        if memoirs.iter().any(|m| m.name == memoir_name) {
+            return ToolResult::text(format!(
+                "A memoir named \"{memoir_name}\" already exists. \
+                 Use hyphae_memoir_refine to update its concepts instead."
+            ));
+        }
+    }
+
+    // Extract keyword frequency to suggest concepts
+    let mut keyword_freq: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    for mem in &memories {
+        for kw in &mem.keywords {
+            *keyword_freq.entry(kw.clone()).or_default() += 1;
+        }
+    }
+
+    let mut top_keywords: Vec<_> = keyword_freq.into_iter().collect();
+    top_keywords.sort_by(|a, b| b.1.cmp(&a.1));
+    let suggested_concepts: Vec<_> = top_keywords
+        .iter()
+        .take(10)
+        .map(|(k, c)| format!("{k} ({c}x)"))
+        .collect();
+
+    let mut output = format!(
+        "Topic \"{topic}\" has {} memories ready for promotion to memoir \"{memoir_name}\".\n\n",
+        memories.len()
+    );
+
+    if !suggested_concepts.is_empty() {
+        output.push_str("Suggested concepts (from keywords):\n");
+        for c in &suggested_concepts {
+            output.push_str(&format!("  - {c}\n"));
+        }
+        output.push('\n');
+    }
+
+    output.push_str("Memory summaries:\n");
+    for mem in memories.iter().take(20) {
+        let summary = if mem.summary.len() > 120 {
+            format!("{}...", &mem.summary[..120])
+        } else {
+            mem.summary.clone()
+        };
+        output.push_str(&format!("  [{}] {summary}\n", mem.importance));
+    }
+
+    output.push_str(&format!(
+        "\nTo promote, create the memoir and add concepts:\n\
+         1. hyphae_memoir_create(name: \"{memoir_name}\", description: \"...\")\n\
+         2. hyphae_memoir_add_concept(memoir: \"{memoir_name}\", name: \"<concept>\", definition: \"...\")\n\
+         3. hyphae_memoir_link(memoir: \"{memoir_name}\", source: \"...\", target: \"...\", relation: \"...\")\n"
+    ));
 
     ToolResult::text(output)
 }

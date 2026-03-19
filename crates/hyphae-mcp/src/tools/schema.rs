@@ -193,6 +193,20 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                 "required": ["query"]
             }
         }),
+        json!({
+            "name": "hyphae_promote_to_memoir",
+            "description": "Analyze a memory topic for promotion to a structured memoir. Lists memories, suggests concepts from keywords, and provides step-by-step instructions. Use when a topic has accumulated 15+ memories that should be organized into a knowledge graph.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "topic": {
+                        "type": "string",
+                        "description": "The memory topic to analyze for promotion"
+                    }
+                },
+                "required": ["topic"]
+            }
+        }),
         // Memoir tools
         json!({
             "name": "hyphae_memoir_create",

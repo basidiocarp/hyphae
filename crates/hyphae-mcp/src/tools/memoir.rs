@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use chrono::Utc;
 use serde_json::{Value, json};
 
 use hyphae_core::{
@@ -13,6 +14,12 @@ use crate::protocol::ToolResult;
 use super::{
     get_bounded_i64, get_str, resolve_memoir, validate_max_length, validate_required_string,
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Gap 7: Memoir staleness detection
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MEMOIR_STALE_DAYS: i64 = 7;
 
 pub(crate) fn tool_memoir_create(store: &SqliteStore, args: &Value) -> ToolResult {
     let name = match validate_required_string(args, "name") {
@@ -107,6 +114,16 @@ pub(crate) fn tool_memoir_show(store: &SqliteStore, args: &Value) -> ToolResult 
                 c.definition
             ));
         }
+    }
+
+    // Gap 7: staleness warning
+    let days_since_update = (Utc::now() - memoir.updated_at).num_days();
+    if days_since_update >= MEMOIR_STALE_DAYS {
+        output.push_str(&format!(
+            "\n⚠ This memoir was last updated {days_since_update} days ago. \
+             Concepts may be outdated. Consider running hyphae_import_code_graph \
+             or hyphae_memoir_refine to refresh.\n"
+        ));
     }
 
     ToolResult::text(output)

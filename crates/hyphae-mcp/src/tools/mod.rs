@@ -50,6 +50,7 @@ pub fn call_tool(
         "hyphae_memory_embed_all" => memory::tool_embed_all(store, embedder, args, project),
         // Cross-project tools
         "hyphae_recall_global" => memory::tool_recall_global(store, args, compact),
+        "hyphae_promote_to_memoir" => memory::tool_promote_to_memoir(store, args, project),
         // Memoir tools
         "hyphae_memoir_create" => memoir::tool_memoir_create(store, args),
         "hyphae_memoir_list" => memoir::tool_memoir_list(store),
