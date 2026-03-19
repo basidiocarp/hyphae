@@ -16,6 +16,67 @@ const PROTOCOL_VERSION: &str = "2024-11-05";
 /// Number of non-store tool calls before we nudge the agent to store.
 const STORE_NUDGE_THRESHOLD: u32 = 10;
 
+/// Build an initial context string with recent memories for the project.
+fn initial_context(store: &SqliteStore, project: Option<&str>) -> String {
+    use hyphae_core::MemoryStore;
+
+    let proj = project.unwrap_or("default");
+
+    // Get recent session context
+    let session_ctx = store.session_context(proj, 3).unwrap_or_default();
+
+    // Get top memories for the project context topic
+    let project_topic = format!("context-{proj}");
+    let recent_memories = store
+        .get_by_topic(&project_topic, project)
+        .unwrap_or_default();
+
+    // Get decision memories
+    let decisions_topic = format!("decisions-{proj}");
+    let decisions = store
+        .get_by_topic(&decisions_topic, project)
+        .unwrap_or_default();
+
+    if session_ctx.is_empty() && recent_memories.is_empty() && decisions.is_empty() {
+        return String::new();
+    }
+
+    let mut ctx = String::from("\n\n[Hyphae Auto-Recall for this session]\n");
+
+    if !session_ctx.is_empty() {
+        ctx.push_str("Recent sessions:\n");
+        for s in &session_ctx {
+            if let Some(summary) = &s.summary {
+                ctx.push_str(&format!("- {summary}\n"));
+            }
+        }
+    }
+
+    let truncate = |s: &str| -> String {
+        if s.len() > 200 {
+            format!("{}...", &s[..200])
+        } else {
+            s.to_string()
+        }
+    };
+
+    if !decisions.is_empty() {
+        ctx.push_str("Key decisions:\n");
+        for m in decisions.iter().take(3) {
+            ctx.push_str(&format!("- {}\n", truncate(&m.summary)));
+        }
+    }
+
+    if !recent_memories.is_empty() {
+        ctx.push_str("Project context:\n");
+        for m in recent_memories.iter().take(5) {
+            ctx.push_str(&format!("- {}\n", truncate(&m.summary)));
+        }
+    }
+
+    ctx
+}
+
 /// Run the MCP server on stdio. Blocks until stdin is closed.
 pub fn run_server(
     store: &SqliteStore,
@@ -65,7 +126,7 @@ pub fn run_server(
         };
 
         let response = match method {
-            "initialize" => handle_initialize(id),
+            "initialize" => handle_initialize(id, store, project.as_deref()),
             "ping" => JsonRpcResponse::ok(id, json!({})),
             "tools/list" => handle_tools_list(id, embedder.is_some()),
             "tools/call" => handle_tools_call(
@@ -94,7 +155,14 @@ fn write_response(stdout: &mut io::Stdout, resp: &JsonRpcResponse) -> anyhow::Re
     Ok(())
 }
 
-fn handle_initialize(id: Value) -> JsonRpcResponse {
+fn handle_initialize(id: Value, store: &SqliteStore, project: Option<&str>) -> JsonRpcResponse {
+    let ctx = initial_context(store, project);
+    let instructions = if ctx.is_empty() {
+        HYPHAE_INSTRUCTIONS.to_string()
+    } else {
+        format!("{HYPHAE_INSTRUCTIONS}{ctx}")
+    };
+
     JsonRpcResponse::ok(
         id,
         json!({
@@ -106,7 +174,7 @@ fn handle_initialize(id: Value) -> JsonRpcResponse {
                 "name": SERVER_NAME,
                 "version": SERVER_VERSION
             },
-            "instructions": HYPHAE_INSTRUCTIONS
+            "instructions": instructions
         }),
     )
 }
@@ -125,7 +193,21 @@ STORE (hyphae_memory_store): Automatically store important information:\n\
 \n\
 Do NOT store: trivial details, information already in CLAUDE.md, ephemeral state.\n\
 \n\
-Importance levels: critical (never forgotten), high (slow decay), medium (normal), low (fast decay).";
+Importance levels: critical (never forgotten), high (slow decay), medium (normal), low (fast decay).\n\
+\n\
+MEMOIR (hyphae_memoir_create, _add_concept, _link, _refine): Build knowledge graphs for structural \
+understanding that outlasts individual memories. Create memoirs when you discover:\n\
+- System architecture (services, their roles, and how they connect)\n\
+- Domain models (key entities, their relationships, business rules)\n\
+- Recurring patterns (error patterns, design patterns, team conventions)\n\
+Workflow: create memoir → add concepts with definitions → link related concepts → refine as understanding deepens.\n\
+Use hyphae_import_code_graph after significant code changes to keep code structure memoirs current.\n\
+\n\
+CROSS-PROJECT: Store universal patterns with project: \"_shared\" so they are visible across all projects. \
+Use hyphae_recall_global when local recall returns no results or when working on cross-project integration.\n\
+\n\
+CONSOLIDATE (hyphae_memory_consolidate): When a topic accumulates 15+ memories, consolidate to merge \
+redundant entries and improve recall quality.";
 
 fn handle_tools_list(id: Value, has_embedder: bool) -> JsonRpcResponse {
     JsonRpcResponse::ok(id, tools::tool_definitions(has_embedder))
@@ -196,7 +278,8 @@ mod tests {
 
     #[test]
     fn test_handle_initialize_returns_capabilities() {
-        let resp = handle_initialize(json!(1));
+        let store = SqliteStore::in_memory().unwrap();
+        let resp = handle_initialize(json!(1), &store, None);
         let result = resp.result.unwrap();
         assert_eq!(result["protocolVersion"], PROTOCOL_VERSION);
         assert_eq!(result["serverInfo"]["name"], SERVER_NAME);
