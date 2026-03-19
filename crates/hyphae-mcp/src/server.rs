@@ -126,7 +126,10 @@ pub fn run_server(
             }
         };
 
-        let method = msg.method.as_deref().unwrap_or("");
+        let method = msg.method.as_deref().unwrap_or_else(|| {
+            error!("received JSON-RPC message without method field");
+            ""
+        });
         debug!("MCP request: {method}");
 
         // Notifications have no id — don't respond
