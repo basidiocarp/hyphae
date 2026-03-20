@@ -66,6 +66,10 @@ Next session:  Agent queries the "backend" memoir
 
 - **Two memory models** — episodic (decay-based) + semantic (knowledge graphs)
 - **RAG pipeline** — ingest files with automatic chunking, hybrid search, auto-context injection on session start
+- **Training data export** — `hyphae export-training-data --format sft|dpo|alpaca` exports memories as training JSONL for fine-tuning
+- **Backup & restore** — `hyphae backup` / `hyphae restore` for database persistence and recovery
+- **Secrets scanning** — 8 regex patterns detect API keys, tokens, and passwords during memory storage with non-blocking warnings
+- **Evaluation framework** — `hyphae evaluate --days 14` measures agent improvement over time across 6 metrics
 - **Feedback loop** — `hyphae_extract_lessons` reads captured corrections and error resolutions to surface actionable patterns
 - **Auto-context injection** — MCP server injects recent sessions, decisions, and resolved errors into agent context on initialization
 - **Zero LLM cost** — rule-based fact extraction, local embeddings, no API calls for storage

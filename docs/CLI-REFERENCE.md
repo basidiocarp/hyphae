@@ -39,6 +39,10 @@ All commands accept the global `--db <path>` flag to override the default databa
   - [`hyphae prune`](#hyphae-prune----delete-low-weight-memories)
   - [`hyphae consolidate`](#hyphae-consolidate----consolidate-a-topic)
   - [`hyphae embed`](#hyphae-embed----generate-embeddings)
+  - [`hyphae export-training-data`](#hyphae-export-training-data----export-memories-as-training-jsonl)
+  - [`hyphae backup`](#hyphae-backup----backup-the-database)
+  - [`hyphae restore`](#hyphae-restore----restore-from-backup)
+  - [`hyphae evaluate`](#hyphae-evaluate----measure-agent-improvement)
 - [Configuration and setup](#configuration-and-setup)
   - [`hyphae init`](#hyphae-init----automatic-configuration)
   - [`hyphae config`](#hyphae-config----show-configuration)
@@ -715,6 +719,117 @@ hyphae embed --force
 
 # A single topic
 hyphae embed --topic "decisions-api"
+```
+
+---
+
+### `hyphae export-training-data` -- Export memories as training JSONL
+
+```
+hyphae export-training-data --format <sft|dpo|alpaca> [-t <topic>] [-o <output>]
+```
+
+| Option | Short | Required | Default | Description |
+|--------|-------|----------|---------|-------------|
+| `--format` | `-f` | yes | -- | Output format: `sft`, `dpo`, `alpaca` |
+| `--topic` | `-t` | no | -- | Limit export to a topic |
+| `--output` | `-o` | no | stdout | Write to file instead of stdout |
+
+Exports memories as training JSONL for supervised fine-tuning (SFT), direct preference optimization (DPO), or Alpaca format.
+
+**Format details:**
+
+- `sft`: `{"instruction": "...", "response": "..."}` pairs from memories
+- `dpo`: `{"prompt": "...", "chosen": "...", "rejected": "..."}` from corrections and errors
+- `alpaca`: `{"instruction": "...", "input": "...", "output": "..."}` format
+
+```bash
+# Export decisions as SFT pairs
+hyphae export-training-data --format sft --topic "decisions-api" -o sft_decisions.jsonl
+
+# Export all corrections as DPO pairs (for preference training)
+hyphae export-training-data --format dpo --topic "corrections" -o dpo_pairs.jsonl
+
+# Export everything as Alpaca format
+hyphae export-training-data --format alpaca -o full_training.jsonl
+```
+
+---
+
+### `hyphae backup` -- Backup the database
+
+```
+hyphae backup [-o <output-path>]
+```
+
+| Option | Short | Required | Default | Description |
+|--------|-------|----------|---------|-------------|
+| `--output` | `-o` | no | `./hyphae-backup-<timestamp>.db` | Backup file path |
+
+Creates a complete backup of the Hyphae database including all memories, memoirs, documents, and metadata.
+
+```bash
+# Automatic timestamped backup
+hyphae backup
+
+# Specific location
+hyphae backup --output /backups/hyphae-2024-03.db
+```
+
+---
+
+### `hyphae restore` -- Restore from backup
+
+```
+hyphae restore <backup-path> [--verify]
+```
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `backup-path` | yes (positional) | Path to backup file |
+| `--verify` | no | Verify database integrity before restoring |
+
+Restores the database from a backup. The current database is moved to `.backup` before restoration.
+
+```bash
+# Restore from backup
+hyphae restore /backups/hyphae-2024-03.db
+
+# Verify before restoring
+hyphae restore /backups/hyphae-2024-03.db --verify
+```
+
+---
+
+### `hyphae evaluate` -- Measure agent improvement
+
+```
+hyphae evaluate [--days <N>] [--metric <metric>]
+```
+
+| Option | Short | Required | Default | Description |
+|--------|-------|----------|---------|-------------|
+| `--days` | `-d` | no | `14` | Time window in days |
+| `--metric` | `-m` | no | all | Single metric: `recall`, `consolidation`, `lessons`, `code_graph`, `training_export`, `coverage` |
+
+Evaluates agent performance over a time window using 6 metrics:
+
+1. **Recall quality** — How well the agent retrieves relevant memories
+2. **Consolidation efficiency** — Topic redundancy and memory merging
+3. **Lesson extraction** — Patterns extracted from corrections and errors
+4. **Code graph coverage** — Symbols captured via Rhizome export
+5. **Training data volume** — Exportable SFT/DPO pairs
+6. **Topic coverage** — Distribution across topics
+
+```bash
+# Evaluate last 14 days
+hyphae evaluate
+
+# Evaluate last 30 days
+hyphae evaluate --days 30
+
+# Check only recall quality
+hyphae evaluate --metric recall
 ```
 
 ---

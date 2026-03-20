@@ -733,6 +733,73 @@ Query processing:
 
 ---
 
+## Secrets Detection
+
+Hyphae scans memories during storage to detect sensitive information using 8 regex patterns compiled into a `OnceLock` for performance:
+
+**Detected patterns:**
+- API keys (OpenAI, AWS, GCP, GitHub)
+- Passwords and tokens (JWT, Bearer, auth tokens)
+- AWS keys (access keys, secret keys)
+- Private keys (RSA, SSH)
+- Database URLs with credentials
+- OAuth tokens and refresh tokens
+
+**Behavior:**
+- Detection is non-blocking: warnings are appended to response, not errors
+- Sensitive values are replaced with `***` in logs but stored as-is (agent's choice to store)
+- Warnings guide users toward environment variable management
+- Detection runs once per store call
+
+**Implementation:**
+```rust
+lazy_static::lazy_static! {
+    static ref SECRETS_REGEX: Regex = compile_patterns();  // 8 patterns
+}
+
+fn check_memory(memory: &Memory) -> Vec<SecretWarning> {
+    SECRETS_REGEX.find_iter(&memory.summary)
+        .map(|m| SecretWarning { pattern, location })
+        .collect()
+}
+```
+
+---
+
+## Evaluation Framework
+
+The `hyphae evaluate` command measures agent improvement over time across 6 metrics:
+
+**Metrics:**
+
+1. **Recall quality** — Hits/misses over time window, calculated from access_count deltas
+2. **Consolidation efficiency** — Topics with >15 memories and consolidation rate
+3. **Lesson extraction** — Unique lessons extracted from corrections and errors
+4. **Code graph coverage** — Symbols in `code:{project}` memoirs, call graph density
+5. **Training data volume** — Exportable SFT/DPO pairs per format
+6. **Topic coverage** — Entropy of topic distribution (uniform = high coverage)
+
+**Time window:**
+- Default: last 14 days
+- Configurable: `--days N`
+- Compared against baseline (first week vs last week)
+
+**Output:**
+```
+Evaluation Results (last 14 days)
+
+Recall Quality:      ████████░░ 8/10  (8 of 10 last queried memories were accessed)
+Consolidation:       ██████░░░░ 6/10  (3 topics consolidated, 2 pending)
+Lessons Extracted:   ██████████ 10/10 (12 unique patterns identified)
+Code Graph:          ████████░░ 8/10  (247 symbols, density 0.34)
+Training Export:     █████░░░░░ 5/10  (4200 SFT, 800 DPO pairs)
+Topic Coverage:      ██████░░░░ 6/10  (entropy 0.67/1.0)
+
+Overall: 6.2/10 — Code graph and training data growing. Consolidation hint: errors/resolved (42 entries).
+```
+
+---
+
 ## Nudge and Lesson Systems
 
 ### Store Nudge (Escalating Reminder)
