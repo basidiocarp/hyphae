@@ -1,6 +1,7 @@
 use anyhow::Result;
 use hyphae_core::{Embedder, MemoryStore};
 use hyphae_store::SqliteStore;
+use regex::Regex;
 
 fn parse_importance(s: &str) -> hyphae_core::Importance {
     match s.parse() {
@@ -12,6 +13,42 @@ fn parse_importance(s: &str) -> hyphae_core::Importance {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Secrets Detection
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SECRET_PATTERNS: &[(&str, &str)] = &[
+    (r"(?i)(api[_-]?key|apikey)\s*[:=]\s*\S{10,}", "API key"),
+    (
+        r"(?i)(secret|password|passwd|pwd)\s*[:=]\s*\S{8,}",
+        "password/secret",
+    ),
+    (r"sk-[a-zA-Z0-9]{20,}", "OpenAI API key"),
+    (r"ghp_[a-zA-Z0-9]{36}", "GitHub personal access token"),
+    (r"(?i)bearer\s+[a-zA-Z0-9._-]{20,}", "Bearer token"),
+    (r"AKIA[0-9A-Z]{16}", "AWS access key"),
+    (
+        r"(?i)(token|auth)\s*[:=]\s*[a-zA-Z0-9._-]{20,}",
+        "auth token",
+    ),
+    (r"-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----", "private key"),
+];
+
+/// Detect common secret patterns in content.
+fn detect_secrets(content: &str) -> Vec<String> {
+    let mut detected = Vec::new();
+
+    for (pattern, secret_type) in SECRET_PATTERNS {
+        if let Ok(regex) = Regex::new(pattern) {
+            if regex.is_match(content) {
+                detected.push(secret_type.to_string());
+            }
+        }
+    }
+
+    detected
+}
+
 pub(crate) fn cmd_store(
     store: &SqliteStore,
     topic: String,
@@ -19,6 +56,15 @@ pub(crate) fn cmd_store(
     importance: &str,
     project: Option<String>,
 ) -> Result<()> {
+    // Check for secrets before storing
+    let warnings = detect_secrets(&content);
+    if !warnings.is_empty() {
+        eprintln!(
+            "Warning: possible secrets detected: {}",
+            warnings.join(", ")
+        );
+    }
+
     let mut mem = hyphae_core::Memory::new(topic, content, parse_importance(importance));
     mem.project = project;
     store.store(mem)?;

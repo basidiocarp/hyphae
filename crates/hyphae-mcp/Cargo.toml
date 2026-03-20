@@ -21,6 +21,7 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 spore = { workspace = true }
+regex = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

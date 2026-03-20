@@ -1,4 +1,5 @@
 use chrono::Utc;
+use regex::Regex;
 use serde_json::Value;
 
 use hyphae_core::{Embedder, Importance, MemoirStore, Memory, MemoryId, MemoryStore, Weight};
@@ -8,6 +9,44 @@ use hyphae_store::context;
 use crate::protocol::ToolResult;
 
 use super::{get_bounded_i64, get_str, validate_max_length, validate_required_string};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Secrets Detection
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SECRET_PATTERNS: &[(&str, &str)] = &[
+    (r"(?i)(api[_-]?key|apikey)\s*[:=]\s*\S{10,}", "API key"),
+    (
+        r"(?i)(secret|password|passwd|pwd)\s*[:=]\s*\S{8,}",
+        "password/secret",
+    ),
+    (r"sk-[a-zA-Z0-9]{20,}", "OpenAI API key"),
+    (r"ghp_[a-zA-Z0-9]{36,}", "GitHub personal access token"),
+    (r"(?i)bearer\s+[a-zA-Z0-9._-]{20,}", "Bearer token"),
+    (r"AKIA[0-9A-Z]{16}", "AWS access key"),
+    (
+        r"(?i)(token|auth)\s*[:=]\s*[a-zA-Z0-9._-]{20,}",
+        "auth token",
+    ),
+    (r"-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----", "private key"),
+];
+
+/// Detect common secret patterns in content.
+///
+/// Returns a vector of detected secret types. If secrets are found, the caller should warn.
+fn detect_secrets(content: &str) -> Vec<String> {
+    let mut detected = Vec::new();
+
+    for (pattern, secret_type) in SECRET_PATTERNS {
+        if let Ok(regex) = Regex::new(pattern) {
+            if regex.is_match(content) {
+                detected.push(secret_type.to_string());
+            }
+        }
+    }
+
+    detected
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Gap 10: Age indicator for stale memory feedback
@@ -117,13 +156,31 @@ pub(crate) fn tool_store(
                     if let Err(e) = store.update(&updated) {
                         return ToolResult::error(format!("failed to update: {e}"));
                     }
+
+                    let warnings = detect_secrets(&content);
                     return if compact {
-                        ToolResult::text(format!("ok:{}", updated.id))
+                        if !warnings.is_empty() {
+                            ToolResult::text(format!(
+                                "ok:{}\n⚠️ Possible secrets detected: {}. Consider using hyphae_memory_forget to remove.",
+                                updated.id,
+                                warnings.join(", ")
+                            ))
+                        } else {
+                            ToolResult::text(format!("ok:{}", updated.id))
+                        }
                     } else {
-                        ToolResult::text(format!(
+                        let mut msg = format!(
                             "Updated existing memory (similarity {score:.2}): {}",
                             updated.id
-                        ))
+                        );
+                        if !warnings.is_empty() {
+                            msg.push_str(&format!(
+                                "\n⚠️ [Hyphae: Possible secrets detected in stored memory: {}. \
+                                 Consider using hyphae_memory_forget to remove if these are real credentials.]",
+                                warnings.join(", ")
+                            ));
+                        }
+                        ToolResult::text(msg)
                     };
                 }
             }
@@ -132,11 +189,20 @@ pub(crate) fn tool_store(
 
     match store.store(memory) {
         Ok(id) => {
+            let warnings = detect_secrets(&content);
             if compact {
-                ToolResult::text(format!("ok:{id}"))
+                if !warnings.is_empty() {
+                    ToolResult::text(format!(
+                        "ok:{}\n⚠️ Possible secrets detected: {}. Consider using hyphae_memory_forget to remove.",
+                        id,
+                        warnings.join(", ")
+                    ))
+                } else {
+                    ToolResult::text(format!("ok:{id}"))
+                }
             } else {
                 // Check if topic needs consolidation
-                let hint = if let Ok(count) = store.count_by_topic(topic, project) {
+                let mut hint = if let Ok(count) = store.count_by_topic(topic, project) {
                     if count > 7 {
                         format!(
                             "\n⚠ Topic '{topic}' has {count} entries — consider consolidating with hyphae_memory_consolidate."
@@ -147,6 +213,16 @@ pub(crate) fn tool_store(
                 } else {
                     String::new()
                 };
+
+                // Add secrets warning if detected
+                if !warnings.is_empty() {
+                    hint.push_str(&format!(
+                        "\n⚠️ [Hyphae: Possible secrets detected in stored memory: {}. \
+                         Consider using hyphae_memory_forget to remove if these are real credentials.]",
+                        warnings.join(", ")
+                    ));
+                }
+
                 ToolResult::text(format!("Stored memory: {id}{hint}"))
             }
         }
@@ -1130,5 +1206,90 @@ fn extract_common_pattern(summaries: &[&str]) -> String {
             "pattern like '{}'",
             summaries[0].chars().take(50).collect::<String>()
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_detect_secrets_normal_content() {
+        assert!(detect_secrets("normal memory content").is_empty());
+    }
+
+    #[test]
+    fn test_detect_secrets_api_key() {
+        let warnings = detect_secrets("api_key=sk-abc123def456ghi789jkl");
+        assert!(!warnings.is_empty());
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("API key") || w.contains("OpenAI"))
+        );
+    }
+
+    #[test]
+    fn test_detect_secrets_password() {
+        let warnings = detect_secrets("password: mysecretpassword123");
+        assert!(!warnings.is_empty());
+        assert!(warnings.iter().any(|w| w.contains("password")));
+    }
+
+    #[test]
+    fn test_detect_secrets_github_token() {
+        let warnings = detect_secrets("ghp_abcdefghijklmnopqrstuvwxyz1234567890abc");
+        assert!(!warnings.is_empty());
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("GitHub") || w.contains("token"))
+        );
+    }
+
+    #[test]
+    fn test_detect_secrets_aws_key() {
+        let warnings = detect_secrets("AKIAIOSFODNN7EXAMPLE");
+        assert!(!warnings.is_empty());
+        assert!(warnings.iter().any(|w| w.contains("AWS")));
+    }
+
+    #[test]
+    fn test_detect_secrets_bearer_token() {
+        let warnings = detect_secrets("Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9");
+        assert!(!warnings.is_empty());
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("Bearer") || w.contains("token"))
+        );
+    }
+
+    #[test]
+    fn test_detect_secrets_private_key() {
+        let warnings = detect_secrets("-----BEGIN PRIVATE KEY-----");
+        assert!(!warnings.is_empty());
+        assert!(warnings.iter().any(|w| w.contains("private key")));
+    }
+
+    #[test]
+    fn test_detect_secrets_rsa_private_key() {
+        let warnings = detect_secrets("-----BEGIN RSA PRIVATE KEY-----");
+        assert!(!warnings.is_empty());
+        assert!(warnings.iter().any(|w| w.contains("private key")));
+    }
+
+    #[test]
+    fn test_detect_secrets_regular_text_with_token_word() {
+        // Should not trigger on the word "token" without suspicious patterns
+        let warnings = detect_secrets("I need a token for my project");
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn test_detect_secrets_multiple_types() {
+        let content = "api_key=sk-abc123def456ghi789jkl and password: secretpassword123";
+        let warnings = detect_secrets(content);
+        assert!(warnings.len() >= 1); // At least one pattern will match
     }
 }

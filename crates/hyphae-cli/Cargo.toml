@@ -39,6 +39,7 @@ ctrlc = { version = "3", features = ["termination"] }
 rusqlite = { workspace = true }
 which = "7"
 sha2 = "0.10"
+regex = { workspace = true }
 
 [package.metadata.deb]
 maintainer = "William Newton"
