@@ -34,7 +34,7 @@ Then configure your AI tools:
 hyphae init
 ```
 
-This auto-detects and configures. Your agent now has access to 31+ MCP tools.
+This auto-detects and configures. Your agent now has access to 35 MCP tools.
 
 ## How It Works
 
