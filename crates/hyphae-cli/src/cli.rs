@@ -229,6 +229,13 @@ pub(crate) enum Commands {
         min_weight: Option<f32>,
     },
 
+    /// Evaluate agent improvement over time
+    Evaluate {
+        /// Total evaluation window in days (compares two equal halves)
+        #[arg(long, default_value = "14")]
+        days: i64,
+    },
+
     /// Backup the database
     Backup {
         /// Output path for backup file (defaults to hyphae-backup-{timestamp}.db)

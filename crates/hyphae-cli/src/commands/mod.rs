@@ -2,6 +2,7 @@ pub mod backup;
 pub mod bench;
 pub mod docs;
 pub mod doctor;
+pub mod evaluate;
 pub mod export_training;
 pub mod import_claude_memory;
 pub mod memoir;

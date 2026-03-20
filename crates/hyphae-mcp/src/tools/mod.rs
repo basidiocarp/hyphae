@@ -49,6 +49,7 @@ pub fn call_tool(
         "hyphae_memory_health" => memory::tool_health(store, args, project),
         "hyphae_memory_embed_all" => memory::tool_embed_all(store, embedder, args, project),
         "hyphae_extract_lessons" => memory::tool_extract_lessons(store, args, project),
+        "hyphae_evaluate" => memory::tool_evaluate(store, args, project),
         // Cross-project tools
         "hyphae_recall_global" => memory::tool_recall_global(store, args, compact),
         "hyphae_promote_to_memoir" => memory::tool_promote_to_memoir(store, args, project),

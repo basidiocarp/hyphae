@@ -304,6 +304,10 @@ fn main() -> Result<()> {
             )?;
         }
 
+        Commands::Evaluate { days } => {
+            commands::evaluate::cmd_evaluate(&store, days, resolved_project)?;
+        }
+
         Commands::Backup { .. } | Commands::Restore { .. } => {
             unreachable!("handled in early-return block")
         }

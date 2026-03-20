@@ -264,7 +264,10 @@ redundant entries and improve recall quality.\n\
 \n\
 LEARN (hyphae_extract_lessons): Periodically extract lessons from accumulated corrections, resolved errors, \
 and test fixes. This identifies patterns that help avoid repeating past mistakes. Use at session end or when \
-starting work on a familiar codebase.";
+starting work on a familiar codebase.\n\
+\n\
+EVALUATE (hyphae_evaluate): Periodically check agent improvement trends. Compares error rates, corrections, \
+and resolution rates across time windows to measure whether the agent is getting better.";
 
 fn handle_tools_list(id: Value, has_embedder: bool) -> JsonRpcResponse {
     JsonRpcResponse::ok(id, tools::tool_definitions(has_embedder))

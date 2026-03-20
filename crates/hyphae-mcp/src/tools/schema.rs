@@ -171,6 +171,22 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                 }
             }
         }),
+        json!({
+            "name": "hyphae_evaluate",
+            "description": "Evaluate agent improvement over time by comparing error rates, correction frequency, and resolution rates across time windows. Compares two equal time periods to show trends.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "integer",
+                        "default": 14,
+                        "minimum": 2,
+                        "maximum": 365,
+                        "description": "Total evaluation window in days (splits into two equal halves for comparison)"
+                    }
+                }
+            }
+        }),
         // Cross-project tools
         json!({
             "name": "hyphae_recall_global",

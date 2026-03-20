@@ -1293,3 +1293,222 @@ mod tests {
         assert!(warnings.len() >= 1); // At least one pattern will match
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Evaluation Tool
+// ─────────────────────────────────────────────────────────────────────────────
+
+pub(crate) fn tool_evaluate(
+    store: &SqliteStore,
+    args: &Value,
+    project: Option<&str>,
+) -> ToolResult {
+    let days = get_bounded_i64(args, "days", 14, 2, 365);
+
+    let midpoint = days / 2;
+
+    // Collect window data: count memories in each topic within time windows
+    let get_window_count = |topic: &str, days_ago_start: i64, days_ago_end: i64| -> usize {
+        match store.get_by_topic(topic, project) {
+            Ok(mems) => {
+                let now = Utc::now();
+                let cutoff_start = now
+                    .checked_sub_signed(chrono::Duration::days(days_ago_start))
+                    .unwrap_or(now);
+                let cutoff_end = now
+                    .checked_sub_signed(chrono::Duration::days(days_ago_end))
+                    .unwrap_or(now);
+
+                mems.iter()
+                    .filter(|m| m.created_at >= cutoff_end && m.created_at <= cutoff_start)
+                    .count()
+            }
+            Err(_) => 0,
+        }
+    };
+
+    // Get session count for each window
+    let proj_name = project.unwrap_or("default");
+    let session_topic = format!("session/{}", proj_name);
+    let recent_sessions = get_window_count(&session_topic, 0, midpoint);
+    let previous_sessions = get_window_count(&session_topic, midpoint, days);
+
+    // Check if we have enough data
+    if recent_sessions == 0 && previous_sessions == 0 {
+        return ToolResult::text(
+            "Insufficient data: no sessions found in the evaluation window. \
+            Metrics require at least 1 session per window. Try extending --days or checking that session memories exist."
+                .into(),
+        );
+    }
+
+    // Collect all metrics
+    let recent_errors = get_window_count("errors/active", 0, midpoint);
+    let recent_corrections = get_window_count("corrections", 0, midpoint);
+    let recent_resolved = get_window_count("errors/resolved", 0, midpoint);
+    let recent_failed_tests = get_window_count("tests/failed", 0, midpoint);
+    let recent_resolved_tests = get_window_count("tests/resolved", 0, midpoint);
+
+    let previous_errors = get_window_count("errors/active", midpoint, days);
+    let previous_corrections = get_window_count("corrections", midpoint, days);
+    let previous_resolved = get_window_count("errors/resolved", midpoint, days);
+    let previous_failed_tests = get_window_count("tests/failed", midpoint, days);
+    let previous_resolved_tests = get_window_count("tests/resolved", midpoint, days);
+
+    // Calculate rates
+    let div_safe = |num: usize, den: usize| -> f64 {
+        if den == 0 {
+            0.0
+        } else {
+            num as f64 / den as f64
+        }
+    };
+
+    let recent_error_rate = div_safe(recent_errors, recent_sessions);
+    let previous_error_rate = div_safe(previous_errors, previous_sessions);
+
+    let recent_correction_rate = div_safe(recent_corrections, recent_sessions);
+    let previous_correction_rate = div_safe(previous_corrections, previous_sessions);
+
+    let recent_resolution_rate = div_safe(
+        recent_resolved,
+        recent_errors.saturating_add(recent_resolved),
+    );
+    let previous_resolution_rate = div_safe(
+        previous_resolved,
+        previous_errors.saturating_add(previous_resolved),
+    );
+
+    let recent_test_rate = div_safe(
+        recent_resolved_tests,
+        recent_failed_tests.saturating_add(recent_resolved_tests),
+    );
+    let previous_test_rate = div_safe(
+        previous_resolved_tests,
+        previous_failed_tests.saturating_add(previous_resolved_tests),
+    );
+
+    // Calculate trends
+    let trend_improving = |prev: f64, recent: f64, lower_is_better: bool| -> (bool, f64) {
+        if prev == 0.0 {
+            return (false, 0.0);
+        }
+        let delta = ((recent - prev) / prev).abs();
+        let improving = if lower_is_better {
+            recent < prev
+        } else {
+            recent > prev
+        };
+        (improving, delta * 100.0)
+    };
+
+    let (error_improving, error_pct) =
+        trend_improving(previous_error_rate, recent_error_rate, true);
+    let (correction_improving, correction_pct) =
+        trend_improving(previous_correction_rate, recent_correction_rate, true);
+    let (resolution_improving, resolution_pct) =
+        trend_improving(previous_resolution_rate, recent_resolution_rate, false);
+    let (test_improving, test_pct) = trend_improving(previous_test_rate, recent_test_rate, false);
+
+    // Format report
+    let mut output = String::new();
+    output.push_str(&format!("\nAgent Evaluation Report (last {days} days)\n"));
+    output.push_str(&format!("Project: {}\n\n", proj_name));
+    output.push_str(&format!(
+        "{:<25} {:>14} {:>14} {}\n",
+        "Metric",
+        format!("Previous {}d", midpoint),
+        format!("Recent {}d", midpoint),
+        "Trend"
+    ));
+    output.push_str(&format!(
+        "{:<25} {:>14} {:>14} {}\n",
+        "-".repeat(25),
+        "-".repeat(14),
+        "-".repeat(14),
+        "-".repeat(30)
+    ));
+
+    // Error rate
+    output.push_str(&format!(
+        "{:<25} {:>14.2} {:>14.2} {}\n",
+        "Errors per session",
+        previous_error_rate,
+        recent_error_rate,
+        if error_improving {
+            format!("↓ {:.0}% better", error_pct)
+        } else {
+            format!("↑ {:.0}% worse", error_pct)
+        }
+    ));
+
+    // Correction rate
+    output.push_str(&format!(
+        "{:<25} {:>14.2} {:>14.2} {}\n",
+        "Self-corrections/session",
+        previous_correction_rate,
+        recent_correction_rate,
+        if correction_improving {
+            format!("↓ {:.0}% better", correction_pct)
+        } else {
+            format!("↑ {:.0}% worse", correction_pct)
+        }
+    ));
+
+    // Resolution rate
+    output.push_str(&format!(
+        "{:<25} {:>13.0}% {:>13.0}% {}\n",
+        "Error resolution rate",
+        previous_resolution_rate * 100.0,
+        recent_resolution_rate * 100.0,
+        if resolution_improving {
+            format!("↑ {:.0}% better", resolution_pct)
+        } else {
+            format!("↓ {:.0}% worse", resolution_pct)
+        }
+    ));
+
+    // Test fix rate
+    output.push_str(&format!(
+        "{:<25} {:>13.0}% {:>13.0}% {}\n",
+        "Test fix rate",
+        previous_test_rate * 100.0,
+        recent_test_rate * 100.0,
+        if test_improving {
+            format!("↑ {:.0}% better", test_pct)
+        } else {
+            format!("↓ {:.0}% worse", test_pct)
+        }
+    ));
+
+    // Session count
+    output.push_str(&format!(
+        "{:<25} {:>14} {:>14}\n",
+        "Sessions", previous_sessions, recent_sessions
+    ));
+
+    output.push_str("\n");
+
+    // Overall assessment
+    let improving_count = [
+        error_improving,
+        correction_improving,
+        resolution_improving,
+        test_improving,
+    ]
+    .iter()
+    .filter(|&&x| x)
+    .count();
+
+    let assessment = match improving_count {
+        4 => "Excellent: All metrics improving",
+        3 => "Good: Most metrics improving",
+        2 => "Fair: Some improvement",
+        1 => "Mixed: Limited improvement",
+        _ => "Needs attention: Most metrics declining or stable",
+    };
+
+    output.push_str(&format!("Overall: {}\n", assessment));
+
+    ToolResult::text(output)
+}
