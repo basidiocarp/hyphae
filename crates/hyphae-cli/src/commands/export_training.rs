@@ -100,30 +100,19 @@ pub(crate) fn cmd_export_training(
                                 instruction,
                                 response,
                             };
-                            writeln!(
-                                handle,
-                                "{}",
-                                serde_json::to_string(&record)?
-                            )?;
+                            writeln!(handle, "{}", serde_json::to_string(&record)?)?;
                         }
                         TrainingFormat::Dpo => {
                             // Only export DPO if it looks like a correction
-                            if mem.topic == "corrections" || mem.summary.contains("Original:")
-                            {
-                                if let Some((rejected, chosen)) =
-                                    parse_correction(&mem.summary)
-                                {
+                            if mem.topic == "corrections" || mem.summary.contains("Original:") {
+                                if let Some((rejected, chosen)) = parse_correction(&mem.summary) {
                                     let prompt = format!("Fix the code: {}", mem.topic);
                                     let record = DpoRecord {
                                         prompt,
                                         chosen,
                                         rejected,
                                     };
-                                    writeln!(
-                                        handle,
-                                        "{}",
-                                        serde_json::to_string(&record)?
-                                    )?;
+                                    writeln!(handle, "{}", serde_json::to_string(&record)?)?;
                                 }
                             }
                         }
@@ -135,11 +124,7 @@ pub(crate) fn cmd_export_training(
                                 input: String::new(),
                                 output,
                             };
-                            writeln!(
-                                handle,
-                                "{}",
-                                serde_json::to_string(&record)?
-                            )?;
+                            writeln!(handle, "{}", serde_json::to_string(&record)?)?;
                         }
                     }
                 }

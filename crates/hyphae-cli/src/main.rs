@@ -292,7 +292,8 @@ fn main() -> Result<()> {
             topic,
             min_weight,
         } => {
-            let fmt = format.parse::<commands::export_training::TrainingFormat>()
+            let fmt = format
+                .parse::<commands::export_training::TrainingFormat>()
                 .map_err(|e| anyhow::anyhow!("{}", e))?;
             commands::export_training::cmd_export_training(
                 &store,

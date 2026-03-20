@@ -26,9 +26,7 @@ pub(crate) fn cmd_backup(output: Option<PathBuf>) -> Result<()> {
     fs::copy(&db_path, &backup_path)
         .with_context(|| format!("failed to backup database to {}", backup_path.display()))?;
 
-    let size = fs::metadata(&backup_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let size = fs::metadata(&backup_path).map(|m| m.len()).unwrap_or(0);
 
     println!("Backup created: {}", backup_path.display());
     println!("Size: {} bytes", size);
