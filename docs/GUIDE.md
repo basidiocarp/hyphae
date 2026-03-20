@@ -198,38 +198,168 @@ hyphae recall-context "authentication" --limit 20
 
 Returns a formatted block ready for prompt prepending. Used by the SessionStart hook for automatic context loading.
 
-## Embedding Configuration
+## Configuring Embeddings
 
-Default: English-only embeddings for fast semantic search.
+Embeddings enable semantic search across memories. Hyphae supports three embedding modes: local (fastembed), HTTP (Ollama or OpenAI-compatible), and none (FTS5-only fallback).
+
+### Default: Local Embeddings (Recommended)
+
+Local embeddings run entirely on your machine with zero dependencies. The default model is `BAAI/bge-small-en-v1.5` (384 dimensions, English, optimized for speed).
+
+No configuration needed. Embeddings work out of the box once Hyphae initializes.
+
+Verify embeddings are working:
 
 ```bash
-hyphae config    # Show current settings
+hyphae config                           # Show current embedding settings
+hyphae stats                            # Check "embeddings" field
 ```
 
-Edit `~/.config/hyphae/config.toml`:
+### Choosing a Local Model
+
+Edit `~/.config/hyphae/config.toml` to switch models:
 
 ```toml
 [embeddings]
-# Default (recommended)
-model = "BAAI/bge-small-en-v1.5"              # 384d, English, fastest
+# Default (recommended for speed)
+model = "BAAI/bge-small-en-v1.5"        # 384d, ~5MB, fastest
 
-# More accurate
-# model = "BAAI/bge-base-en-v1.5"             # 768d, English, more accurate
+# Better accuracy (moderate speed)
+# model = "BAAI/bge-base-en-v1.5"       # 768d, ~50MB, more accurate
 
-# Best accuracy
-# model = "BAAI/bge-large-en-v1.5"            # 1024d, English, best accuracy
+# Best accuracy (slowest)
+# model = "BAAI/bge-large-en-v1.5"      # 1024d, ~250MB, best accuracy
 
-# Code-optimized
-# model = "jinaai/jina-embeddings-v2-base-code"  # 768d, optimized for code
+# Code-optimized (for code memory)
+# model = "jinaai/jina-embeddings-v2-base-code"  # 768d, code queries match code comments
 ```
 
-Changing the model automatically migrates the vector index on next startup (existing embeddings are cleared). Regenerate with:
+Changing the model clears all existing embeddings on next startup. Regenerate them:
 
 ```bash
-hyphae embed                     # Embed all memories without embeddings
-hyphae embed --force             # Re-embed everything
-hyphae embed --topic "decisions" # Only one topic
+hyphae embed                     # Embed memories that don't have embeddings
+hyphae embed --force             # Re-embed all memories
+hyphae embed --topic "decisions" # Embed only one topic
 ```
+
+### HTTP Embeddings (Ollama or OpenAI)
+
+Use an external embedding API for better models or multi-language support. Requires an HTTP server running locally or remotely.
+
+**Ollama** (local, free):
+
+```bash
+# 1. Install Ollama: https://ollama.ai
+# 2. Run Ollama server (listens on localhost:11434)
+ollama serve
+
+# 3. In another terminal, pull an embedding model
+ollama pull nomic-embed-text    # Fast, 384d
+# OR
+ollama pull mxbai-embed-large   # More accurate, 1024d
+
+# 4. Configure Hyphae
+export HYPHAE_EMBEDDING_URL="http://localhost:11434"
+export HYPHAE_EMBEDDING_MODEL="nomic-embed-text"
+
+# 5. Restart Hyphae to pick up new settings
+hyphae serve
+```
+
+**OpenAI-compatible API** (e.g., Together.ai, Huggingface, custom):
+
+```bash
+export HYPHAE_EMBEDDING_URL="https://api.together.xyz/v1"
+export HYPHAE_EMBEDDING_MODEL="togethercomputer/m2-bert-80M-8k-retrieval"
+
+hyphae serve
+```
+
+Or add to `~/.config/hyphae/config.toml`:
+
+```toml
+[embeddings]
+url = "http://localhost:11434"
+model = "nomic-embed-text"
+```
+
+**Environment variable precedence**: If both `HYPHAE_EMBEDDING_URL` and config.toml are set, the environment variable wins.
+
+### No Embeddings (Fast Iteration)
+
+Build Hyphae without embeddings for faster iteration:
+
+```bash
+cargo build --release --no-default-features
+cargo install --path crates/hyphae-cli --no-default-features
+```
+
+Search falls back to FTS5 (full-text search), which works but is less semantically aware. Useful for:
+- Development/testing without embedding overhead
+- Offline environments where HTTP is unavailable
+- Low-memory environments
+
+Re-enable embeddings anytime by building with the default features:
+
+```bash
+cargo build --release
+```
+
+### When to Use Which
+
+| Mode | Use Case | Notes |
+|------|----------|-------|
+| **Local (default)** | Most users | Fast, private, zero setup |
+| **Ollama HTTP** | Better accuracy needed | Free, local, requires Ollama running |
+| **OpenAI HTTP** | Best accuracy or multilingual | Requires API key + network; costs tokens |
+| **None** | Dev speed or offline | Search degraded to FTS5 only |
+
+### Hybrid Search
+
+Hybrid search combines FTS5 (full-text) and vector (semantic) scoring. By default:
+- 30% weight on FTS5 BM25 ranking
+- 70% weight on cosine similarity (embeddings)
+
+This balances keyword matching with semantic understanding. For example:
+- `recall "JWT authentication"` finds memories about authentication even if they don't use the exact word "JWT"
+- `recall "dependency injection"` matches architectural pattern discussions
+
+If embeddings are disabled, search falls back to FTS5 only (100% keyword matching).
+
+### Performance Considerations
+
+| Model | Size | Memory | Speed | Accuracy |
+|-------|------|--------|-------|----------|
+| `bge-small` | 5MB | ~100MB (runtime) | ~1ms per embedding | Good |
+| `bge-base` | 50MB | ~200MB (runtime) | ~3ms per embedding | Better |
+| `bge-large` | 250MB | ~500MB (runtime) | ~5ms per embedding | Best |
+| Ollama (HTTP) | Variable | Server-side | ~50-200ms (network) | Depends on model |
+| OpenAI (HTTP) | N/A | N/A | ~200ms (network) | Excellent |
+
+Choose based on your machine and response time requirements. Local embeddings are almost always faster than HTTP due to network latency.
+
+### Troubleshooting
+
+**"Embeddings disabled" on startup**: Hyphae was built without the `embeddings` feature. Rebuild with:
+```bash
+cargo build --release
+```
+
+**Search is slow**: Hybrid search can be slower than FTS5-only due to vector distance calculations. Options:
+1. Switch to a smaller model (`bge-small` vs `bge-large`)
+2. Disable embeddings entirely for faster search
+3. Use HTTP embeddings to offload to a dedicated server
+
+**Vector index is corrupted**: Delete the embeddings and regenerate:
+```bash
+hyphae forget --all-embeddings
+hyphae embed --force
+```
+
+**Model download fails**: Models are auto-downloaded on first embed. Check:
+- Network connectivity
+- Disk space (`~500MB` minimum for largest models)
+- Permissions on `~/.cache/` directory
 
 ## MCP Tools Reference
 
