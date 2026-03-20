@@ -115,6 +115,14 @@ fn main() -> Result<()> {
             commands::doctor::run(*fix)?;
             return Ok(());
         }
+        Commands::Backup { output } => {
+            commands::backup::cmd_backup(output.clone())?;
+            return Ok(());
+        }
+        Commands::Restore { path } => {
+            commands::backup::cmd_restore(path.clone())?;
+            return Ok(());
+        }
         _ => {}
     }
 
@@ -277,6 +285,26 @@ fn main() -> Result<()> {
             dry_run,
         } => {
             commands::transcript::run(&store, path, since, dry_run, resolved_project.as_deref())?;
+        }
+
+        Commands::ExportTrainingData {
+            format,
+            topic,
+            min_weight,
+        } => {
+            let fmt = format.parse::<commands::export_training::TrainingFormat>()
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            commands::export_training::cmd_export_training(
+                &store,
+                fmt,
+                topic.clone(),
+                min_weight.clone(),
+                resolved_project,
+            )?;
+        }
+
+        Commands::Backup { .. } | Commands::Restore { .. } => {
+            unreachable!("handled in early-return block")
         }
     }
 

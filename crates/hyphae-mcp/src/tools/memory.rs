@@ -179,6 +179,40 @@ pub(crate) fn tool_recall(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Compute auto-consolidation hint (if topic filter is used)
+    // ─────────────────────────────────────────────────────────────────────────────
+    let auto_consolidate_hint = if let Some(t) = topic {
+        if let Ok(memories) = store.get_by_topic(t, project) {
+            if memories.len() > 20 {
+                // Check if span >7 days
+                let oldest = memories.iter().min_by_key(|m| m.created_at);
+                let newest = memories.iter().max_by_key(|m| m.created_at);
+                if let (Some(old_mem), Some(new_mem)) = (oldest, newest) {
+                    let span_days = (new_mem.created_at - old_mem.created_at).num_days();
+                    if span_days > 7 {
+                        Some(format!(
+                            "\n[Hyphae: Topic \"{t}\" has {} memories spanning {span_days} days. \
+                             Auto-consolidation recommended. Run hyphae_memory_consolidate(topic: \"{t}\") \
+                             to merge redundant entries.]",
+                            memories.len()
+                        ))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     // Try hybrid search if embedder is available
     if let Some(emb) = embedder {
         if let Ok(query_emb) = emb.embed(query) {
@@ -239,6 +273,9 @@ pub(crate) fn tool_recall(
                         }
                         output.push('\n');
                     }
+                }
+                if let Some(hint) = auto_consolidate_hint.as_ref() {
+                    output.push_str(hint);
                 }
                 return ToolResult::text(output);
             }
@@ -395,6 +432,10 @@ pub(crate) fn tool_recall(
             }
             output.push('\n');
         }
+    }
+
+    if let Some(hint) = auto_consolidate_hint.as_ref() {
+        output.push_str(hint);
     }
 
     ToolResult::text(output)

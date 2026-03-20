@@ -215,4 +215,30 @@ pub(crate) enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+
+    /// Export memories as training data
+    ExportTrainingData {
+        /// Output format: sft, dpo, or alpaca
+        #[arg(short, long)]
+        format: String,
+        /// Only export specific topic
+        #[arg(short, long)]
+        topic: Option<String>,
+        /// Only export memories with weight above this threshold
+        #[arg(long)]
+        min_weight: Option<f32>,
+    },
+
+    /// Backup the database
+    Backup {
+        /// Output path for backup file (defaults to hyphae-backup-{timestamp}.db)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+
+    /// Restore database from a backup
+    Restore {
+        /// Path to backup file to restore
+        path: PathBuf,
+    },
 }

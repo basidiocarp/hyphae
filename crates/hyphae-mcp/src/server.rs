@@ -29,23 +29,27 @@ fn initial_context(store: &SqliteStore, project: Option<&str>) -> String {
     let proj = project.unwrap_or("default");
 
     // ─────────────────────────────────────────────────────────────────────────────
-    // Session Context (with fallback to session/{project} topic if table is empty)
+    // Session Context (query memories table with session/{project} topic first,
+    // then fallback to sessions table if no memories found)
     // ─────────────────────────────────────────────────────────────────────────────
     let mut session_summaries = Vec::new();
-    let session_ctx = store.session_context(proj, 3).unwrap_or_default();
-    if !session_ctx.is_empty() {
-        for s in &session_ctx {
-            if let Some(summary) = &s.summary {
-                session_summaries.push(summary.clone());
-            }
+
+    // Primary: query session/{project} topic in memories table
+    let session_topic = format!("session/{proj}");
+    if let Ok(session_memories) = store.get_by_topic(&session_topic, project) {
+        for m in session_memories.iter().take(3) {
+            session_summaries.push(m.summary.clone());
         }
     }
-    // Fallback: query session/{project} topic if sessions table is empty
+
+    // Fallback: query sessions table if no memories found
     if session_summaries.is_empty() {
-        let session_topic = format!("session/{proj}");
-        if let Ok(session_memories) = store.get_by_topic(&session_topic, project) {
-            for m in session_memories.iter().take(3) {
-                session_summaries.push(m.summary.clone());
+        let session_ctx = store.session_context(proj, 3).unwrap_or_default();
+        if !session_ctx.is_empty() {
+            for s in &session_ctx {
+                if let Some(summary) = &s.summary {
+                    session_summaries.push(summary.clone());
+                }
             }
         }
     }
