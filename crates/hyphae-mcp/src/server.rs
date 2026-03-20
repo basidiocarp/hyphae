@@ -329,7 +329,8 @@ fn handle_tools_call(
     // ─────────────────────────────────────────────────────────────────────────────
     if tool_name == "hyphae_memory_store" || tool_name == "hyphae_memory_recall" {
         if let Some(topic) = args.get("topic").and_then(|v| v.as_str()) {
-            if let Ok(memories) = <SqliteStore as MemoryStore>::get_by_topic(store, topic, project) {
+            if let Ok(memories) = <SqliteStore as MemoryStore>::get_by_topic(store, topic, project)
+            {
                 if memories.len() >= CONSOLIDATION_THRESHOLD {
                     result = result.with_hint(&format!(
                         "\n[Hyphae: Topic \"{topic}\" has {} memories. Consider running \

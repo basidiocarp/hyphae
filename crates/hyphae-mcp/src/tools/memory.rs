@@ -909,9 +909,15 @@ pub(crate) fn tool_extract_lessons(
     let limit = get_bounded_i64(args, "limit", 10, 1, 50) as usize;
 
     // Read memories from three topics
-    let corrections = store.get_by_topic("corrections", project).unwrap_or_default();
-    let errors_resolved = store.get_by_topic("errors/resolved", project).unwrap_or_default();
-    let tests_resolved = store.get_by_topic("tests/resolved", project).unwrap_or_default();
+    let corrections = store
+        .get_by_topic("corrections", project)
+        .unwrap_or_default();
+    let errors_resolved = store
+        .get_by_topic("errors/resolved", project)
+        .unwrap_or_default();
+    let tests_resolved = store
+        .get_by_topic("tests/resolved", project)
+        .unwrap_or_default();
 
     let mut all_memories = Vec::new();
     all_memories.extend(corrections.iter().map(|m| ("corrections", m)));
@@ -920,8 +926,7 @@ pub(crate) fn tool_extract_lessons(
 
     if all_memories.is_empty() {
         return ToolResult::text(
-            "No memories found in corrections, errors/resolved, or tests/resolved topics."
-                .into(),
+            "No memories found in corrections, errors/resolved, or tests/resolved topics.".into(),
         );
     }
 
@@ -975,9 +980,7 @@ pub(crate) fn tool_extract_lessons(
             if *count >= 2 {
                 format!(
                     "[corrections] When working with '{}': {} — avoided {} times",
-                    keyword,
-                    pattern,
-                    count
+                    keyword, pattern, count
                 )
             } else {
                 continue;
@@ -1032,11 +1035,11 @@ pub(crate) fn tool_extract_lessons(
 /// Extract lowercase keywords from text (words > 3 chars, excluding common words).
 fn extract_keywords(text: &str) -> Vec<String> {
     const STOP_WORDS: &[&str] = &[
-        "the", "and", "or", "but", "not", "in", "on", "at", "to", "for", "of", "is", "was",
-        "are", "be", "been", "being", "have", "has", "had", "do", "does", "did", "will",
-        "would", "should", "could", "may", "might", "can", "must", "a", "an", "as", "with",
-        "from", "by", "this", "that", "these", "those", "i", "you", "he", "she", "it", "we",
-        "they", "what", "which", "who", "when", "where", "why", "how",
+        "the", "and", "or", "but", "not", "in", "on", "at", "to", "for", "of", "is", "was", "are",
+        "be", "been", "being", "have", "has", "had", "do", "does", "did", "will", "would",
+        "should", "could", "may", "might", "can", "must", "a", "an", "as", "with", "from", "by",
+        "this", "that", "these", "those", "i", "you", "he", "she", "it", "we", "they", "what",
+        "which", "who", "when", "where", "why", "how",
     ];
 
     text.split_whitespace()
@@ -1082,6 +1085,9 @@ fn extract_common_pattern(summaries: &[&str]) -> String {
         format!("avoid {}", common.join(" "))
     } else {
         // No shared tokens, just show length and first summary
-        format!("pattern like '{}'", summaries[0].chars().take(50).collect::<String>())
+        format!(
+            "pattern like '{}'",
+            summaries[0].chars().take(50).collect::<String>()
+        )
     }
 }

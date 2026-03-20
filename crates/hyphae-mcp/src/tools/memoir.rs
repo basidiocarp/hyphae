@@ -721,46 +721,38 @@ pub(crate) fn tool_code_query(
 
     let result = match query_type {
         "symbols" => query_symbols(store, &memoir, args),
-        "callers" => {
-            match concept_opt {
-                Some(c) => query_callers(store, &c),
-                None => {
-                    return ToolResult::error(
-                        "missing required symbol for query_type 'callers'".into(),
-                    )
-                }
+        "callers" => match concept_opt {
+            Some(c) => query_callers(store, &c),
+            None => {
+                return ToolResult::error(
+                    "missing required symbol for query_type 'callers'".into(),
+                );
             }
-        }
-        "callees" => {
-            match concept_opt {
-                Some(c) => query_callees(store, &c),
-                None => {
-                    return ToolResult::error(
-                        "missing required symbol for query_type 'callees'".into(),
-                    )
-                }
+        },
+        "callees" => match concept_opt {
+            Some(c) => query_callees(store, &c),
+            None => {
+                return ToolResult::error(
+                    "missing required symbol for query_type 'callees'".into(),
+                );
             }
-        }
-        "implementors" => {
-            match concept_opt {
-                Some(c) => query_implementors(store, &c),
-                None => {
-                    return ToolResult::error(
-                        "missing required symbol for query_type 'implementors'".into(),
-                    )
-                }
+        },
+        "implementors" => match concept_opt {
+            Some(c) => query_implementors(store, &c),
+            None => {
+                return ToolResult::error(
+                    "missing required symbol for query_type 'implementors'".into(),
+                );
             }
-        }
-        "structure" => {
-            match concept_opt {
-                Some(c) => query_structure(store, &c),
-                None => {
-                    return ToolResult::error(
-                        "missing required symbol for query_type 'structure'".into(),
-                    )
-                }
+        },
+        "structure" => match concept_opt {
+            Some(c) => query_structure(store, &c),
+            None => {
+                return ToolResult::error(
+                    "missing required symbol for query_type 'structure'".into(),
+                );
             }
-        }
+        },
         _ => {
             return ToolResult::error(format!(
                 "invalid query_type: {query_type}. Must be one of: symbols, callers, callees, implementors, structure"
