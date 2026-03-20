@@ -896,3 +896,192 @@ pub(crate) fn tool_promote_to_memoir(
 
     ToolResult::text(output)
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Extract lessons from corrections, resolved errors, and test fixes
+// ─────────────────────────────────────────────────────────────────────────────
+
+pub(crate) fn tool_extract_lessons(
+    store: &SqliteStore,
+    args: &Value,
+    project: Option<&str>,
+) -> ToolResult {
+    let limit = get_bounded_i64(args, "limit", 10, 1, 50) as usize;
+
+    // Read memories from three topics
+    let corrections = store.get_by_topic("corrections", project).unwrap_or_default();
+    let errors_resolved = store.get_by_topic("errors/resolved", project).unwrap_or_default();
+    let tests_resolved = store.get_by_topic("tests/resolved", project).unwrap_or_default();
+
+    let mut all_memories = Vec::new();
+    all_memories.extend(corrections.iter().map(|m| ("corrections", m)));
+    all_memories.extend(errors_resolved.iter().map(|m| ("errors/resolved", m)));
+    all_memories.extend(tests_resolved.iter().map(|m| ("tests/resolved", m)));
+
+    if all_memories.is_empty() {
+        return ToolResult::text(
+            "No memories found in corrections, errors/resolved, or tests/resolved topics."
+                .into(),
+        );
+    }
+
+    // Take up to 50 memories total
+    all_memories.truncate(50);
+
+    // Group by keyword overlap: build a map of keywords to memories
+    let mut keyword_groups: std::collections::HashMap<String, Vec<(&str, &Memory)>> =
+        std::collections::HashMap::new();
+
+    for (topic_type, mem) in &all_memories {
+        // Combine keywords and extract keywords from summary
+        let mut keywords = mem.keywords.clone();
+        keywords.extend(extract_keywords(&mem.summary));
+
+        if keywords.is_empty() {
+            // If no keywords, use first few words as synthetic keyword
+            let words: Vec<&str> = mem.summary.split_whitespace().take(3).collect();
+            keywords.push(words.join(" ").to_lowercase());
+        }
+
+        for kw in keywords {
+            let kw_lower = kw.to_lowercase();
+            keyword_groups
+                .entry(kw_lower)
+                .or_default()
+                .push((topic_type, mem));
+        }
+    }
+
+    // Extract lessons: groups with 2+ entries
+    let mut lessons: Vec<String> = Vec::new();
+
+    for (keyword, group_mems) in keyword_groups {
+        if group_mems.len() < 2 {
+            continue;
+        }
+
+        // Count by topic type
+        let mut type_counts = std::collections::HashMap::new();
+        for (topic_type, _) in &group_mems {
+            *type_counts.entry(*topic_type).or_insert(0) += 1;
+        }
+
+        // Extract common pattern from summaries
+        let summaries: Vec<&str> = group_mems.iter().map(|(_, m)| m.summary.as_str()).collect();
+        let pattern = extract_common_pattern(&summaries);
+
+        // Build lesson message based on topic type prevalence
+        let lesson = if let Some(count) = type_counts.get("corrections") {
+            if *count >= 2 {
+                format!(
+                    "[corrections] When working with '{}': {} — avoided {} times",
+                    keyword,
+                    pattern,
+                    count
+                )
+            } else {
+                continue;
+            }
+        } else if let Some(count) = type_counts.get("errors/resolved") {
+            format!(
+                "[errors] Common issue in '{}': {} — resolved {} times",
+                keyword, pattern, count
+            )
+        } else if let Some(count) = type_counts.get("tests/resolved") {
+            format!(
+                "[tests] Test failures in '{}': {} — fixed {} times",
+                keyword, pattern, count
+            )
+        } else {
+            continue;
+        };
+
+        lessons.push(lesson);
+    }
+
+    if lessons.is_empty() {
+        return ToolResult::text(
+            "No patterns found (need 2+ memories per keyword to extract lessons).".into(),
+        );
+    }
+
+    // Sort and limit
+    lessons.sort();
+    lessons.truncate(limit);
+
+    let mut output = format!(
+        "Lessons extracted from {} corrections, {} error resolutions, {} test fixes:\n\n",
+        corrections.len(),
+        errors_resolved.len(),
+        tests_resolved.len()
+    );
+
+    for (i, lesson) in lessons.iter().enumerate() {
+        output.push_str(&format!("{}. {}\n", i + 1, lesson));
+    }
+
+    output.push_str("\nUse these lessons to avoid repeating past mistakes.\n");
+
+    ToolResult::text(output)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper functions for lesson extraction
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Extract lowercase keywords from text (words > 3 chars, excluding common words).
+fn extract_keywords(text: &str) -> Vec<String> {
+    const STOP_WORDS: &[&str] = &[
+        "the", "and", "or", "but", "not", "in", "on", "at", "to", "for", "of", "is", "was",
+        "are", "be", "been", "being", "have", "has", "had", "do", "does", "did", "will",
+        "would", "should", "could", "may", "might", "can", "must", "a", "an", "as", "with",
+        "from", "by", "this", "that", "these", "those", "i", "you", "he", "she", "it", "we",
+        "they", "what", "which", "who", "when", "where", "why", "how",
+    ];
+
+    text.split_whitespace()
+        .map(|w| {
+            w.chars()
+                .filter(|c| c.is_alphanumeric())
+                .collect::<String>()
+                .to_lowercase()
+        })
+        .filter(|w| w.len() > 3 && !STOP_WORDS.contains(&w.as_str()))
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+/// Extract a common pattern from multiple summaries by finding shared phrases.
+fn extract_common_pattern(summaries: &[&str]) -> String {
+    if summaries.is_empty() {
+        return "unknown pattern".to_string();
+    }
+
+    if summaries.len() == 1 {
+        return format!("{}", summaries[0]);
+    }
+
+    // For multiple summaries, extract shared tokens
+    let first_tokens: std::collections::HashSet<String> = summaries[0]
+        .split_whitespace()
+        .map(|w| w.to_lowercase())
+        .collect();
+
+    let mut common: Vec<String> = first_tokens
+        .into_iter()
+        .filter(|token| {
+            summaries[1..]
+                .iter()
+                .all(|s| s.to_lowercase().contains(token))
+        })
+        .collect();
+
+    if !common.is_empty() {
+        common.sort();
+        format!("avoid {}", common.join(" "))
+    } else {
+        // No shared tokens, just show length and first summary
+        format!("pattern like '{}'", summaries[0].chars().take(50).collect::<String>())
+    }
+}

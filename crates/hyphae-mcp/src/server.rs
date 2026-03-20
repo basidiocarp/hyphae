@@ -256,7 +256,11 @@ CROSS-PROJECT: Store universal patterns with project: \"_shared\" so they are vi
 Use hyphae_recall_global when local recall returns no results or when working on cross-project integration.\n\
 \n\
 CONSOLIDATE (hyphae_memory_consolidate): When a topic accumulates 15+ memories, consolidate to merge \
-redundant entries and improve recall quality.";
+redundant entries and improve recall quality.\n\
+\n\
+LEARN (hyphae_extract_lessons): Periodically extract lessons from accumulated corrections, resolved errors, \
+and test fixes. This identifies patterns that help avoid repeating past mistakes. Use at session end or when \
+starting work on a familiar codebase.";
 
 fn handle_tools_list(id: Value, has_embedder: bool) -> JsonRpcResponse {
     JsonRpcResponse::ok(id, tools::tool_definitions(has_embedder))

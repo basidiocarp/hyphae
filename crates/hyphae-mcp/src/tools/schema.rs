@@ -791,5 +791,22 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }));
     }
 
+    tools.push(json!({
+        "name": "hyphae_extract_lessons",
+        "description": "Extract actionable lessons from accumulated corrections, error resolutions, and test fixes. Returns patterns that help avoid repeating past mistakes.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "default": 10,
+                    "minimum": 1,
+                    "maximum": 50,
+                    "description": "Maximum number of lessons to extract"
+                }
+            }
+        }
+    }));
+
     tools
 }
