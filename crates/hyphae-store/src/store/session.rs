@@ -22,23 +22,10 @@ pub struct Session {
 }
 
 impl SqliteStore {
-    /// Ensure the sessions table exists.
+    /// Deprecated: sessions table is now created in schema.rs during init_db().
+    /// This method is kept as a no-op for backward compatibility.
     pub fn ensure_sessions_table(&self) -> HyphaeResult<()> {
-        self.conn
-            .execute_batch(
-                "CREATE TABLE IF NOT EXISTS sessions (
-                    id TEXT PRIMARY KEY,
-                    project TEXT NOT NULL,
-                    task TEXT,
-                    started_at TEXT NOT NULL,
-                    ended_at TEXT,
-                    summary TEXT,
-                    files_modified TEXT,
-                    errors TEXT,
-                    status TEXT NOT NULL DEFAULT 'active'
-                )",
-            )
-            .map_err(|e| HyphaeError::Database(format!("failed to create sessions table: {e}")))
+        Ok(())
     }
 
     /// Start a new session. Returns (session_id, started_at).

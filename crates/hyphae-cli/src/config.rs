@@ -40,6 +40,7 @@ pub struct MemoryConfig {
     pub default_importance: String,
     pub decay_rate: f32,
     pub prune_threshold: f32,
+    pub reject_secrets: bool,
 }
 
 /// Embedding model settings.
@@ -117,6 +118,7 @@ impl Default for MemoryConfig {
             default_importance: "medium".into(),
             decay_rate: 0.95,
             prune_threshold: 0.1,
+            reject_secrets: false,
         }
     }
 }

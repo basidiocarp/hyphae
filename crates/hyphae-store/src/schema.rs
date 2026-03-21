@@ -82,6 +82,22 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         CREATE INDEX IF NOT EXISTS idx_concept_links_source ON concept_links(source_id);
         CREATE INDEX IF NOT EXISTS idx_concept_links_target ON concept_links(target_id);
 
+        -- Session lifecycle tracking
+        CREATE TABLE IF NOT EXISTS sessions (
+            id TEXT PRIMARY KEY,
+            project TEXT NOT NULL,
+            task TEXT,
+            started_at TEXT NOT NULL,
+            ended_at TEXT,
+            summary TEXT,
+            files_modified TEXT,
+            errors TEXT,
+            status TEXT NOT NULL DEFAULT 'active'
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project);
+        CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at);
+
         -- RAG tables
         CREATE TABLE IF NOT EXISTS documents (
             id TEXT PRIMARY KEY,

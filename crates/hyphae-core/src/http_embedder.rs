@@ -2,6 +2,9 @@
 // HTTP Embedder — calls OpenAI-compatible or Ollama embedding APIs
 // ─────────────────────────────────────────────────────────────────────────────
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use serde_json::Value;
 
 use crate::embedder::Embedder;
@@ -20,7 +23,7 @@ use crate::error::{HyphaeError, HyphaeResult};
 pub struct HttpEmbedder {
     url: String,
     model: String,
-    dims: usize,
+    dims: Arc<AtomicUsize>,
     api_format: ApiFormat,
 }
 
@@ -64,7 +67,7 @@ impl HttpEmbedder {
         Self {
             url,
             model,
-            dims: 0, // discovered on first call
+            dims: Arc::new(AtomicUsize::new(0)), // discovered on first call
             api_format,
         }
     }
@@ -203,15 +206,19 @@ impl Embedder for HttpEmbedder {
     }
 
     fn dimensions(&self) -> usize {
-        if self.dims > 0 {
-            return self.dims;
+        let cached = self.dims.load(Ordering::Relaxed);
+        if cached > 0 {
+            return cached;
         }
         // Probe dimensions by embedding a short text.
         // Fall back to common default if probe fails.
-        match self.embed("dimension probe") {
+        let result = match self.embed("dimension probe") {
             Ok(vec) => vec.len(),
             Err(_) => 768,
-        }
+        };
+        // Store the probed dimensions for next time
+        self.dims.store(result, Ordering::Relaxed);
+        result
     }
 }
 

@@ -311,6 +311,33 @@ fn main() -> Result<()> {
         Commands::Backup { .. } | Commands::Restore { .. } => {
             unreachable!("handled in early-return block")
         }
+
+        Commands::AuditSecrets { topic, detailed } => {
+            commands::audit_secrets::cmd_audit_secrets(
+                &store,
+                topic.clone(),
+                detailed,
+                resolved_project,
+            )?;
+        }
+
+        Commands::Purge {
+            project,
+            before,
+            dry_run,
+        } => {
+            commands::purge::cmd_purge(
+                &store,
+                project.clone(),
+                before.clone(),
+                dry_run,
+                resolved_project,
+            )?;
+        }
+
+        Commands::Changelog { days, since } => {
+            commands::changelog::cmd_changelog(&store, days, since.clone(), resolved_project)?;
+        }
     }
 
     Ok(())

@@ -14,6 +14,25 @@ use super::helpers::{
 };
 use super::search::sanitize_fts_query;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Relation Normalization
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Normalize a freeform relation string to a canonical type.
+fn normalize_relation(relation: &str) -> String {
+    let lower = relation.to_lowercase();
+    match lower.as_str() {
+        "calls" | "invokes" => "calls".to_string(),
+        "implements" => "implements".to_string(),
+        "imports" | "uses" => "imports".to_string(),
+        "extends" | "inherits" => "extends".to_string(),
+        "contains" | "has" => "contains".to_string(),
+        "tests" => "tests".to_string(),
+        "depends_on" | "depends-on" | "requires" => "depends_on".to_string(),
+        _ => lower,
+    }
+}
+
 impl MemoirStore for SqliteStore {
     fn create_memoir(&self, memoir: Memoir) -> HyphaeResult<MemoirId> {
         self.conn
@@ -373,6 +392,7 @@ impl MemoirStore for SqliteStore {
     }
 
     fn add_link(&self, link: ConceptLink) -> HyphaeResult<LinkId> {
+        let normalized_relation = normalize_relation(&link.relation.to_string());
         self.conn
             .execute(
                 "INSERT INTO concept_links (id, source_id, target_id, relation, weight, created_at)
@@ -381,7 +401,7 @@ impl MemoirStore for SqliteStore {
                     link.id.as_ref(),
                     link.source_id.as_ref(),
                     link.target_id.as_ref(),
-                    link.relation.to_string(),
+                    normalized_relation,
                     link.weight.value(),
                     link.created_at.to_rfc3339(),
                 ],

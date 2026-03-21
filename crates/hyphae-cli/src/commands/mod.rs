@@ -1,5 +1,7 @@
+pub mod audit_secrets;
 pub mod backup;
 pub mod bench;
+pub mod changelog;
 pub mod docs;
 pub mod doctor;
 pub mod evaluate;
@@ -9,6 +11,7 @@ pub mod memoir;
 pub mod memory;
 pub mod project;
 pub mod prune;
+pub mod purge;
 pub mod self_update;
 pub mod transcript;
 

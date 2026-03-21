@@ -248,4 +248,37 @@ pub(crate) enum Commands {
         /// Path to backup file to restore
         path: PathBuf,
     },
+
+    /// Scan memories for common secret patterns
+    AuditSecrets {
+        /// Only check memories in this topic
+        #[arg(short, long)]
+        topic: Option<String>,
+        /// Show details for each finding
+        #[arg(long)]
+        detailed: bool,
+    },
+
+    /// Purge memories and related data
+    Purge {
+        /// Delete all memories for a specific project
+        #[arg(long)]
+        project: Option<String>,
+        /// Delete all memories created before this date (YYYY-MM-DD)
+        #[arg(long)]
+        before: Option<String>,
+        /// Show what would be deleted without deleting
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// View recent activity and lessons learned
+    Changelog {
+        /// Include activity from the last N days
+        #[arg(long, default_value = "7")]
+        days: i64,
+        /// Only show activity since this date (YYYY-MM-DD HH:MM:SS)
+        #[arg(long)]
+        since: Option<String>,
+    },
 }
