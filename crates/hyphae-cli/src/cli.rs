@@ -259,17 +259,20 @@ pub(crate) enum Commands {
         detailed: bool,
     },
 
-    /// Purge memories and related data
+    /// Purge memories and related data (GDPR/retention compliance)
     Purge {
         /// Delete all memories for a specific project
         #[arg(long)]
         project: Option<String>,
-        /// Delete all memories created before this date (YYYY-MM-DD)
+        /// Delete all memories created before this date (YYYY-MM-DD or ISO 8601)
         #[arg(long)]
         before: Option<String>,
         /// Show what would be deleted without deleting
         #[arg(long)]
         dry_run: bool,
+        /// Skip confirmation prompt
+        #[arg(long)]
+        force: bool,
     },
 
     /// View recent activity and lessons learned

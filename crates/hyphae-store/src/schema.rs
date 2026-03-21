@@ -129,7 +129,9 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
     )
     .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
-    // Check if FTS table already exists (memories)
+    // ─────────────────────────────────────────────────────────────────────────
+    // Check and migrate memories_fts table
+    // ─────────────────────────────────────────────────────────────────────────
     let fts_exists: bool = tx
         .query_row(
             "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='memories_fts'",
@@ -146,29 +148,81 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
                 topic,
                 summary,
                 keywords,
+                project UNINDEXED,
                 content='memories',
                 content_rowid='rowid'
             );
 
             CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN
-                INSERT INTO memories_fts(rowid, id, topic, summary, keywords)
-                VALUES (new.rowid, new.id, new.topic, new.summary, new.keywords);
+                INSERT INTO memories_fts(rowid, id, topic, summary, keywords, project)
+                VALUES (new.rowid, new.id, new.topic, new.summary, new.keywords, new.project);
             END;
 
             CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN
-                INSERT INTO memories_fts(memories_fts, rowid, id, topic, summary, keywords)
-                VALUES('delete', old.rowid, old.id, old.topic, old.summary, old.keywords);
+                INSERT INTO memories_fts(memories_fts, rowid, id, topic, summary, keywords, project)
+                VALUES('delete', old.rowid, old.id, old.topic, old.summary, old.keywords, old.project);
             END;
 
             CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN
-                INSERT INTO memories_fts(memories_fts, rowid, id, topic, summary, keywords)
-                VALUES('delete', old.rowid, old.id, old.topic, old.summary, old.keywords);
-                INSERT INTO memories_fts(rowid, id, topic, summary, keywords)
-                VALUES (new.rowid, new.id, new.topic, new.summary, new.keywords);
+                INSERT INTO memories_fts(memories_fts, rowid, id, topic, summary, keywords, project)
+                VALUES('delete', old.rowid, old.id, old.topic, old.summary, old.keywords, old.project);
+                INSERT INTO memories_fts(rowid, id, topic, summary, keywords, project)
+                VALUES (new.rowid, new.id, new.topic, new.summary, new.keywords, new.project);
             END;
             ",
         )
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    } else {
+        // ─────────────────────────────────────────────────────────────────────
+        // Migration: check if memories_fts has project column, if not rebuild
+        // ─────────────────────────────────────────────────────────────────────
+        let has_fts_project: bool = tx
+            .prepare("SELECT COUNT(*) FROM pragma_table_info('memories_fts') WHERE name='project'")
+            .and_then(|mut s| s.query_row([], |row| row.get(0)))
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        if !has_fts_project {
+            // FTS5 tables cannot be ALTERed, so we must drop and recreate
+            tx.execute_batch(
+                "
+                DROP TRIGGER IF EXISTS memories_ai;
+                DROP TRIGGER IF EXISTS memories_ad;
+                DROP TRIGGER IF EXISTS memories_au;
+                DROP TABLE memories_fts;
+
+                CREATE VIRTUAL TABLE memories_fts USING fts5(
+                    id,
+                    topic,
+                    summary,
+                    keywords,
+                    project UNINDEXED,
+                    content='memories',
+                    content_rowid='rowid'
+                );
+
+                INSERT INTO memories_fts(rowid, id, topic, summary, keywords, project)
+                SELECT rowid, id, topic, summary, keywords, project FROM memories;
+
+                CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN
+                    INSERT INTO memories_fts(rowid, id, topic, summary, keywords, project)
+                    VALUES (new.rowid, new.id, new.topic, new.summary, new.keywords, new.project);
+                END;
+
+                CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN
+                    INSERT INTO memories_fts(memories_fts, rowid, id, topic, summary, keywords, project)
+                    VALUES('delete', old.rowid, old.id, old.topic, old.summary, old.keywords, old.project);
+                END;
+
+                CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN
+                    INSERT INTO memories_fts(memories_fts, rowid, id, topic, summary, keywords, project)
+                    VALUES('delete', old.rowid, old.id, old.topic, old.summary, old.keywords, old.project);
+                    INSERT INTO memories_fts(rowid, id, topic, summary, keywords, project)
+                    VALUES (new.rowid, new.id, new.topic, new.summary, new.keywords, new.project);
+                END;
+                ",
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        }
     }
 
     // Check if concepts FTS table already exists

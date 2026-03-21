@@ -223,14 +223,27 @@ impl std::str::FromStr for Relation {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "part_of" | "partof" => Ok(Self::PartOf),
-            "depends_on" | "dependson" => Ok(Self::DependsOn),
-            "related_to" | "relatedto" => Ok(Self::RelatedTo),
+            // PartOf and Contains are inverses; normalize to PartOf
+            "part_of" | "partof" | "contains" | "has" | "owns" | "includes" => Ok(Self::PartOf),
+            // DependsOn synonyms
+            "depends_on" | "dependson" | "depends-on" | "imports" | "uses" | "requires" => {
+                Ok(Self::DependsOn)
+            }
+            // RelatedTo synonyms
+            "related_to" | "relatedto" | "references" | "refers_to" | "refers-to" => {
+                Ok(Self::RelatedTo)
+            }
+            // Contradicts
             "contradicts" => Ok(Self::Contradicts),
-            "refines" => Ok(Self::Refines),
+            // Refines
+            "refines" | "implements" | "realizes" | "satisfies" => Ok(Self::Refines),
+            // AlternativeTo
             "alternative_to" | "alternativeto" => Ok(Self::AlternativeTo),
+            // CausedBy
             "caused_by" | "causedby" => Ok(Self::CausedBy),
+            // InstanceOf
             "instance_of" | "instanceof" => Ok(Self::InstanceOf),
+            // SupersededBy
             "superseded_by" | "supersededby" => Ok(Self::SupersededBy),
             _ => Err(format!("invalid relation: {s}")),
         }
@@ -448,5 +461,70 @@ mod tests {
         let label = result.unwrap();
         assert_eq!(label.namespace, "tag");
         assert_eq!(label.value, "simple");
+    }
+
+    #[test]
+    fn test_relation_part_of_synonyms() {
+        // Test canonical form
+        assert_eq!("part_of".parse::<Relation>().unwrap(), Relation::PartOf);
+        assert_eq!("partof".parse::<Relation>().unwrap(), Relation::PartOf);
+
+        // Test synonyms: contains, has, owns, includes
+        assert_eq!("contains".parse::<Relation>().unwrap(), Relation::PartOf);
+        assert_eq!("has".parse::<Relation>().unwrap(), Relation::PartOf);
+        assert_eq!("owns".parse::<Relation>().unwrap(), Relation::PartOf);
+        assert_eq!("includes".parse::<Relation>().unwrap(), Relation::PartOf);
+    }
+
+    #[test]
+    fn test_relation_depends_on_synonyms() {
+        // Test canonical form
+        assert_eq!("depends_on".parse::<Relation>().unwrap(), Relation::DependsOn);
+        assert_eq!("dependson".parse::<Relation>().unwrap(), Relation::DependsOn);
+        assert_eq!("depends-on".parse::<Relation>().unwrap(), Relation::DependsOn);
+
+        // Test synonyms: imports, uses, requires
+        assert_eq!("imports".parse::<Relation>().unwrap(), Relation::DependsOn);
+        assert_eq!("uses".parse::<Relation>().unwrap(), Relation::DependsOn);
+        assert_eq!("requires".parse::<Relation>().unwrap(), Relation::DependsOn);
+    }
+
+    #[test]
+    fn test_relation_related_to_synonyms() {
+        // Test canonical form
+        assert_eq!("related_to".parse::<Relation>().unwrap(), Relation::RelatedTo);
+        assert_eq!("relatedto".parse::<Relation>().unwrap(), Relation::RelatedTo);
+
+        // Test synonyms: references, refers_to
+        assert_eq!("references".parse::<Relation>().unwrap(), Relation::RelatedTo);
+        assert_eq!("refers_to".parse::<Relation>().unwrap(), Relation::RelatedTo);
+        assert_eq!("refers-to".parse::<Relation>().unwrap(), Relation::RelatedTo);
+    }
+
+    #[test]
+    fn test_relation_refines_synonyms() {
+        // Test canonical form
+        assert_eq!("refines".parse::<Relation>().unwrap(), Relation::Refines);
+
+        // Test synonyms: implements, realizes, satisfies
+        assert_eq!("implements".parse::<Relation>().unwrap(), Relation::Refines);
+        assert_eq!("realizes".parse::<Relation>().unwrap(), Relation::Refines);
+        assert_eq!("satisfies".parse::<Relation>().unwrap(), Relation::Refines);
+    }
+
+    #[test]
+    fn test_relation_case_insensitive() {
+        // Test case insensitivity
+        assert_eq!("DEPENDS_ON".parse::<Relation>().unwrap(), Relation::DependsOn);
+        assert_eq!("Depends_On".parse::<Relation>().unwrap(), Relation::DependsOn);
+        assert_eq!("CONTAINS".parse::<Relation>().unwrap(), Relation::PartOf);
+        assert_eq!("Contains".parse::<Relation>().unwrap(), Relation::PartOf);
+    }
+
+    #[test]
+    fn test_relation_invalid() {
+        // Test that truly invalid relations still error
+        assert!("invalid_relation".parse::<Relation>().is_err());
+        assert!("bogus".parse::<Relation>().is_err());
     }
 }

@@ -126,6 +126,7 @@ pub fn run_server(
     embedder: Option<&dyn Embedder>,
     compact: bool,
     project: Option<String>,
+    reject_secrets: bool,
 ) -> anyhow::Result<()> {
     // Auto-detect project from spore if not explicitly provided
     let project = project.or_else(|| {
@@ -190,6 +191,7 @@ pub fn run_server(
                 compact,
                 project.as_deref(),
                 &mut calls_since_store,
+                reject_secrets,
             ),
             other => JsonRpcResponse::method_not_found(id, other),
         };
@@ -281,6 +283,7 @@ fn handle_tools_call(
     compact: bool,
     project: Option<&str>,
     calls_since_store: &mut u32,
+    reject_secrets: bool,
 ) -> JsonRpcResponse {
     let params = match params {
         Some(p) => p,
@@ -305,7 +308,7 @@ fn handle_tools_call(
         *calls_since_store += 1;
     }
 
-    let mut result = tools::call_tool(store, embedder, tool_name, &args, compact, project);
+    let mut result = tools::call_tool(store, embedder, tool_name, &args, compact, project, reject_secrets);
 
     // ─────────────────────────────────────────────────────────────────────────────
     // Gap 4: Escalating store nudge
@@ -397,7 +400,7 @@ mod tests {
     fn test_handle_tools_call_missing_params() {
         let store = test_store();
         let mut counter = 0;
-        let resp = handle_tools_call(json!(3), &None, &store, None, false, None, &mut counter);
+        let resp = handle_tools_call(json!(3), &None, &store, None, false, None, &mut counter, false);
         assert!(resp.error.is_some());
         assert_eq!(resp.error.unwrap().code, -32602);
     }
@@ -407,7 +410,7 @@ mod tests {
         let store = test_store();
         let mut counter = 0;
         let params = Some(json!({"arguments": {}}));
-        let resp = handle_tools_call(json!(4), &params, &store, None, false, None, &mut counter);
+        let resp = handle_tools_call(json!(4), &params, &store, None, false, None, &mut counter, false);
         assert!(resp.error.is_some());
         assert_eq!(resp.error.unwrap().code, -32602);
     }
@@ -417,7 +420,7 @@ mod tests {
         let store = test_store();
         let mut counter = 0;
         let params = Some(json!({"name": "nonexistent", "arguments": {}}));
-        let resp = handle_tools_call(json!(5), &params, &store, None, false, None, &mut counter);
+        let resp = handle_tools_call(json!(5), &params, &store, None, false, None, &mut counter, false);
         // Unknown tool returns a result with is_error, not a JSON-RPC error
         let result = resp.result.unwrap();
         assert_eq!(result["isError"], true);
@@ -435,7 +438,7 @@ mod tests {
                 "importance": "medium"
             }
         }));
-        let resp = handle_tools_call(json!(6), &params, &store, None, false, None, &mut counter);
+        let resp = handle_tools_call(json!(6), &params, &store, None, false, None, &mut counter, false);
         assert!(resp.error.is_none());
         // Store call resets counter
         assert_eq!(counter, 0);
@@ -449,7 +452,7 @@ mod tests {
             "name": "hyphae_memory_recall",
             "arguments": {"query": "test"}
         }));
-        let resp = handle_tools_call(json!(7), &params, &store, None, false, None, &mut counter);
+        let resp = handle_tools_call(json!(7), &params, &store, None, false, None, &mut counter, false);
         let result = resp.result.unwrap();
         let text = result["content"][0]["text"].as_str().unwrap();
         assert!(text.contains("tool calls since last store"));
@@ -463,7 +466,7 @@ mod tests {
             "name": "hyphae_memory_recall",
             "arguments": {"query": "test"}
         }));
-        let resp = handle_tools_call(json!(8), &params, &store, None, false, None, &mut counter);
+        let resp = handle_tools_call(json!(8), &params, &store, None, false, None, &mut counter, false);
         let result = resp.result.unwrap();
         let text = result["content"][0]["text"].as_str().unwrap();
         assert!(!text.contains("tool calls since last store"));
@@ -477,9 +480,9 @@ mod tests {
             "name": "hyphae_memory_recall",
             "arguments": {"query": "test"}
         }));
-        handle_tools_call(json!(9), &params, &store, None, false, None, &mut counter);
+        handle_tools_call(json!(9), &params, &store, None, false, None, &mut counter, false);
         assert_eq!(counter, 1);
-        handle_tools_call(json!(10), &params, &store, None, false, None, &mut counter);
+        handle_tools_call(json!(10), &params, &store, None, false, None, &mut counter, false);
         assert_eq!(counter, 2);
     }
 }

@@ -36,10 +36,11 @@ pub fn call_tool(
     args: &Value,
     compact: bool,
     project: Option<&str>,
+    reject_secrets: bool,
 ) -> ToolResult {
     match name {
         // Memory tools
-        "hyphae_memory_store" => memory::tool_store(store, embedder, args, compact, project),
+        "hyphae_memory_store" => memory::tool_store(store, embedder, args, compact, project, reject_secrets),
         "hyphae_memory_recall" => memory::tool_recall(store, embedder, args, compact, project),
         "hyphae_memory_forget" => memory::tool_forget(store, args),
         "hyphae_memory_update" => memory::tool_update(store, embedder, args),
@@ -224,7 +225,7 @@ mod tests {
     #[test]
     fn test_unknown_tool_returns_error() {
         let store = test_store();
-        let result = call_tool(&store, None, "nonexistent_tool", &json!({}), false, None);
+        let result = call_tool(&store, None, "nonexistent_tool", &json!({}), false, None, false);
         assert!(result.is_error);
         assert!(result.content[0].text.contains("unknown tool"));
     }
@@ -239,6 +240,7 @@ mod tests {
             &json!({"content": "hello"}),
             false,
             None,
+            false,
         );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("topic"));
@@ -254,6 +256,7 @@ mod tests {
             &json!({"topic": "test"}),
             false,
             None,
+            false,
         );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("content"));
@@ -269,6 +272,7 @@ mod tests {
             &json!({}),
             false,
             None,
+            false,
         );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("query"));
@@ -284,6 +288,7 @@ mod tests {
             &json!({"query": "anything"}),
             false,
             None,
+            false,
         );
         assert!(!result.is_error);
         assert!(result.content[0].text.contains("No memories"));
@@ -299,6 +304,7 @@ mod tests {
             &json!({}),
             false,
             None,
+            false,
         );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("id"));
@@ -314,6 +320,7 @@ mod tests {
             &json!({"id": "does-not-exist"}),
             false,
             None,
+            false,
         );
         assert!(result.is_error);
     }
@@ -328,6 +335,7 @@ mod tests {
             &json!({"topic": "test-project", "content": "Uses Rust and SQLite"}),
             false,
             None,
+            false,
         );
         assert!(!store_result.is_error);
         assert!(store_result.content[0].text.contains("Stored memory"));
@@ -339,6 +347,7 @@ mod tests {
             &json!({"query": "Rust SQLite"}),
             false,
             None,
+            false,
         );
         assert!(!recall_result.is_error);
         assert!(recall_result.content[0].text.contains("Rust"));
@@ -354,6 +363,7 @@ mod tests {
             &json!({"topic": "t", "content": "c"}),
             true,
             None,
+            false,
         );
         assert!(!result.is_error);
         assert!(result.content[0].text.starts_with("ok:"));
@@ -369,6 +379,7 @@ mod tests {
             &json!({"topic": "proj", "content": "Rust memory system"}),
             false,
             None,
+            false,
         );
         let result = call_tool(
             &store,
@@ -377,6 +388,7 @@ mod tests {
             &json!({"query": "Rust memory"}),
             true,
             None,
+            false,
         );
         assert!(!result.is_error);
         assert!(result.content[0].text.contains("[proj]"));
@@ -385,7 +397,7 @@ mod tests {
     #[test]
     fn test_stats_empty() {
         let store = test_store();
-        let result = call_tool(&store, None, "hyphae_memory_stats", &json!({}), false, None);
+        let result = call_tool(&store, None, "hyphae_memory_stats", &json!({}), false, None, false);
         assert!(!result.is_error);
         assert!(result.content[0].text.contains("Memories: 0"));
     }
@@ -400,6 +412,7 @@ mod tests {
             &json!({}),
             false,
             None,
+            false,
         );
         assert!(!result.is_error);
         assert!(result.content[0].text.contains("No topics"));
@@ -415,6 +428,7 @@ mod tests {
             &json!({}),
             false,
             None,
+            false,
         );
         assert!(!result.is_error);
         assert!(result.content[0].text.contains("No topics"));
@@ -430,6 +444,7 @@ mod tests {
             &json!({"id": "x"}),
             false,
             None,
+            false,
         );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("content"));
@@ -445,6 +460,7 @@ mod tests {
             &json!({"id": "fake", "content": "new"}),
             false,
             None,
+            false,
         );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("not found"));
@@ -460,9 +476,10 @@ mod tests {
             &json!({"topic": "'; DROP TABLE memories;--", "content": "pwned"}),
             false,
             None,
+            false,
         );
         assert!(!result.is_error);
-        let stats = call_tool(&store, None, "hyphae_memory_stats", &json!({}), false, None);
+        let stats = call_tool(&store, None, "hyphae_memory_stats", &json!({}), false, None, false);
         assert!(stats.content[0].text.contains("Memories: 1"));
     }
 
@@ -476,6 +493,7 @@ mod tests {
             &json!({"topic": "safe", "content": "normal data"}),
             false,
             None,
+            false,
         );
         let result = call_tool(
             &store,
@@ -484,6 +502,7 @@ mod tests {
             &json!({"query": "') OR 1=1 --"}),
             false,
             None,
+            false,
         );
         assert!(!result.is_error);
     }
@@ -501,6 +520,7 @@ mod tests {
             }),
             false,
             None,
+            false,
         );
         assert!(!result.is_error);
         let recall = call_tool(
@@ -510,6 +530,7 @@ mod tests {
             &json!({"query": "script alert"}),
             false,
             None,
+            false,
         );
         assert!(recall.content[0].text.contains("<script>"));
     }
@@ -526,6 +547,7 @@ mod tests {
             &json!({"topic": "big", "content": within_limit}),
             false,
             None,
+            false,
         );
         assert!(!result.is_error);
         // Content exceeding 32KB should be rejected
@@ -537,6 +559,7 @@ mod tests {
             &json!({"topic": "big", "content": over_limit}),
             false,
             None,
+            false,
         );
         assert!(result2.is_error);
         assert!(result2.content[0].text.contains("content"));
@@ -552,9 +575,10 @@ mod tests {
             &json!({"name": "'; DROP TABLE memoirs;--", "description": "test"}),
             false,
             None,
+            false,
         );
         assert!(!result.is_error);
-        let list = call_tool(&store, None, "hyphae_memoir_list", &json!({}), false, None);
+        let list = call_tool(&store, None, "hyphae_memoir_list", &json!({}), false, None, false);
         assert!(!list.is_error);
         assert!(list.content[0].text.contains("DROP TABLE"));
     }
@@ -570,10 +594,11 @@ mod tests {
                 &json!({"topic": "perf", "content": format!("item {i}")}),
                 true,
                 None,
+                false,
             );
             assert!(!result.is_error);
         }
-        let stats = call_tool(&store, None, "hyphae_memory_stats", &json!({}), false, None);
+        let stats = call_tool(&store, None, "hyphae_memory_stats", &json!({}), false, None, false);
         assert!(stats.content[0].text.contains("Memories: 50"));
     }
 
@@ -588,6 +613,7 @@ mod tests {
                 &json!({"topic": topic, "content": format!("data for {topic}")}),
                 false,
                 None,
+                false,
             );
         }
         let result = call_tool(
@@ -597,6 +623,7 @@ mod tests {
             &json!({"query": "data", "topic": "beta"}),
             false,
             None,
+            false,
         );
         assert!(!result.is_error);
         assert!(result.content[0].text.contains("beta"));
@@ -614,6 +641,7 @@ mod tests {
                 &json!({"topic": "consolidate-me", "content": format!("detail {i}")}),
                 false,
                 None,
+                false,
             );
         }
         let result = call_tool(
@@ -623,9 +651,10 @@ mod tests {
             &json!({"topic": "consolidate-me", "summary": "All 10 details merged"}),
             false,
             None,
+            false,
         );
         assert!(!result.is_error);
-        let stats = call_tool(&store, None, "hyphae_memory_stats", &json!({}), false, None);
+        let stats = call_tool(&store, None, "hyphae_memory_stats", &json!({}), false, None, false);
         assert!(stats.content[0].text.contains("Memories: 1"));
     }
 
@@ -649,12 +678,13 @@ mod tests {
                 &json!({"topic": topic, "content": "path traversal attempt"}),
                 false,
                 None,
+                false,
             );
             // Should either store safely (topic is just a string label) or reject
             // but must NOT crash or access filesystem
             assert!(!result.content.is_empty());
         }
-        let stats = call_tool(&store, None, "hyphae_memory_stats", &json!({}), false, None);
+        let stats = call_tool(&store, None, "hyphae_memory_stats", &json!({}), false, None, false);
         assert!(!stats.is_error);
     }
 
@@ -669,6 +699,7 @@ mod tests {
             &json!({"topic": "huge", "content": huge_content}),
             false,
             None,
+            false,
         );
         // Should either store or reject gracefully, never panic
         assert!(!result.content.is_empty());
@@ -684,6 +715,7 @@ mod tests {
             &json!({"topic": "before\0after", "content": "null byte topic"}),
             false,
             None,
+            false,
         );
         assert!(!result.content.is_empty());
     }
@@ -698,6 +730,7 @@ mod tests {
             &json!({"topic": "test", "content": "start\0middle\0end"}),
             false,
             None,
+            false,
         );
         assert!(!result.content.is_empty());
     }
@@ -712,6 +745,7 @@ mod tests {
             &json!({"topic": "safe", "content": "normal data"}),
             false,
             None,
+            false,
         );
         let result = call_tool(
             &store,
@@ -720,6 +754,7 @@ mod tests {
             &json!({"query": "normal\0injected"}),
             false,
             None,
+            false,
         );
         assert!(!result.content.is_empty());
     }
@@ -743,10 +778,11 @@ mod tests {
                 &json!({"topic": s, "content": format!("content with {s}")}),
                 false,
                 None,
+                false,
             );
             assert!(!result.is_error, "Failed on unicode string: {:?}", s);
         }
-        let stats = call_tool(&store, None, "hyphae_memory_stats", &json!({}), false, None);
+        let stats = call_tool(&store, None, "hyphae_memory_stats", &json!({}), false, None, false);
         assert!(!stats.is_error);
     }
 
@@ -767,6 +803,7 @@ mod tests {
             }),
             false,
             None,
+            false,
         );
         // Should store normally, ignoring unknown fields
         assert!(!result.is_error);
@@ -777,6 +814,7 @@ mod tests {
             &json!({"query": "legit"}),
             false,
             None,
+            false,
         );
         assert!(!recall.is_error);
         assert!(recall.content[0].text.contains("legit"));
@@ -792,6 +830,7 @@ mod tests {
             &json!({"topic": "", "content": "empty topic"}),
             false,
             None,
+            false,
         );
         // Should either reject or store; must not panic
         assert!(!result.content.is_empty());
@@ -807,6 +846,7 @@ mod tests {
             &json!({"topic": "   \t\n  ", "content": "   \n\t  "}),
             false,
             None,
+            false,
         );
         // Should either reject or store; must not panic
         assert!(!result.content.is_empty());
@@ -822,6 +862,7 @@ mod tests {
             &json!({"query": "   \t\n  "}),
             false,
             None,
+            false,
         );
         // Should return empty or error, not crash
         assert!(!result.content.is_empty());
@@ -837,11 +878,12 @@ mod tests {
             &json!({"name": "../../../etc/passwd", "description": "traversal"}),
             false,
             None,
+            false,
         );
         // Should store as a label, not access filesystem
         assert!(!result.content.is_empty());
         if !result.is_error {
-            let list = call_tool(&store, None, "hyphae_memoir_list", &json!({}), false, None);
+            let list = call_tool(&store, None, "hyphae_memoir_list", &json!({}), false, None, false);
             assert!(!list.is_error);
         }
     }
@@ -859,6 +901,7 @@ mod tests {
             &json!({"topic": "test", "content": oversized}),
             false,
             None,
+            false,
         );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("content"));
@@ -876,6 +919,7 @@ mod tests {
             &json!({"topic": "clamp-test", "content": "some data"}),
             false,
             None,
+            false,
         );
         // A negative limit should be clamped to 1 (minimum), not panic or error
         let result = call_tool(
@@ -885,6 +929,7 @@ mod tests {
             &json!({"query": "some data", "limit": -5}),
             false,
             None,
+            false,
         );
         assert!(!result.is_error);
     }
@@ -899,6 +944,7 @@ mod tests {
             &json!({"topic": "   \t  ", "content": "some content"}),
             false,
             None,
+            false,
         );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("topic"));
@@ -916,6 +962,7 @@ mod tests {
             &json!({"name": "my-memoir", "description": "first"}),
             false,
             None,
+            false,
         );
         assert!(!result1.is_error);
         assert!(result1.content[0].text.contains("my-memoir"));
@@ -927,6 +974,7 @@ mod tests {
             &json!({"name": "my-memoir", "description": "duplicate"}),
             false,
             None,
+            false,
         );
         assert!(result2.is_error);
     }
@@ -945,6 +993,7 @@ mod tests {
             }),
             false,
             None,
+            false,
         );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("not found"));
@@ -960,6 +1009,7 @@ mod tests {
             &json!({"name": "refine-memoir", "description": "for refine test"}),
             false,
             None,
+            false,
         );
         call_tool(
             &store,
@@ -972,6 +1022,7 @@ mod tests {
             }),
             false,
             None,
+            false,
         );
 
         let refine_result = call_tool(
@@ -985,6 +1036,7 @@ mod tests {
             }),
             false,
             None,
+            false,
         );
         assert!(!refine_result.is_error);
         // Revision should have incremented; initial is 1, after refine should be 2
@@ -1001,6 +1053,7 @@ mod tests {
             &json!({"name": "link-memoir", "description": "for link test"}),
             false,
             None,
+            false,
         );
 
         let result = call_tool(
@@ -1015,6 +1068,7 @@ mod tests {
             }),
             false,
             None,
+            false,
         );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("not found"));
@@ -1030,6 +1084,7 @@ mod tests {
             &json!({"name": "self-link-memoir", "description": "for self-link test"}),
             false,
             None,
+            false,
         );
         call_tool(
             &store,
@@ -1042,6 +1097,7 @@ mod tests {
             }),
             false,
             None,
+            false,
         );
 
         let result = call_tool(
@@ -1056,6 +1112,7 @@ mod tests {
             }),
             false,
             None,
+            false,
         );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("itself"));
@@ -1071,6 +1128,7 @@ mod tests {
             &json!({"name": "inspect-memoir", "description": "for inspect test"}),
             false,
             None,
+            false,
         );
         call_tool(
             &store,
@@ -1083,6 +1141,7 @@ mod tests {
             }),
             false,
             None,
+            false,
         );
         call_tool(
             &store,
@@ -1095,6 +1154,7 @@ mod tests {
             }),
             false,
             None,
+            false,
         );
         call_tool(
             &store,
@@ -1108,6 +1168,7 @@ mod tests {
             }),
             false,
             None,
+            false,
         );
 
         let result = call_tool(
@@ -1117,6 +1178,7 @@ mod tests {
             &json!({"memoir": "inspect-memoir", "name": "Alpha", "depth": 1}),
             false,
             None,
+            false,
         );
         assert!(!result.is_error);
         let text = &result.content[0].text;
@@ -1135,6 +1197,7 @@ mod tests {
             &json!({"name": "search-memoir", "description": "for search test"}),
             false,
             None,
+            false,
         );
         call_tool(
             &store,
@@ -1147,6 +1210,7 @@ mod tests {
             }),
             false,
             None,
+            false,
         );
         call_tool(
             &store,
@@ -1159,6 +1223,7 @@ mod tests {
             }),
             false,
             None,
+            false,
         );
 
         let result = call_tool(
@@ -1168,6 +1233,7 @@ mod tests {
             &json!({"memoir": "search-memoir", "query": "fungal"}),
             false,
             None,
+            false,
         );
         assert!(!result.is_error);
         let text = &result.content[0].text;
@@ -1185,6 +1251,7 @@ mod tests {
             &json!({"name": "memoir-one", "description": "first"}),
             false,
             None,
+            false,
         );
         call_tool(
             &store,
@@ -1193,6 +1260,7 @@ mod tests {
             &json!({"name": "memoir-two", "description": "second"}),
             false,
             None,
+            false,
         );
         call_tool(
             &store,
@@ -1205,6 +1273,7 @@ mod tests {
             }),
             false,
             None,
+            false,
         );
         call_tool(
             &store,
@@ -1217,6 +1286,7 @@ mod tests {
             }),
             false,
             None,
+            false,
         );
 
         let result = call_tool(
@@ -1226,6 +1296,7 @@ mod tests {
             &json!({"query": "rainforest"}),
             false,
             None,
+            false,
         );
         assert!(!result.is_error);
         let text = &result.content[0].text;
@@ -1245,6 +1316,7 @@ mod tests {
             &json!({"name": "", "description": "empty name"}),
             false,
             None,
+            false,
         );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("name"));
@@ -1260,6 +1332,7 @@ mod tests {
             &json!({"name": "val-memoir", "description": "for validation"}),
             false,
             None,
+            false,
         );
         let result = call_tool(
             &store,
@@ -1272,6 +1345,7 @@ mod tests {
             }),
             false,
             None,
+            false,
         );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("name"));
@@ -1287,6 +1361,7 @@ mod tests {
             &json!({"name": "oversize-memoir", "description": "for size test"}),
             false,
             None,
+            false,
         );
         let oversized_def = "D".repeat(32769);
         let result = call_tool(
@@ -1300,6 +1375,7 @@ mod tests {
             }),
             false,
             None,
+            false,
         );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("definition"));
@@ -1325,6 +1401,7 @@ mod tests {
             &json!({"path": path.to_str().unwrap()}),
             false,
             None,
+            false,
         );
         assert!(
             !result.is_error,
@@ -1358,6 +1435,7 @@ mod tests {
             &json!({"path": path.to_str().unwrap()}),
             false,
             None,
+            false,
         );
 
         let result = call_tool(
@@ -1367,6 +1445,7 @@ mod tests {
             &json!({"query": "mycelium fungus"}),
             false,
             None,
+            false,
         );
         assert!(
             !result.is_error,
@@ -1396,9 +1475,10 @@ mod tests {
             &json!({"path": path.to_str().unwrap()}),
             false,
             None,
+            false,
         );
 
-        let result = call_tool(&store, None, "hyphae_list_sources", &json!({}), false, None);
+        let result = call_tool(&store, None, "hyphae_list_sources", &json!({}), false, None, false);
         assert!(
             !result.is_error,
             "unexpected error: {}",
@@ -1429,6 +1509,7 @@ mod tests {
             &json!({"path": path_str}),
             false,
             None,
+            false,
         );
 
         let result = call_tool(
@@ -1438,6 +1519,7 @@ mod tests {
             &json!({"path": path_str}),
             false,
             None,
+            false,
         );
         assert!(
             !result.is_error,
@@ -1447,7 +1529,7 @@ mod tests {
         assert!(result.content[0].text.contains("Deleted"));
 
         // Verify it's gone
-        let list_result = call_tool(&store, None, "hyphae_list_sources", &json!({}), false, None);
+        let list_result = call_tool(&store, None, "hyphae_list_sources", &json!({}), false, None, false);
         assert!(!list_result.content[0].text.contains("to_forget.txt"));
     }
 
@@ -1461,6 +1543,7 @@ mod tests {
             &json!({"query": "nonexistent unicorn content"}),
             false,
             None,
+            false,
         );
         assert!(!result.is_error);
         assert!(result.content[0].text.contains("No results"));
@@ -1476,6 +1559,7 @@ mod tests {
             &json!({"path": "/nonexistent/path.txt"}),
             false,
             None,
+            false,
         );
         assert!(result.is_error);
         assert!(
@@ -1494,6 +1578,7 @@ mod tests {
             &json!({"query": "anything"}),
             false,
             None,
+            false,
         );
         assert!(!result.is_error);
         assert!(result.content[0].text.contains("No results"));
@@ -1514,6 +1599,7 @@ mod tests {
             &json!({"topic": "architecture", "content": "The system uses PostgreSQL for data storage"}),
             false,
             None,
+            false,
         );
 
         // Ingest a document
@@ -1531,6 +1617,7 @@ mod tests {
             &json!({"path": path.to_str().unwrap()}),
             false,
             None,
+            false,
         );
 
         // Search across both
@@ -1541,6 +1628,7 @@ mod tests {
             &json!({"query": "PostgreSQL database"}),
             false,
             None,
+            false,
         );
         assert!(
             !result.is_error,
@@ -1557,7 +1645,7 @@ mod tests {
     #[test]
     fn test_tool_search_all_missing_query() {
         let store = test_store();
-        let result = call_tool(&store, None, "hyphae_search_all", &json!({}), false, None);
+        let result = call_tool(&store, None, "hyphae_search_all", &json!({}), false, None, false);
         assert!(result.is_error);
         assert!(result.content[0].text.contains("query"));
     }
@@ -1576,6 +1664,7 @@ mod tests {
             &json!({"topic": "test", "content": "Kubernetes cluster management"}),
             false,
             None,
+            false,
         );
 
         let dir = TempDir::new().unwrap();
@@ -1588,6 +1677,7 @@ mod tests {
             &json!({"path": path.to_str().unwrap()}),
             false,
             None,
+            false,
         );
 
         let result = call_tool(
@@ -1597,6 +1687,7 @@ mod tests {
             &json!({"query": "Kubernetes", "include_docs": false}),
             false,
             None,
+            false,
         );
         assert!(!result.is_error);
         let text = &result.content[0].text;
@@ -1622,5 +1713,89 @@ mod tests {
         assert!(!memory::is_session_query("how to parse JSON"));
         assert!(!memory::is_session_query("authentication flow"));
         assert!(!memory::is_session_query("database schema design"));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Secrets Rejection Tests
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_store_with_reject_secrets_true_blocks_api_key() {
+        let store = test_store();
+        let args = json!({
+            "topic": "config",
+            "content": "api_key = sk1234567890abcdefghij",
+            "importance": "medium"
+        });
+        let result = memory::tool_store(&store, None, &args, false, None, true);
+        assert!(result.is_error);
+        assert!(result.content[0].text.contains("Storing blocked"));
+        assert!(result.content[0].text.contains("secrets detected"));
+    }
+
+    #[test]
+    fn test_store_with_reject_secrets_true_blocks_github_token() {
+        let store = test_store();
+        let args = json!({
+            "topic": "credentials",
+            "content": "ghp_1234567890abcdefghijklmnopqrstuvwxyz",
+            "importance": "high"
+        });
+        let result = memory::tool_store(&store, None, &args, false, None, true);
+        assert!(result.is_error);
+        assert!(result.content[0].text.contains("Storing blocked"));
+    }
+
+    #[test]
+    fn test_store_with_reject_secrets_false_allows_api_key() {
+        let store = test_store();
+        let args = json!({
+            "topic": "config",
+            "content": "api_key = sk1234567890abcdefghij",
+            "importance": "medium"
+        });
+        let result = memory::tool_store(&store, None, &args, false, None, false);
+        // Should store successfully (though it warns about secrets)
+        assert!(!result.is_error);
+    }
+
+    #[test]
+    fn test_store_with_reject_secrets_allows_normal_content() {
+        let store = test_store();
+        let args = json!({
+            "topic": "learning",
+            "content": "How to debug memory issues in Rust",
+            "importance": "medium"
+        });
+        let result = memory::tool_store(&store, None, &args, false, None, true);
+        assert!(!result.is_error);
+    }
+
+    #[test]
+    fn test_store_with_reject_secrets_blocks_private_key() {
+        let store = test_store();
+        let args = json!({
+            "topic": "security",
+            "content": "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA...",
+            "importance": "critical"
+        });
+        let result = memory::tool_store(&store, None, &args, false, None, true);
+        assert!(result.is_error);
+        assert!(result.content[0].text.contains("Storing blocked"));
+        assert!(result.content[0].text.contains("private key"));
+    }
+
+    #[test]
+    fn test_store_with_reject_secrets_blocks_aws_key() {
+        let store = test_store();
+        let args = json!({
+            "topic": "credentials",
+            "content": "AWS_ACCESS_KEY_ID = AKIAIOSFODNN7EXAMPLE",
+            "importance": "high"
+        });
+        let result = memory::tool_store(&store, None, &args, false, None, true);
+        assert!(result.is_error);
+        assert!(result.content[0].text.contains("Storing blocked"));
+        assert!(result.content[0].text.contains("AWS"));
     }
 }

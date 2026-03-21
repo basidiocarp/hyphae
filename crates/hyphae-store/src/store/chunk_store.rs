@@ -1,14 +1,14 @@
 use std::collections::HashMap;
 
-use rusqlite::{OptionalExtension, params};
+use rusqlite::{params, OptionalExtension};
 
 use hyphae_core::{
     Chunk, ChunkSearchResult, ChunkStore, Document, DocumentId, HyphaeError, HyphaeResult,
 };
 
-use super::SqliteStore;
-use super::helpers::{CHUNK_COLS, DOCUMENT_COLS, embedding_to_blob, row_to_chunk, row_to_document};
+use super::helpers::{embedding_to_blob, row_to_chunk, row_to_document, CHUNK_COLS, DOCUMENT_COLS};
 use super::search::sanitize_fts_query;
+use super::SqliteStore;
 
 // Prefixed chunk columns for JOIN queries
 const C_CHUNK_COLS: &str = "c.id, c.document_id, c.chunk_index, c.content, c.source_path, \
@@ -316,7 +316,9 @@ impl ChunkStore for SqliteStore {
         offset: usize,
         project: Option<&str>,
     ) -> HyphaeResult<Vec<ChunkSearchResult>> {
-        let pool_size = (limit + offset) * 4;
+        // Reduced multiplier from 4x to 1.5x for ~50% memory reduction
+        // Provides sufficient headroom for RRF ranking and dedup
+        let pool_size = ((limit + offset) as f32 * 1.5).ceil() as usize;
         let sanitized = sanitize_fts_query(query);
 
         let mut fts_scores: HashMap<String, f32> = HashMap::new();

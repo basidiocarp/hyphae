@@ -1,15 +1,15 @@
 use std::collections::HashMap;
 
 use chrono::Utc;
-use rusqlite::{OptionalExtension, params};
+use rusqlite::{params, OptionalExtension};
 
 use hyphae_core::{
     HyphaeError, HyphaeResult, Memory, MemoryId, MemoryStore, StoreStats, TopicHealth,
 };
 
-use super::SqliteStore;
-use super::helpers::{SELECT_COLS, embedding_to_blob, row_to_memory, source_data, source_type};
+use super::helpers::{embedding_to_blob, row_to_memory, source_data, source_type, SELECT_COLS};
 use super::search::sanitize_fts_query;
+use super::SqliteStore;
 
 impl MemoryStore for SqliteStore {
     fn store(&self, memory: Memory) -> HyphaeResult<MemoryId> {
@@ -229,12 +229,16 @@ impl MemoryStore for SqliteStore {
             return Ok(Vec::new());
         }
 
+        // ─────────────────────────────────────────────────────────────────────
+        // FTS5 search with project filter using UNINDEXED column
+        // ─────────────────────────────────────────────────────────────────────
         let sql = format!(
             "SELECT {SELECT_COLS} FROM memories m
              WHERE m.id IN (
-                 SELECT id FROM memories_fts WHERE memories_fts MATCH ?1
+                 SELECT id FROM memories_fts
+                 WHERE memories_fts MATCH ?1
+                 AND (project = ?3 OR ?3 IS NULL)
              )
-             AND (m.project = ?3 OR ?3 IS NULL)
              ORDER BY m.weight DESC
              LIMIT ?2 OFFSET ?4"
         );
@@ -343,17 +347,23 @@ impl MemoryStore for SqliteStore {
         offset: usize,
         project: Option<&str>,
     ) -> HyphaeResult<Vec<(Memory, f32)>> {
-        let pool_size = (limit + offset) * 4;
+        // Reduced multiplier from 4x to 1.5x for ~50% memory reduction
+        // Provides sufficient headroom for RRF ranking and dedup
+        let pool_size = ((limit + offset) as f32 * 1.5).ceil() as usize;
         let sanitized = sanitize_fts_query(query);
 
-        let fts_sql = "SELECT m.id, m.created_at, m.updated_at, m.last_accessed, m.access_count, m.weight, \
+        // ─────────────────────────────────────────────────────────────────────
+        // FTS5 search with project filter using UNINDEXED column
+        // ─────────────────────────────────────────────────────────────────────
+        let fts_sql =
+            "SELECT m.id, m.created_at, m.updated_at, m.last_accessed, m.access_count, m.weight, \
                     m.topic, m.summary, m.raw_excerpt, m.keywords, \
                     m.importance, m.source_type, m.source_data, m.related_ids, m.embedding, \
                     m.project, m.expires_at, fts.rank \
              FROM memories_fts fts \
              JOIN memories m ON m.id = fts.id \
              WHERE memories_fts MATCH ?1 \
-             AND (m.project = ?3 OR ?3 IS NULL) \
+             AND (fts.project = ?3 OR ?3 IS NULL) \
              ORDER BY fts.rank \
              LIMIT ?2";
 

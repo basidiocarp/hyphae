@@ -22,20 +22,12 @@ pub struct Session {
 }
 
 impl SqliteStore {
-    /// Deprecated: sessions table is now created in schema.rs during init_db().
-    /// This method is kept as a no-op for backward compatibility.
-    pub fn ensure_sessions_table(&self) -> HyphaeResult<()> {
-        Ok(())
-    }
-
     /// Start a new session. Returns (session_id, started_at).
     pub fn session_start(
         &self,
         project: &str,
         task: Option<&str>,
     ) -> HyphaeResult<(String, String)> {
-        self.ensure_sessions_table()?;
-
         let session_id = format!("ses_{}", ulid::Ulid::new());
         let started_at = Utc::now().to_rfc3339();
 
@@ -57,8 +49,6 @@ impl SqliteStore {
         files_modified: Option<&str>,
         errors: Option<&str>,
     ) -> HyphaeResult<(String, String, Option<String>, String, i64)> {
-        self.ensure_sessions_table()?;
-
         // Fetch the active session
         let row: (String, String, Option<String>) = self
             .conn
@@ -95,8 +85,6 @@ impl SqliteStore {
 
     /// Get recent sessions for a project.
     pub fn session_context(&self, project: &str, limit: i64) -> HyphaeResult<Vec<Session>> {
-        self.ensure_sessions_table()?;
-
         let mut stmt = self
             .conn
             .prepare(
@@ -169,7 +157,6 @@ mod tests {
     #[test]
     fn test_session_end_invalid_id() {
         let store = test_store();
-        store.ensure_sessions_table().unwrap();
         let result = store.session_end("nonexistent", None, None, None);
         assert!(result.is_err());
     }

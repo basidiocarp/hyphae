@@ -70,12 +70,7 @@ fn init_embedder(model: &str) -> Option<Box<dyn Embedder>> {
 }
 
 fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::WARN.into()),
-        )
-        .init();
+    spore::logging::init(tracing::Level::WARN);
 
     let cli = Cli::parse();
     let cfg = config::load_config()?;
@@ -187,6 +182,7 @@ fn main() -> Result<()> {
                 embedder_ref,
                 compact || cfg.mcp.compact,
                 resolved_project,
+                cfg.memory.reject_secrets,
             )?;
         }
 
@@ -325,12 +321,14 @@ fn main() -> Result<()> {
             project,
             before,
             dry_run,
+            force,
         } => {
             commands::purge::cmd_purge(
                 &store,
                 project.clone(),
                 before.clone(),
                 dry_run,
+                force,
                 resolved_project,
             )?;
         }

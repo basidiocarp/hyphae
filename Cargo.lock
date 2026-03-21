@@ -1257,7 +1257,7 @@ dependencies = [
 
 [[package]]
 name = "hyphae-cli"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1275,20 +1275,21 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "spore",
  "tempfile",
  "toml",
  "tracing",
- "tracing-subscriber",
  "ureq 3.2.0",
  "which",
 ]
 
 [[package]]
 name = "hyphae-core"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "fastembed",
+ "regex",
  "serde",
  "serde_json",
  "thiserror",
@@ -1298,7 +1299,7 @@ dependencies = [
 
 [[package]]
 name = "hyphae-ingest"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1313,7 +1314,7 @@ dependencies = [
 
 [[package]]
 name = "hyphae-mcp"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1330,7 +1331,7 @@ dependencies = [
 
 [[package]]
 name = "hyphae-store"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "hyphae-core",
@@ -2841,13 +2842,18 @@ dependencies = [
 
 [[package]]
 name = "spore"
-version = "0.2.1"
-source = "git+https://github.com/basidiocarp/spore?tag=v0.2.1#c1176724d3ae31c0a945ceba8a75a77053ef050c"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "dirs",
  "serde",
  "serde_json",
+ "tempfile",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "ureq 3.2.0",
  "which",
 ]
 

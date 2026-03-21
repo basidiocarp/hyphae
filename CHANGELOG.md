@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.7.0 - 2026-03-21
+
+### Added
+
+- **`hyphae purge` command**: Delete data by project (`--project`) or age (`--before`). Supports `--dry-run` and `--force` flags. Covers memories, sessions, chunks, and documents.
+- **`hyphae audit-secrets` command**: Scans existing memories for API keys, tokens, passwords, and private keys. Reports matches by memory ID and pattern type.
+- **`hyphae changelog` command**: Summarizes activity since a given date. Aggregates sessions, memories by topic, resolved errors, and lessons. Supports `--since yesterday/today/last-week` or ISO dates.
+- **Secrets rejection mode**: `reject_secrets = true` in config blocks storage of memories containing detected secrets. Shared `detect_secrets()` in hyphae-core.
+- **Relation normalization**: Canonical relation types (calls, imports, implements, extends, contains, references, tests) with synonym mapping on write. Case-insensitive.
+
+### Changed
+
+- **FTS5 project column**: Added `project UNINDEXED` to `memories_fts` virtual table. Project-scoped FTS queries no longer require a JOIN. Auto-migration for existing databases.
+- **search_all optimization**: Reduced overfetch multiplier from 4x to 1.5x in hybrid search, cutting intermediate memory allocation by ~50%.
+- **Sessions table**: Moved from lazy creation to main schema init. Removed `ensure_sessions_table()` calls.
+- **Spore v0.3.0**: Self-update, logging, and config now use shared spore modules.
+
 ## v0.3.7
 
 ### Added

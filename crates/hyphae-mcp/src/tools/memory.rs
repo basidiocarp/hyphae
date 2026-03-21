@@ -1,52 +1,13 @@
 use chrono::Utc;
-use regex::Regex;
 use serde_json::Value;
 
-use hyphae_core::{Embedder, Importance, MemoirStore, Memory, MemoryId, MemoryStore, Weight};
+use hyphae_core::{Embedder, Importance, MemoirStore, Memory, MemoryId, MemoryStore, Weight, detect_secrets};
 use hyphae_store::SqliteStore;
 use hyphae_store::context;
 
 use crate::protocol::ToolResult;
 
 use super::{get_bounded_i64, get_str, validate_max_length, validate_required_string};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Secrets Detection
-// ─────────────────────────────────────────────────────────────────────────────
-
-const SECRET_PATTERNS: &[(&str, &str)] = &[
-    (r"(?i)(api[_-]?key|apikey)\s*[:=]\s*\S{10,}", "API key"),
-    (
-        r"(?i)(secret|password|passwd|pwd)\s*[:=]\s*\S{8,}",
-        "password/secret",
-    ),
-    (r"sk-[a-zA-Z0-9]{20,}", "OpenAI API key"),
-    (r"ghp_[a-zA-Z0-9]{36,}", "GitHub personal access token"),
-    (r"(?i)bearer\s+[a-zA-Z0-9._-]{20,}", "Bearer token"),
-    (r"AKIA[0-9A-Z]{16}", "AWS access key"),
-    (
-        r"(?i)(token|auth)\s*[:=]\s*[a-zA-Z0-9._-]{20,}",
-        "auth token",
-    ),
-    (r"-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----", "private key"),
-];
-
-/// Detect common secret patterns in content.
-///
-/// Returns a vector of detected secret types. If secrets are found, the caller should warn.
-fn detect_secrets(content: &str) -> Vec<String> {
-    let mut detected = Vec::new();
-
-    for (pattern, secret_type) in SECRET_PATTERNS {
-        if let Ok(regex) = Regex::new(pattern) {
-            if regex.is_match(content) {
-                detected.push(secret_type.to_string());
-            }
-        }
-    }
-
-    detected
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Gap 10: Age indicator for stale memory feedback
@@ -71,6 +32,7 @@ pub(crate) fn tool_store(
     args: &Value,
     compact: bool,
     project: Option<&str>,
+    reject_secrets: bool,
 ) -> ToolResult {
     let topic = match validate_required_string(args, "topic") {
         Ok(t) => t,
@@ -90,6 +52,22 @@ pub(crate) fn tool_store(
     }
     let importance_str = get_str(args, "importance").unwrap_or("medium");
     let importance = importance_str.parse().unwrap_or(Importance::Medium);
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Secrets Rejection (if enabled)
+    // ─────────────────────────────────────────────────────────────────────────────
+    if reject_secrets {
+        let detected = detect_secrets(&content);
+        if !detected.is_empty() {
+            return ToolResult::error(format!(
+                "Storing blocked: secrets detected in content [{}]. \
+                 To store anyway, disable reject_secrets in config. \
+                 Detected: {}",
+                topic,
+                detected.join(", ")
+            ));
+        }
+    }
 
     // Auto-embed if embedder is available, reuse for dedup check
     let embedding = if let Some(emb) = embedder {

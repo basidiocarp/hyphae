@@ -126,7 +126,7 @@ pub fn expand_with_code_context(store: &SqliteStore, query: &str, project: &str)
 mod tests {
     use super::*;
     use hyphae_core::memoir::{Concept, Memoir};
-    use hyphae_core::{MemoirStore, ids::MemoirId};
+    use hyphae_core::{ids::MemoirId, MemoirStore};
 
     fn make_store() -> SqliteStore {
         SqliteStore::in_memory().unwrap()

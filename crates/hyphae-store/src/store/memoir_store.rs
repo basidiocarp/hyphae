@@ -1,35 +1,31 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
-use rusqlite::{OptionalExtension, params};
+use rusqlite::{params, OptionalExtension};
 
 use hyphae_core::{
     Concept, ConceptId, ConceptInput, ConceptLink, HyphaeError, HyphaeResult, Label, LinkId,
     LinkInput, Memoir, MemoirId, MemoirStats, MemoirStore, MemoryId, Relation, UpsertReport,
 };
 
-use super::SqliteStore;
 use super::helpers::{
-    CONCEPT_COLS, LINK_COLS, MEMOIR_COLS, row_to_concept, row_to_link, row_to_memoir,
+    row_to_concept, row_to_link, row_to_memoir, CONCEPT_COLS, LINK_COLS, MEMOIR_COLS,
 };
 use super::search::sanitize_fts_query;
+use super::SqliteStore;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Relation Normalization
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Normalize a freeform relation string to a canonical type.
-fn normalize_relation(relation: &str) -> String {
-    let lower = relation.to_lowercase();
-    match lower.as_str() {
-        "calls" | "invokes" => "calls".to_string(),
-        "implements" => "implements".to_string(),
-        "imports" | "uses" => "imports".to_string(),
-        "extends" | "inherits" => "extends".to_string(),
-        "contains" | "has" => "contains".to_string(),
-        "tests" => "tests".to_string(),
-        "depends_on" | "depends-on" | "requires" => "depends_on".to_string(),
-        _ => lower,
+/// Normalize a freeform relation string to a canonical Relation enum value.
+/// Maps synonyms and freeform text to one of the 9 canonical relation types.
+pub(crate) fn normalize_relation(relation: &str) -> String {
+    // Parse as Relation, which handles all normalization via FromStr
+    match relation.parse::<Relation>() {
+        Ok(r) => r.to_string(),
+        // Fallback: if unknown, return as lowercase for graceful degradation
+        Err(_) => relation.to_lowercase(),
     }
 }
 
@@ -830,9 +826,10 @@ impl MemoirStore for SqliteStore {
 
 #[cfg(test)]
 mod tests {
-    use hyphae_core::{ConceptInput, Label, LinkInput, Memoir, MemoirStore};
+    use hyphae_core::{ConceptInput, Label, LinkInput, Memoir, MemoirStore, Relation};
 
     use super::super::SqliteStore;
+    use super::normalize_relation;
 
     fn test_store() -> SqliteStore {
         SqliteStore::in_memory().unwrap()
@@ -1047,5 +1044,129 @@ mod tests {
 
         let remaining = store.list_concepts(&memoir_id).unwrap();
         assert!(remaining.is_empty());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Relation Normalization Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_normalize_relation_part_of() {
+        // Canonical form
+        assert_eq!(normalize_relation("part_of"), "part_of");
+        // Variants without separator
+        assert_eq!(normalize_relation("partof"), "part_of");
+        // Synonyms
+        assert_eq!(normalize_relation("contains"), "part_of");
+        assert_eq!(normalize_relation("has"), "part_of");
+        assert_eq!(normalize_relation("owns"), "part_of");
+        assert_eq!(normalize_relation("includes"), "part_of");
+    }
+
+    #[test]
+    fn test_normalize_relation_depends_on() {
+        // Canonical form
+        assert_eq!(normalize_relation("depends_on"), "depends_on");
+        // Variants
+        assert_eq!(normalize_relation("dependson"), "depends_on");
+        assert_eq!(normalize_relation("depends-on"), "depends_on");
+        // Synonyms
+        assert_eq!(normalize_relation("imports"), "depends_on");
+        assert_eq!(normalize_relation("uses"), "depends_on");
+        assert_eq!(normalize_relation("requires"), "depends_on");
+    }
+
+    #[test]
+    fn test_normalize_relation_related_to() {
+        // Canonical form
+        assert_eq!(normalize_relation("related_to"), "related_to");
+        // Variants without separator
+        assert_eq!(normalize_relation("relatedto"), "related_to");
+        // Synonyms
+        assert_eq!(normalize_relation("references"), "related_to");
+        assert_eq!(normalize_relation("refers_to"), "related_to");
+        assert_eq!(normalize_relation("refers-to"), "related_to");
+    }
+
+    #[test]
+    fn test_normalize_relation_refines() {
+        // Canonical form
+        assert_eq!(normalize_relation("refines"), "refines");
+        // Synonyms
+        assert_eq!(normalize_relation("implements"), "refines");
+        assert_eq!(normalize_relation("realizes"), "refines");
+        assert_eq!(normalize_relation("satisfies"), "refines");
+    }
+
+    #[test]
+    fn test_normalize_relation_case_insensitive() {
+        // Test uppercase
+        assert_eq!(normalize_relation("DEPENDS_ON"), "depends_on");
+        assert_eq!(normalize_relation("CONTAINS"), "part_of");
+        // Test mixed case
+        assert_eq!(normalize_relation("Depends_On"), "depends_on");
+        assert_eq!(normalize_relation("Contains"), "part_of");
+    }
+
+    #[test]
+    fn test_normalize_relation_contradict_and_others() {
+        // Test other enum variants
+        assert_eq!(normalize_relation("contradicts"), "contradicts");
+        assert_eq!(normalize_relation("caused_by"), "caused_by");
+        assert_eq!(normalize_relation("instance_of"), "instance_of");
+        assert_eq!(normalize_relation("alternative_to"), "alternative_to");
+        assert_eq!(normalize_relation("superseded_by"), "superseded_by");
+    }
+
+    #[test]
+    fn test_normalize_relation_unknown_fallback() {
+        // Unknown relations should fall back to lowercase (graceful degradation)
+        assert_eq!(normalize_relation("UNKNOWN_RELATION"), "unknown_relation");
+        assert_eq!(normalize_relation("custom-relation"), "custom-relation");
+    }
+
+    #[test]
+    fn test_link_normalization_in_database() {
+        let store = test_store();
+        let memoir = Memoir::new("norm_test".into(), "Testing relation normalization".into());
+        let memoir_id = store.create_memoir(memoir).unwrap();
+
+        // Create two concepts
+        let concept_inputs = vec![
+            ConceptInput {
+                name: "source".into(),
+                labels: vec![],
+                description: "source concept".into(),
+            },
+            ConceptInput {
+                name: "target".into(),
+                labels: vec![],
+                description: "target concept".into(),
+            },
+        ];
+        store.upsert_concepts(&memoir_id, &concept_inputs).unwrap();
+
+        // Create links with various synonym forms
+        let links = vec![LinkInput {
+            source_name: "source".into(),
+            target_name: "target".into(),
+            relation: "contains".into(), // Synonym for part_of
+            weight: 0.5,
+        }];
+        store.upsert_links(&memoir_id, &links).unwrap();
+
+        // Retrieve the link and verify it was normalized to canonical form
+        let source_concept = store
+            .get_concept_by_name(&memoir_id, "source")
+            .unwrap()
+            .unwrap();
+        let links_from_source = store.get_links_from(&source_concept.id).unwrap();
+
+        assert_eq!(links_from_source.len(), 1);
+        assert_eq!(
+            links_from_source[0].relation,
+            Relation::PartOf,
+            "Synonym 'contains' should be normalized to PartOf"
+        );
     }
 }

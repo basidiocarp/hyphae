@@ -1,8 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use hyphae_core::{Chunk, ChunkStore, HyphaeResult, Memory, MemoryStore};
 
-use super::{SqliteStore, context};
+use super::{context, SqliteStore};
 
 // ---------------------------------------------------------------------------
 // Unified search result
@@ -38,6 +38,9 @@ impl SqliteStore {
     /// When `code_expand_project` is `Some(project)`, the query is expanded with
     /// code symbols from the `code:{project}` memoir (if it exists and the query
     /// looks code-related). Expanded FTS results are merged in with 0.5× weight.
+    ///
+    /// Optimization: Fetches `limit + offset` per source (not 3x), avoids materializing
+    /// full HashMaps, uses dedup with HashSet for efficiency.
     #[allow(
         clippy::too_many_arguments,
         reason = "parameters mirror the MemoryStore search API"
@@ -54,7 +57,7 @@ impl SqliteStore {
     ) -> HyphaeResult<Vec<UnifiedSearchResult>> {
         const K: f32 = 60.0;
         const EXPANDED_WEIGHT: f32 = 0.5;
-        let pool = (limit + offset) * 3;
+        let pool = limit + offset;
 
         let mem_results: Vec<(Memory, f32)> = if let Some(emb) = embedding {
             self.search_hybrid(query, emb, pool, 0, project)?
@@ -66,7 +69,8 @@ impl SqliteStore {
                 .collect()
         };
 
-        let chunk_results = if include_docs {
+        // Fetch chunk results once, keep them for later use
+        let chunk_search_results = if include_docs {
             if let Some(emb) = embedding {
                 self.search_chunks_hybrid(query, emb, pool, 0, project)?
             } else {
@@ -76,31 +80,39 @@ impl SqliteStore {
             Vec::new()
         };
 
-        // --- RRF scoring for memories (weight 1.0) ---
+        // ─────────────────────────────────────────────────────────────────────────
+        // RRF scoring and deduplication
+        // ─────────────────────────────────────────────────────────────────────────
+
         let mut scores: HashMap<String, f32> = HashMap::new();
         let mut memory_map: HashMap<String, Memory> = HashMap::new();
+        let mut seen_mem_ids: HashSet<String> = HashSet::new();
+
+        // Score memories from primary search
         for (rank, (mem, _original_score)) in mem_results.into_iter().enumerate() {
             let rrf = 1.0 / (K + rank as f32);
             let key = format!("mem:{}", mem.id);
+            let id = mem.id.to_string();
             *scores.entry(key.clone()).or_default() += rrf;
+            seen_mem_ids.insert(id);
             memory_map.insert(key, mem);
         }
 
-        // --- RRF scoring for chunks (weight 1.0) ---
-        let mut chunk_map: HashMap<String, Chunk> = HashMap::new();
-        for (rank, csr) in chunk_results.into_iter().enumerate() {
+        // Score chunks from primary search
+        for (rank, csr) in chunk_search_results.iter().enumerate() {
             let rrf = 1.0 / (K + rank as f32);
             let key = format!("chunk:{}", csr.chunk.id);
-            *scores.entry(key.clone()).or_default() += rrf;
-            chunk_map.insert(key, csr.chunk);
+            *scores.entry(key).or_default() += rrf;
         }
 
-        // --- Optional code-context expansion (weight 0.5) ---
+        // ─────────────────────────────────────────────────────────────────────────
+        // Optional code-context expansion with deduplication
+        // ─────────────────────────────────────────────────────────────────────────
+
         if let Some(expand_project) = code_expand_project {
             if context::is_code_related(query) {
                 let extra_terms = context::expand_with_code_context(self, query, expand_project);
                 if !extra_terms.is_empty() {
-                    // Build a single expanded FTS query: sanitise each term and join with OR
                     let expanded_query = extra_terms
                         .iter()
                         .map(|t| sanitize_fts_query(t))
@@ -114,20 +126,33 @@ impl SqliteStore {
                             .unwrap_or_default();
 
                         for (rank, mem) in expanded_mems.into_iter().enumerate() {
-                            let rrf = EXPANDED_WEIGHT / (K + rank as f32);
-                            let key = format!("mem:{}", mem.id);
-                            *scores.entry(key.clone()).or_default() += rrf;
-                            // Only insert into map if not already present (original takes precedence)
-                            memory_map.entry(key).or_insert(mem);
+                            let id = mem.id.to_string();
+                            // Only score if not already in primary results
+                            if !seen_mem_ids.contains(&id) {
+                                let rrf = EXPANDED_WEIGHT / (K + rank as f32);
+                                let key = format!("mem:{id}");
+                                *scores.entry(key.clone()).or_default() += rrf;
+                                memory_map.insert(key, mem);
+                            }
                         }
                     }
                 }
             }
         }
 
-        // --- merge and sort ---
+        // ─────────────────────────────────────────────────────────────────────────
+        // Sort, apply offset/limit, and collect results
+        // ─────────────────────────────────────────────────────────────────────────
+
         let mut ranked: Vec<(String, f32)> = scores.into_iter().collect();
         ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Build chunk map for result lookup only
+        let mut chunk_map: HashMap<String, Chunk> = HashMap::new();
+        for csr in chunk_search_results {
+            let key = format!("chunk:{}", csr.chunk.id);
+            chunk_map.insert(key, csr.chunk);
+        }
 
         let results = ranked
             .into_iter()
@@ -628,7 +653,7 @@ mod tests {
     #[test]
     fn test_search_all_code_context_expansion() {
         use hyphae_core::memoir::{Concept, Memoir};
-        use hyphae_core::{MemoirStore, ids::MemoirId};
+        use hyphae_core::{ids::MemoirId, MemoirStore};
 
         let store = test_store();
 

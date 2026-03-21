@@ -189,7 +189,6 @@ mod tests {
     #[test]
     fn test_session_end_invalid_id() {
         let store = test_store();
-        store.ensure_sessions_table().unwrap();
 
         let result = tool_session_end(&store, &json!({"session_id": "nonexistent"}));
         assert!(result.is_error);

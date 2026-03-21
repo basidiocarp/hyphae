@@ -1,7 +1,53 @@
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, NaiveDate, Utc};
+use std::collections::BTreeMap;
 
 use hyphae_core::MemoryStore;
 use hyphae_store::SqliteStore;
+
+fn parse_date_argument(since_str: &str, _default_days: i64) -> anyhow::Result<DateTime<Utc>> {
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Parse various date formats
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    match since_str {
+        "yesterday" => Ok(Utc::now() - Duration::days(1)),
+        "today" => {
+            let today = Utc::now().date_naive();
+            Ok(DateTime::<Utc>::from_naive_utc_and_offset(
+                today.and_hms_opt(0, 0, 0).unwrap(),
+                Utc,
+            ))
+        }
+        "last-week" => Ok(Utc::now() - Duration::days(7)),
+        "last-month" => Ok(Utc::now() - Duration::days(30)),
+        _ => {
+            // Try ISO 8601
+            DateTime::parse_from_rfc3339(since_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .or_else(|_| {
+                    // Try YYYY-MM-DD HH:MM:SS
+                    chrono::NaiveDateTime::parse_from_str(since_str, "%Y-%m-%d %H:%M:%S")
+                        .map(|ndt| DateTime::<Utc>::from_naive_utc_and_offset(ndt, Utc))
+                })
+                .or_else(|_| {
+                    // Try YYYY-MM-DD
+                    NaiveDate::parse_from_str(since_str, "%Y-%m-%d")
+                        .map(|nd| {
+                            DateTime::<Utc>::from_naive_utc_and_offset(
+                                nd.and_hms_opt(0, 0, 0).unwrap(),
+                                Utc,
+                            )
+                        })
+                })
+                .map_err(|_| {
+                    anyhow::anyhow!(
+                        "invalid date format: {}\nSupported: 'yesterday', 'today', 'last-week', 'last-month', or ISO 8601",
+                        since_str
+                    )
+                })
+        }
+    }
+}
 
 pub fn cmd_changelog(
     store: &SqliteStore,
@@ -10,14 +56,7 @@ pub fn cmd_changelog(
     project: Option<String>,
 ) -> anyhow::Result<()> {
     let cutoff = if let Some(since_str) = since {
-        DateTime::parse_from_rfc3339(&since_str)
-            .map(|dt| dt.with_timezone(&Utc))
-            .or_else(|_| {
-                // Try parsing as YYYY-MM-DD HH:MM:SS
-                chrono::NaiveDateTime::parse_from_str(&since_str, "%Y-%m-%d %H:%M:%S")
-                    .map(|ndt| DateTime::<Utc>::from_naive_utc_and_offset(ndt, Utc))
-            })
-            .map_err(|_| anyhow::anyhow!("invalid date format: {since_str}"))?
+        parse_date_argument(&since_str, days)?
     } else {
         Utc::now() - Duration::days(days)
     };
@@ -25,14 +64,13 @@ pub fn cmd_changelog(
     let proj = project.as_deref().unwrap_or("default");
 
     println!("═══════════════════════════════════════════════════════════════════════════════");
-    println!(
-        "What happened ({} days from {})",
-        days,
-        cutoff.format("%Y-%m-%d")
-    );
+    println!("Changelog since {}", cutoff.format("%Y-%m-%d"));
     println!("═══════════════════════════════════════════════════════════════════════════════\n");
 
-    // Session memories (session/{project} topic)
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Sessions
+    // ─────────────────────────────────────────────────────────────────────────────
+
     let session_topic = format!("session/{proj}");
     let session_memories = store
         .get_by_topic(&session_topic, project.as_deref())
@@ -44,7 +82,7 @@ pub fn cmd_changelog(
         .collect();
 
     if !recent_sessions.is_empty() {
-        println!("Sessions:");
+        println!("Sessions: {}", recent_sessions.len());
         for session in &recent_sessions {
             let days_ago = (Utc::now() - session.created_at).num_days();
             let days_text = if days_ago == 0 {
@@ -59,7 +97,44 @@ pub fn cmd_changelog(
         println!();
     }
 
-    // Resolved errors
+    // ─────────────────────────────────────────────────────────────────────────────
+    // All memories grouped by topic
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    let all_topics = store
+        .list_topics(project.as_deref())
+        .unwrap_or_default();
+
+    let mut topic_counts: BTreeMap<String, usize> = BTreeMap::new();
+
+    for (topic, _) in all_topics {
+        let memories = store
+            .get_by_topic(&topic, project.as_deref())
+            .unwrap_or_default();
+
+        let recent_count = memories
+            .iter()
+            .filter(|m| m.created_at > cutoff)
+            .count();
+
+        if recent_count > 0 {
+            topic_counts.insert(topic, recent_count);
+        }
+    }
+
+    if !topic_counts.is_empty() {
+        let total: usize = topic_counts.values().sum();
+        println!("Memories: {} stored", total);
+        for (topic, count) in topic_counts.iter() {
+            println!("  {}: {}", topic, count);
+        }
+        println!();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Errors resolved
+    // ─────────────────────────────────────────────────────────────────────────────
+
     let resolved_errors = store
         .get_by_topic("errors/resolved", project.as_deref())
         .unwrap_or_default();
@@ -80,7 +155,10 @@ pub fn cmd_changelog(
         println!();
     }
 
-    // Lessons learned (infer from corrected errors or explicit lessons topic)
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Lessons learned
+    // ─────────────────────────────────────────────────────────────────────────────
+
     let corrections = store
         .get_by_topic("corrections", project.as_deref())
         .unwrap_or_default();
@@ -96,24 +174,14 @@ pub fn cmd_changelog(
         .collect();
 
     if !all_lessons.is_empty() {
-        println!("Lessons learned:");
+        println!("Lessons learned: {}", all_lessons.len());
         for lesson in all_lessons.iter().take(5) {
             println!("  - {}", lesson.summary);
         }
         if all_lessons.len() > 5 {
             println!("  ... and {} more", all_lessons.len() - 5);
         }
-        println!();
     }
-
-    // Summary stats
-    println!("───────────────────────────────────────────────────────────────────────────────");
-    println!(
-        "Total: {} sessions, {} errors resolved, {} lessons learned",
-        recent_sessions.len(),
-        recent_resolved.len(),
-        all_lessons.len()
-    );
 
     Ok(())
 }

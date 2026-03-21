@@ -12,7 +12,7 @@ use std::path::Path;
 use std::sync::Once;
 
 use chrono::{DateTime, Utc};
-use rusqlite::{Connection, OptionalExtension, ffi::sqlite3_auto_extension, params};
+use rusqlite::{ffi::sqlite3_auto_extension, params, Connection, OptionalExtension};
 
 use hyphae_core::{HyphaeError, HyphaeResult, Memory, MemoryStore};
 
@@ -205,12 +205,16 @@ impl SqliteStore {
             (0..projects.len()).map(|i| format!("?{}", i + 3)).collect();
         let in_clause = placeholders.join(",");
 
+        // ─────────────────────────────────────────────────────────────────────
+        // FTS5 search with project filter using UNINDEXED column
+        // ─────────────────────────────────────────────────────────────────────
         let sql = format!(
             "SELECT {cols} FROM memories m
              WHERE m.id IN (
-                 SELECT id FROM memories_fts WHERE memories_fts MATCH ?1
+                 SELECT id FROM memories_fts
+                 WHERE memories_fts MATCH ?1
+                 AND project IN ({in_clause})
              )
-             AND m.project IN ({in_clause})
              ORDER BY m.weight DESC
              LIMIT ?2",
             cols = helpers::SELECT_COLS,
@@ -323,6 +327,213 @@ impl SqliteStore {
 
         let new_id = self.store(shared)?;
         Ok(new_id)
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Purge Operations (GDPR/Retention Compliance)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Count memories for a given project.
+    pub fn count_memories_by_project(&self, project: &str) -> HyphaeResult<usize> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM memories WHERE project = ?1",
+                params![project],
+                |row| row.get(0),
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))
+    }
+
+    /// Count memories created before a given date.
+    pub fn count_memories_before_date(&self, before_dt: &str) -> HyphaeResult<usize> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM memories WHERE created_at < ?1",
+                params![before_dt],
+                |row| row.get(0),
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))
+    }
+
+    /// Count sessions for a given project.
+    pub fn count_sessions_by_project(&self, project: &str) -> HyphaeResult<usize> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM sessions WHERE project = ?1",
+                params![project],
+                |row| row.get(0),
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))
+    }
+
+    /// Count sessions started before a given date.
+    pub fn count_sessions_before_date(&self, before_dt: &str) -> HyphaeResult<usize> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM sessions WHERE started_at < ?1",
+                params![before_dt],
+                |row| row.get(0),
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))
+    }
+
+    /// Count chunks in documents for a given project.
+    pub fn count_chunks_by_project(&self, project: &str) -> HyphaeResult<usize> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM chunks WHERE document_id IN (
+                    SELECT id FROM documents WHERE project = ?1
+                )",
+                params![project],
+                |row| row.get(0),
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))
+    }
+
+    /// Count chunks created before a given date.
+    pub fn count_chunks_before_date(&self, before_dt: &str) -> HyphaeResult<usize> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM chunks WHERE created_at < ?1",
+                params![before_dt],
+                |row| row.get(0),
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))
+    }
+
+    /// Count documents for a given project.
+    pub fn count_documents_by_project(&self, project: &str) -> HyphaeResult<usize> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM documents WHERE project = ?1",
+                params![project],
+                |row| row.get(0),
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))
+    }
+
+    /// Count documents created before a given date.
+    pub fn count_documents_before_date(&self, before_dt: &str) -> HyphaeResult<usize> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM documents WHERE created_at < ?1",
+                params![before_dt],
+                |row| row.get(0),
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))
+    }
+
+    /// Delete all data for a specific project.
+    /// Returns (memories_deleted, sessions_deleted, chunks_deleted, documents_deleted).
+    pub fn purge_project(&self, project: &str) -> HyphaeResult<(usize, usize, usize, usize)> {
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        // Delete vector embeddings for memories
+        tx.execute(
+            "DELETE FROM vec_memories WHERE memory_id IN (
+                SELECT id FROM memories WHERE project = ?1
+            )",
+            params![project],
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        // Delete memories
+        let memories_deleted = tx
+            .execute("DELETE FROM memories WHERE project = ?1", params![project])
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        // Delete sessions
+        let sessions_deleted = tx
+            .execute("DELETE FROM sessions WHERE project = ?1", params![project])
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        // Delete chunks (cascades from documents deletion)
+        let chunks_deleted = tx
+            .execute(
+                "DELETE FROM chunks WHERE document_id IN (
+                    SELECT id FROM documents WHERE project = ?1
+                )",
+                params![project],
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        // Delete documents
+        let documents_deleted = tx
+            .execute("DELETE FROM documents WHERE project = ?1", params![project])
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        tx.commit()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        Ok((
+            memories_deleted,
+            sessions_deleted,
+            chunks_deleted,
+            documents_deleted,
+        ))
+    }
+
+    /// Delete all data created before a specific date (ISO 8601 format).
+    /// Returns (memories_deleted, sessions_deleted, chunks_deleted, documents_deleted).
+    pub fn purge_before_date(&self, before_dt: &str) -> HyphaeResult<(usize, usize, usize, usize)> {
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        // Delete vector embeddings for memories
+        tx.execute(
+            "DELETE FROM vec_memories WHERE memory_id IN (
+                SELECT id FROM memories WHERE created_at < ?1
+            )",
+            params![before_dt],
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        // Delete memories
+        let memories_deleted = tx
+            .execute(
+                "DELETE FROM memories WHERE created_at < ?1",
+                params![before_dt],
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        // Delete sessions
+        let sessions_deleted = tx
+            .execute(
+                "DELETE FROM sessions WHERE started_at < ?1",
+                params![before_dt],
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        // Delete chunks
+        let chunks_deleted = tx
+            .execute(
+                "DELETE FROM chunks WHERE created_at < ?1",
+                params![before_dt],
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        // Delete documents
+        let documents_deleted = tx
+            .execute(
+                "DELETE FROM documents WHERE created_at < ?1",
+                params![before_dt],
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        tx.commit()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        Ok((
+            memories_deleted,
+            sessions_deleted,
+            chunks_deleted,
+            documents_deleted,
+        ))
     }
 }
 
@@ -1780,5 +1991,121 @@ mod tests {
         let results = store.search_all_projects("rust", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].project.as_deref(), Some("alpha"));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Purge Operations Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_purge_by_project() {
+        let store = test_store();
+
+        // Create memories in two projects
+        let mem1 = make_project_memory("topic1", "summary1", "proj_a");
+        let mem2 = make_project_memory("topic1", "summary2", "proj_b");
+        let mem3 = make_project_memory("topic1", "summary3", "proj_a");
+
+        store.store(mem1).unwrap();
+        store.store(mem2).unwrap();
+        store.store(mem3).unwrap();
+
+        assert_eq!(store.count_memories_by_project("proj_a").unwrap(), 2);
+        assert_eq!(store.count_memories_by_project("proj_b").unwrap(), 1);
+
+        // Purge proj_a
+        let (mem_del, _ses_del, _chk_del, _doc_del) = store.purge_project("proj_a").unwrap();
+
+        assert_eq!(mem_del, 2);
+        assert_eq!(store.count_memories_by_project("proj_a").unwrap(), 0);
+        assert_eq!(store.count_memories_by_project("proj_b").unwrap(), 1);
+    }
+
+    #[test]
+    fn test_count_memories_by_project() {
+        let store = test_store();
+
+        let mem1 = make_project_memory("topic1", "summary1", "myproject");
+        let mem2 = make_project_memory("topic1", "summary2", "myproject");
+        let mem3 = make_project_memory("topic2", "summary3", "other");
+
+        store.store(mem1).unwrap();
+        store.store(mem2).unwrap();
+        store.store(mem3).unwrap();
+
+        assert_eq!(store.count_memories_by_project("myproject").unwrap(), 2);
+        assert_eq!(store.count_memories_by_project("other").unwrap(), 1);
+        assert_eq!(store.count_memories_by_project("nonexistent").unwrap(), 0);
+    }
+
+    #[test]
+    fn test_count_memories_before_date() {
+        let store = test_store();
+
+        let now = Utc::now();
+        let old_date = (now - chrono::Duration::days(10)).to_rfc3339();
+        let future_date = (now + chrono::Duration::days(10)).to_rfc3339();
+
+        // Create a memory with an old timestamp (manually since builder creates with now)
+        let old_mem = Memory::builder("topic".into(), "summary".into(), Importance::Medium).build();
+
+        // We can't easily set the created_at in Memory builder, so we'll test with current time
+        // Just verify the method works
+        let mem = Memory::builder("topic".into(), "summary".into(), Importance::Medium).build();
+        store.store(mem).unwrap();
+
+        // Should find the memory when checking before future date
+        let count = store.count_memories_before_date(&future_date).unwrap();
+        assert_eq!(count, 1);
+
+        // Should find 0 when checking before past date
+        let count = store.count_memories_before_date(&old_date).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_purge_project_empty() {
+        let store = test_store();
+
+        // Purging empty project should work without error
+        let (mem_del, ses_del, chk_del, doc_del) = store.purge_project("nonexistent").unwrap();
+
+        assert_eq!(mem_del, 0);
+        assert_eq!(ses_del, 0);
+        assert_eq!(chk_del, 0);
+        assert_eq!(doc_del, 0);
+    }
+
+    #[test]
+    fn test_count_sessions_by_project() {
+        let store = test_store();
+
+        // Create sessions using session_start
+        let (_id1, _started1) = store.session_start("proj_a", Some("task1")).unwrap();
+        let (_id2, _started2) = store.session_start("proj_a", Some("task2")).unwrap();
+        let (_id3, _started3) = store.session_start("proj_b", Some("task3")).unwrap();
+
+        assert_eq!(store.count_sessions_by_project("proj_a").unwrap(), 2);
+        assert_eq!(store.count_sessions_by_project("proj_b").unwrap(), 1);
+        assert_eq!(store.count_sessions_by_project("nonexistent").unwrap(), 0);
+    }
+
+    #[test]
+    fn test_count_sessions_before_date() {
+        let store = test_store();
+
+        let now = Utc::now();
+        let future_date = (now + chrono::Duration::days(10)).to_rfc3339();
+        let past_date = (now - chrono::Duration::days(10)).to_rfc3339();
+
+        let (_id, _started) = store.session_start("proj_a", Some("task")).unwrap();
+
+        // Should find session before future date
+        let count = store.count_sessions_before_date(&future_date).unwrap();
+        assert_eq!(count, 1);
+
+        // Should find 0 sessions before past date
+        let count = store.count_sessions_before_date(&past_date).unwrap();
+        assert_eq!(count, 0);
     }
 }

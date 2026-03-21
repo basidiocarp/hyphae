@@ -9,6 +9,7 @@ pub mod ids;
 pub mod memoir;
 pub mod memoir_store;
 pub mod memory;
+pub mod secrets;
 pub mod store;
 
 pub use chunk::{Chunk, ChunkMetadata, ChunkSearchResult, Document, SourceType};
@@ -24,4 +25,5 @@ pub use memoir_store::{ConceptInput, LinkInput, MemoirStore, UpsertReport};
 pub use memory::{
     Importance, Memory, MemoryBuilder, MemorySource, StoreStats, TopicHealth, Weight,
 };
+pub use secrets::detect_secrets;
 pub use store::MemoryStore;

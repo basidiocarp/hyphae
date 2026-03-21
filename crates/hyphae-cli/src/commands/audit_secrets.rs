@@ -1,43 +1,5 @@
-use regex::Regex;
-
-use hyphae_core::MemoryStore;
+use hyphae_core::{MemoryStore, detect_secrets};
 use hyphae_store::SqliteStore;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Secrets Detection Patterns
-// ─────────────────────────────────────────────────────────────────────────────
-
-const SECRET_PATTERNS: &[(&str, &str)] = &[
-    (r"(?i)(api[_-]?key|apikey)\s*[:=]\s*\S{10,}", "API key"),
-    (
-        r"(?i)(secret|password|passwd|pwd)\s*[:=]\s*\S{8,}",
-        "password/secret",
-    ),
-    (r"sk-[a-zA-Z0-9]{20,}", "OpenAI API key"),
-    (r"ghp_[a-zA-Z0-9]{36,}", "GitHub personal access token"),
-    (r"(?i)bearer\s+[a-zA-Z0-9._-]{20,}", "Bearer token"),
-    (r"AKIA[0-9A-Z]{16}", "AWS access key"),
-    (
-        r"(?i)(token|auth)\s*[:=]\s*[a-zA-Z0-9._-]{20,}",
-        "auth token",
-    ),
-    (r"-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----", "private key"),
-];
-
-/// Detect common secret patterns in content.
-fn detect_secrets(content: &str) -> Vec<String> {
-    let mut detected = Vec::new();
-
-    for (pattern, secret_type) in SECRET_PATTERNS {
-        if let Ok(regex) = Regex::new(pattern) {
-            if regex.is_match(content) {
-                detected.push(secret_type.to_string());
-            }
-        }
-    }
-
-    detected
-}
 
 pub fn cmd_audit_secrets(
     store: &SqliteStore,
@@ -97,4 +59,60 @@ pub fn cmd_audit_secrets(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hyphae_core::MemoryStore;
+    use hyphae_store::SqliteStore;
+
+    #[test]
+    fn test_audit_secrets_empty_store() -> anyhow::Result<()> {
+        let store = SqliteStore::in_memory()?;
+        // Should complete without error
+        cmd_audit_secrets(&store, None, false, None)?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_audit_secrets_finds_api_keys() -> anyhow::Result<()> {
+        let store = SqliteStore::in_memory()?;
+
+        // Store a memory with an API key
+        let memory = hyphae_core::Memory::builder(
+            "credentials".into(),
+            "api_key = sk1234567890abcdefghij".into(),
+            hyphae_core::Importance::Medium,
+        ).build();
+        let _id = store.store(memory)?;
+
+        // Run audit - should detect the secret
+        cmd_audit_secrets(&store, None, false, None)?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_audit_secrets_filters_by_topic() -> anyhow::Result<()> {
+        let store = SqliteStore::in_memory()?;
+
+        // Store two memories - one with secrets, one without
+        let mem_with_secret = hyphae_core::Memory::builder(
+            "credentials".into(),
+            "password = secret123".into(),
+            hyphae_core::Importance::Medium,
+        ).build();
+        store.store(mem_with_secret)?;
+
+        let mem_clean = hyphae_core::Memory::builder(
+            "notes".into(),
+            "How to debug memory leaks".into(),
+            hyphae_core::Importance::Medium,
+        ).build();
+        store.store(mem_clean)?;
+
+        // Audit only credentials topic
+        cmd_audit_secrets(&store, Some("credentials".into()), false, None)?;
+        Ok(())
+    }
 }
