@@ -1257,7 +1257,7 @@ dependencies = [
 
 [[package]]
 name = "hyphae-cli"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1285,7 +1285,7 @@ dependencies = [
 
 [[package]]
 name = "hyphae-core"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "chrono",
  "fastembed",
@@ -1299,7 +1299,7 @@ dependencies = [
 
 [[package]]
 name = "hyphae-ingest"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1314,7 +1314,7 @@ dependencies = [
 
 [[package]]
 name = "hyphae-mcp"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1331,7 +1331,7 @@ dependencies = [
 
 [[package]]
 name = "hyphae-store"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "chrono",
  "hyphae-core",
@@ -2842,7 +2842,8 @@ dependencies = [
 
 [[package]]
 name = "spore"
-version = "0.3.1"
+version = "0.4.0"
+source = "git+https://github.com/basidiocarp/spore?tag=v0.4.0#bd4843d2797f5918c9b6927bad42f98a23e34592"
 dependencies = [
  "anyhow",
  "chrono",
