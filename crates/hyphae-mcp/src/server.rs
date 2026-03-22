@@ -22,6 +22,17 @@ const NUDGE_BACKOFF: u32 = 50;
 /// Topic memory count threshold for suggesting consolidation.
 const CONSOLIDATION_THRESHOLD: usize = 15;
 
+/// Bundled context passed to [`handle_tools_call`] to stay within argument limits.
+struct ToolCallCtx<'a> {
+    params: &'a Option<Value>,
+    store: &'a SqliteStore,
+    embedder: Option<&'a dyn Embedder>,
+    compact: bool,
+    project: Option<&'a str>,
+    calls_since_store: &'a mut u32,
+    reject_secrets: bool,
+}
+
 /// Build an initial context string with recent memories for the project.
 fn initial_context(store: &SqliteStore, project: Option<&str>) -> String {
     use hyphae_core::MemoryStore;
@@ -185,13 +196,15 @@ pub fn run_server(
             "tools/list" => handle_tools_list(id, embedder.is_some()),
             "tools/call" => handle_tools_call(
                 id,
-                &msg.params,
-                store,
-                embedder,
-                compact,
-                project.as_deref(),
-                &mut calls_since_store,
-                reject_secrets,
+                ToolCallCtx {
+                    params: &msg.params,
+                    store,
+                    embedder,
+                    compact,
+                    project: project.as_deref(),
+                    calls_since_store: &mut calls_since_store,
+                    reject_secrets,
+                },
             ),
             other => JsonRpcResponse::method_not_found(id, other),
         };
@@ -275,16 +288,16 @@ fn handle_tools_list(id: Value, has_embedder: bool) -> JsonRpcResponse {
     JsonRpcResponse::ok(id, tools::tool_definitions(has_embedder))
 }
 
-fn handle_tools_call(
-    id: Value,
-    params: &Option<Value>,
-    store: &SqliteStore,
-    embedder: Option<&dyn Embedder>,
-    compact: bool,
-    project: Option<&str>,
-    calls_since_store: &mut u32,
-    reject_secrets: bool,
-) -> JsonRpcResponse {
+fn handle_tools_call(id: Value, ctx: ToolCallCtx<'_>) -> JsonRpcResponse {
+    let ToolCallCtx {
+        params,
+        store,
+        embedder,
+        compact,
+        project,
+        calls_since_store,
+        reject_secrets,
+    } = ctx;
     let params = match params {
         Some(p) => p,
         None => {
@@ -410,13 +423,15 @@ mod tests {
         let mut counter = 0;
         let resp = handle_tools_call(
             json!(3),
-            &None,
-            &store,
-            None,
-            false,
-            None,
-            &mut counter,
-            false,
+            ToolCallCtx {
+                params: &None,
+                store: &store,
+                embedder: None,
+                compact: false,
+                project: None,
+                calls_since_store: &mut counter,
+                reject_secrets: false,
+            },
         );
         assert!(resp.error.is_some());
         assert_eq!(resp.error.unwrap().code, -32602);
@@ -429,13 +444,15 @@ mod tests {
         let params = Some(json!({"arguments": {}}));
         let resp = handle_tools_call(
             json!(4),
-            &params,
-            &store,
-            None,
-            false,
-            None,
-            &mut counter,
-            false,
+            ToolCallCtx {
+                params: &params,
+                store: &store,
+                embedder: None,
+                compact: false,
+                project: None,
+                calls_since_store: &mut counter,
+                reject_secrets: false,
+            },
         );
         assert!(resp.error.is_some());
         assert_eq!(resp.error.unwrap().code, -32602);
@@ -448,13 +465,15 @@ mod tests {
         let params = Some(json!({"name": "nonexistent", "arguments": {}}));
         let resp = handle_tools_call(
             json!(5),
-            &params,
-            &store,
-            None,
-            false,
-            None,
-            &mut counter,
-            false,
+            ToolCallCtx {
+                params: &params,
+                store: &store,
+                embedder: None,
+                compact: false,
+                project: None,
+                calls_since_store: &mut counter,
+                reject_secrets: false,
+            },
         );
         // Unknown tool returns a result with is_error, not a JSON-RPC error
         let result = resp.result.unwrap();
@@ -475,13 +494,15 @@ mod tests {
         }));
         let resp = handle_tools_call(
             json!(6),
-            &params,
-            &store,
-            None,
-            false,
-            None,
-            &mut counter,
-            false,
+            ToolCallCtx {
+                params: &params,
+                store: &store,
+                embedder: None,
+                compact: false,
+                project: None,
+                calls_since_store: &mut counter,
+                reject_secrets: false,
+            },
         );
         assert!(resp.error.is_none());
         // Store call resets counter
@@ -498,13 +519,15 @@ mod tests {
         }));
         let resp = handle_tools_call(
             json!(7),
-            &params,
-            &store,
-            None,
-            false,
-            None,
-            &mut counter,
-            false,
+            ToolCallCtx {
+                params: &params,
+                store: &store,
+                embedder: None,
+                compact: false,
+                project: None,
+                calls_since_store: &mut counter,
+                reject_secrets: false,
+            },
         );
         let result = resp.result.unwrap();
         let text = result["content"][0]["text"].as_str().unwrap();
@@ -521,13 +544,15 @@ mod tests {
         }));
         let resp = handle_tools_call(
             json!(8),
-            &params,
-            &store,
-            None,
-            false,
-            None,
-            &mut counter,
-            false,
+            ToolCallCtx {
+                params: &params,
+                store: &store,
+                embedder: None,
+                compact: false,
+                project: None,
+                calls_since_store: &mut counter,
+                reject_secrets: false,
+            },
         );
         let result = resp.result.unwrap();
         let text = result["content"][0]["text"].as_str().unwrap();
@@ -544,24 +569,28 @@ mod tests {
         }));
         handle_tools_call(
             json!(9),
-            &params,
-            &store,
-            None,
-            false,
-            None,
-            &mut counter,
-            false,
+            ToolCallCtx {
+                params: &params,
+                store: &store,
+                embedder: None,
+                compact: false,
+                project: None,
+                calls_since_store: &mut counter,
+                reject_secrets: false,
+            },
         );
         assert_eq!(counter, 1);
         handle_tools_call(
             json!(10),
-            &params,
-            &store,
-            None,
-            false,
-            None,
-            &mut counter,
-            false,
+            ToolCallCtx {
+                params: &params,
+                store: &store,
+                embedder: None,
+                compact: false,
+                project: None,
+                calls_since_store: &mut counter,
+                reject_secrets: false,
+            },
         );
         assert_eq!(counter, 2);
     }

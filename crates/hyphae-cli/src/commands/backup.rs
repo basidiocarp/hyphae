@@ -46,7 +46,7 @@ pub(crate) fn cmd_restore(path: PathBuf) -> Result<()> {
     }
 
     // Verify it's a SQLite file by checking magic bytes
-    let _ = fs::read(&path)
+    fs::read(&path)
         .context("failed to read backup file")?
         .get(0..16)
         .and_then(|bytes| {

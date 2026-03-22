@@ -276,8 +276,8 @@ pub(crate) fn cmd_evaluate(store: &SqliteStore, days: i64, project: Option<Strin
 
     // Print metrics table
     println!(
-        "{:<25} {:>14} {:>14} {}",
-        "Metric", "Previous {}", "Recent {}", "Trend"
+        "{:<25} {:>14} {:>14} Trend",
+        "Metric", "Previous {}", "Recent {}"
     );
     println!(
         "{:<25} {:>14} {:>14} {}",

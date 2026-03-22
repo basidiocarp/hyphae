@@ -295,7 +295,7 @@ fn main() -> Result<()> {
                 &store,
                 fmt,
                 topic.clone(),
-                min_weight.clone(),
+                min_weight,
                 resolved_project,
             )?;
         }

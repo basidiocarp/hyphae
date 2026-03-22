@@ -59,7 +59,7 @@ pub(crate) fn tool_store(
     // Secrets Rejection (if enabled)
     // ─────────────────────────────────────────────────────────────────────────────
     if reject_secrets {
-        let detected = detect_secrets(&content);
+        let detected = detect_secrets(content);
         if !detected.is_empty() {
             return ToolResult::error(format!(
                 "Storing blocked: secrets detected in content [{}]. \
@@ -137,7 +137,7 @@ pub(crate) fn tool_store(
                         return ToolResult::error(format!("failed to update: {e}"));
                     }
 
-                    let warnings = detect_secrets(&content);
+                    let warnings = detect_secrets(content);
                     return if compact {
                         if !warnings.is_empty() {
                             ToolResult::text(format!(
@@ -169,7 +169,7 @@ pub(crate) fn tool_store(
 
     match store.store(memory) {
         Ok(id) => {
-            let warnings = detect_secrets(&content);
+            let warnings = detect_secrets(content);
             if compact {
                 if !warnings.is_empty() {
                     ToolResult::text(format!(
@@ -1159,7 +1159,7 @@ fn extract_common_pattern(summaries: &[&str]) -> String {
     }
 
     if summaries.len() == 1 {
-        return format!("{}", summaries[0]);
+        return summaries[0].to_string();
     }
 
     // For multiple summaries, extract shared tokens
@@ -1467,7 +1467,7 @@ pub(crate) fn tool_evaluate(
         "Sessions", previous_sessions, recent_sessions
     ));
 
-    output.push_str("\n");
+    output.push('\n');
 
     // Overall assessment
     let improving_count = [
