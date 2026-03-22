@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.7.1 - 2026-03-22
+
+### Fixed
+
+- **Tool definitions cache**: Removed OnceLock that cached stale `has_embedder` state on first call. Tool lists now reflect actual embedder availability.
+- **Vector search data loss**: Replaced `filter_map(|r| r.ok())` with proper error propagation in 4 KNN query sites. Corrupted rows now surface as errors instead of silently disappearing.
+- **Unicode panic**: String slicing in MCP server and memory tools now uses `truncate_str()` with UTF-8 boundary checking. Multi-byte characters in memory summaries no longer crash the server.
+- **Spore migration**: Updated for spore v0.4.0 `SporeError` return types.
+
+### Added
+
+- SAFETY comments on all 11 `unchecked_transaction` sites documenting why nested transactions cannot occur.
+
 ## v0.7.0 - 2026-03-21
 
 ### Added
