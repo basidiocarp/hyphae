@@ -88,6 +88,19 @@ impl SqliteStore {
             .map_err(|e| HyphaeError::Database(e.to_string()))
     }
 
+    /// Count chunks in documents created before a given date.
+    pub fn count_chunks_before_date(&self, before_dt: &str) -> HyphaeResult<usize> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM chunks WHERE document_id IN (
+                    SELECT id FROM documents WHERE created_at < ?1
+                )",
+                params![before_dt],
+                |row| row.get(0),
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))
+    }
+
     /// Delete all data for a specific project.
     /// Returns (memories_deleted, sessions_deleted, chunks_deleted, documents_deleted).
     pub fn purge_project(&self, project: &str) -> HyphaeResult<(usize, usize, usize, usize)> {
