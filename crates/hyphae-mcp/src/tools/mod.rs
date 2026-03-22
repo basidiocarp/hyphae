@@ -1,5 +1,3 @@
-use std::sync::OnceLock;
-
 use serde_json::{Value, json};
 
 use hyphae_core::{Embedder, Memoir, MemoirStore};
@@ -18,10 +16,13 @@ mod session;
 // Tool schemas for tools/list
 // ===========================================================================
 
-static TOOL_DEFINITIONS: OnceLock<Vec<Value>> = OnceLock::new();
-
 pub fn tool_definitions(has_embedder: bool) -> Value {
-    let tools = TOOL_DEFINITIONS.get_or_init(|| schema::tool_definitions_json(has_embedder));
+    // ─────────────────────────────────────────────────────────────────────
+    // Compute tool definitions fresh each call, keyed by has_embedder
+    // (Schema generation is cheap; caching with wrong has_embedder value
+    // causes vector search tools to be missing/present incorrectly)
+    // ─────────────────────────────────────────────────────────────────────
+    let tools = schema::tool_definitions_json(has_embedder);
     json!({ "tools": tools })
 }
 

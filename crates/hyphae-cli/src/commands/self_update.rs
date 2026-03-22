@@ -9,5 +9,6 @@ pub fn run(check_only: bool) -> Result<()> {
         env!("CARGO_PKG_VERSION"),
         env!("CARGO_PKG_REPOSITORY"),
         check_only,
-    )
+    )?;
+    Ok(())
 }

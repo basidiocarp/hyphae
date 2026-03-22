@@ -426,6 +426,8 @@ impl SqliteStore {
     /// Delete all data for a specific project.
     /// Returns (memories_deleted, sessions_deleted, chunks_deleted, documents_deleted).
     pub fn purge_project(&self, project: &str) -> HyphaeResult<(usize, usize, usize, usize)> {
+        // SAFETY: No nested transactions — this method does not call other &self methods
+        // that open transactions. The &self receiver is required by SqliteStore.
         let tx = self
             .conn
             .unchecked_transaction()
@@ -479,6 +481,8 @@ impl SqliteStore {
     /// Delete all data created before a specific date (ISO 8601 format).
     /// Returns (memories_deleted, sessions_deleted, chunks_deleted, documents_deleted).
     pub fn purge_before_date(&self, before_dt: &str) -> HyphaeResult<(usize, usize, usize, usize)> {
+        // SAFETY: No nested transactions — this method does not call other &self methods
+        // that open transactions. The &self receiver is required by SqliteStore.
         let tx = self
             .conn
             .unchecked_transaction()

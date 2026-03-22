@@ -9,6 +9,8 @@ pub fn init_db(conn: &Connection) -> Result<(), HyphaeError> {
 }
 
 pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(), HyphaeError> {
+    // SAFETY: No nested transactions — this is initialization code that does not call
+    // other methods that open transactions. Called only once during database setup.
     let tx = conn.unchecked_transaction().map_err(|e| {
         HyphaeError::Database(format!("failed to start migration transaction: {e}"))
     })?;

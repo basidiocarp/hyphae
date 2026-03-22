@@ -82,6 +82,8 @@ impl MemoryStore for SqliteStore {
         let sd = source_data(&memory.source);
         let emb_blob = memory.embedding.as_deref().map(embedding_to_blob);
 
+        // SAFETY: No nested transactions — this method does not call other &self methods
+        // that open transactions. The &self receiver is required by the MemoryStore trait.
         let tx = self
             .conn
             .unchecked_transaction()
@@ -140,6 +142,8 @@ impl MemoryStore for SqliteStore {
     }
 
     fn delete(&self, id: &MemoryId) -> HyphaeResult<()> {
+        // SAFETY: No nested transactions — this method does not call other &self methods
+        // that open transactions. The &self receiver is required by the MemoryStore trait.
         let tx = self
             .conn
             .unchecked_transaction()
@@ -289,8 +293,8 @@ impl MemoryStore for SqliteStore {
                 Ok((row.get::<_, String>(0)?, row.get::<_, f32>(1)?))
             })
             .map_err(|e| HyphaeError::Database(e.to_string()))?
-            .filter_map(|r| r.ok())
-            .collect();
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         if knn_rows.is_empty() {
             return Ok(Vec::new());
@@ -319,8 +323,8 @@ impl MemoryStore for SqliteStore {
         let memories: Vec<Memory> = stmt
             .query_map(params_ref.as_slice(), row_to_memory)
             .map_err(|e| HyphaeError::Database(e.to_string()))?
-            .filter_map(|r| r.ok())
-            .collect();
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         let mut memory_map: HashMap<String, Memory> = memories
             .into_iter()
@@ -457,6 +461,8 @@ impl MemoryStore for SqliteStore {
     }
 
     fn prune(&self, weight_threshold: f32) -> HyphaeResult<usize> {
+        // SAFETY: No nested transactions — this method does not call other &self methods
+        // that open transactions. The &self receiver is required by the MemoryStore trait.
         let tx = self
             .conn
             .unchecked_transaction()
@@ -522,6 +528,8 @@ impl MemoryStore for SqliteStore {
     }
 
     fn consolidate_topic(&self, topic: &str, consolidated: Memory) -> HyphaeResult<()> {
+        // SAFETY: No nested transactions — this method does not call other &self methods
+        // that open transactions. The &self receiver is required by the MemoryStore trait.
         let tx = self
             .conn
             .unchecked_transaction()

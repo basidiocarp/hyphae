@@ -12,6 +12,22 @@ use crate::protocol::ToolResult;
 use super::{get_bounded_i64, get_str, validate_max_length, validate_required_string};
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Safely truncate a string at a byte boundary, respecting multi-byte UTF-8.
+fn truncate_str(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Gap 10: Age indicator for stale memory feedback
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -976,11 +992,7 @@ pub(crate) fn tool_promote_to_memoir(
 
     output.push_str("Memory summaries:\n");
     for mem in memories.iter().take(20) {
-        let summary = if mem.summary.len() > 120 {
-            format!("{}...", &mem.summary[..120])
-        } else {
-            mem.summary.clone()
-        };
+        let summary = format!("{}...", truncate_str(&mem.summary, 120));
         output.push_str(&format!("  [{}] {summary}\n", mem.importance));
     }
 

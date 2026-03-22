@@ -611,6 +611,8 @@ impl MemoirStore for SqliteStore {
         memoir_id: &MemoirId,
         concepts: &[ConceptInput],
     ) -> HyphaeResult<UpsertReport> {
+        // SAFETY: No nested transactions — this method does not call other &self methods
+        // that open transactions. The &self receiver is required by the MemoirStore trait.
         let tx = self
             .conn
             .unchecked_transaction()
@@ -668,6 +670,8 @@ impl MemoirStore for SqliteStore {
             .map(|c| (c.name.as_str(), &c.id))
             .collect();
 
+        // SAFETY: No nested transactions — this method does not call other &self methods
+        // that open transactions. The &self receiver is required by the MemoirStore trait.
         let tx = self
             .conn
             .unchecked_transaction()

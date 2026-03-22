@@ -9,6 +9,22 @@ use hyphae_store::SqliteStore;
 use crate::protocol::{JsonRpcMessage, JsonRpcResponse};
 use crate::tools;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Safely truncate a string at a byte boundary, respecting multi-byte UTF-8.
+fn truncate_str(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 const SERVER_NAME: &str = "hyphae";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const PROTOCOL_VERSION: &str = "2024-11-05";
@@ -99,13 +115,7 @@ fn initial_context(store: &SqliteStore, project: Option<&str>) -> String {
         }
     }
 
-    let truncate = |s: &str| -> String {
-        if s.len() > 200 {
-            format!("{}...", &s[..200])
-        } else {
-            s.to_string()
-        }
-    };
+    let truncate = |s: &str| -> String { format!("{}...", truncate_str(s, 200)) };
 
     if !decisions.is_empty() {
         ctx.push_str("Key decisions:\n");

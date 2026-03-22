@@ -41,6 +41,8 @@ impl ChunkStore for SqliteStore {
             return Ok(0);
         }
 
+        // SAFETY: No nested transactions — this method does not call other &self methods
+        // that open transactions. The &self receiver is required by the ChunkStore trait.
         let tx = self
             .conn
             .unchecked_transaction()
@@ -142,6 +144,8 @@ impl ChunkStore for SqliteStore {
     }
 
     fn delete_document(&self, id: &DocumentId) -> HyphaeResult<()> {
+        // SAFETY: No nested transactions — this method does not call other &self methods
+        // that open transactions. The &self receiver is required by the ChunkStore trait.
         let tx = self
             .conn
             .unchecked_transaction()
@@ -258,8 +262,8 @@ impl ChunkStore for SqliteStore {
                 Ok((row.get::<_, String>(0)?, row.get::<_, f32>(1)?))
             })
             .map_err(|e| HyphaeError::Database(e.to_string()))?
-            .filter_map(|r| r.ok())
-            .collect();
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         if knn_rows.is_empty() {
             return Ok(Vec::new());
@@ -289,7 +293,9 @@ impl ChunkStore for SqliteStore {
         let chunk_map: HashMap<String, Chunk> = stmt
             .query_map(params_ref.as_slice(), row_to_chunk)
             .map_err(|e| HyphaeError::Database(e.to_string()))?
-            .filter_map(|r| r.ok())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?
+            .into_iter()
             .map(|c| (c.id.to_string(), c))
             .collect();
 
