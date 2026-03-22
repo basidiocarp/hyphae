@@ -1,15 +1,15 @@
 use std::collections::HashMap;
 
 use chrono::Utc;
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{OptionalExtension, params};
 
 use hyphae_core::{
     HyphaeError, HyphaeResult, Memory, MemoryId, MemoryStore, StoreStats, TopicHealth,
 };
 
-use super::helpers::{embedding_to_blob, row_to_memory, source_data, source_type, SELECT_COLS};
-use super::search::sanitize_fts_query;
 use super::SqliteStore;
+use super::helpers::{SELECT_COLS, embedding_to_blob, row_to_memory, source_data, source_type};
+use super::search::sanitize_fts_query;
 
 impl MemoryStore for SqliteStore {
     fn store(&self, memory: Memory) -> HyphaeResult<MemoryId> {
@@ -355,8 +355,7 @@ impl MemoryStore for SqliteStore {
         // ─────────────────────────────────────────────────────────────────────
         // FTS5 search with project filter using UNINDEXED column
         // ─────────────────────────────────────────────────────────────────────
-        let fts_sql =
-            "SELECT m.id, m.created_at, m.updated_at, m.last_accessed, m.access_count, m.weight, \
+        let fts_sql = "SELECT m.id, m.created_at, m.updated_at, m.last_accessed, m.access_count, m.weight, \
                     m.topic, m.summary, m.raw_excerpt, m.keywords, \
                     m.importance, m.source_type, m.source_data, m.related_ids, m.embedding, \
                     m.project, m.expires_at, fts.rank \

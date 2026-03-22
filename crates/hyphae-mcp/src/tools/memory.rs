@@ -1,7 +1,9 @@
 use chrono::Utc;
 use serde_json::Value;
 
-use hyphae_core::{Embedder, Importance, MemoirStore, Memory, MemoryId, MemoryStore, Weight, detect_secrets};
+use hyphae_core::{
+    Embedder, Importance, MemoirStore, Memory, MemoryId, MemoryStore, Weight, detect_secrets,
+};
 use hyphae_store::SqliteStore;
 use hyphae_store::context;
 

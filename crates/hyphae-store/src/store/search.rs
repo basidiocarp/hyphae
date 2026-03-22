@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use hyphae_core::{Chunk, ChunkStore, HyphaeResult, Memory, MemoryStore};
 
-use super::{context, SqliteStore};
+use super::{SqliteStore, context};
 
 // ---------------------------------------------------------------------------
 // Unified search result
@@ -653,7 +653,7 @@ mod tests {
     #[test]
     fn test_search_all_code_context_expansion() {
         use hyphae_core::memoir::{Concept, Memoir};
-        use hyphae_core::{ids::MemoirId, MemoirStore};
+        use hyphae_core::{MemoirStore, ids::MemoirId};
 
         let store = test_store();
 

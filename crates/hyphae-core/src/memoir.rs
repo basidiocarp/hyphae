@@ -479,9 +479,18 @@ mod tests {
     #[test]
     fn test_relation_depends_on_synonyms() {
         // Test canonical form
-        assert_eq!("depends_on".parse::<Relation>().unwrap(), Relation::DependsOn);
-        assert_eq!("dependson".parse::<Relation>().unwrap(), Relation::DependsOn);
-        assert_eq!("depends-on".parse::<Relation>().unwrap(), Relation::DependsOn);
+        assert_eq!(
+            "depends_on".parse::<Relation>().unwrap(),
+            Relation::DependsOn
+        );
+        assert_eq!(
+            "dependson".parse::<Relation>().unwrap(),
+            Relation::DependsOn
+        );
+        assert_eq!(
+            "depends-on".parse::<Relation>().unwrap(),
+            Relation::DependsOn
+        );
 
         // Test synonyms: imports, uses, requires
         assert_eq!("imports".parse::<Relation>().unwrap(), Relation::DependsOn);
@@ -492,13 +501,28 @@ mod tests {
     #[test]
     fn test_relation_related_to_synonyms() {
         // Test canonical form
-        assert_eq!("related_to".parse::<Relation>().unwrap(), Relation::RelatedTo);
-        assert_eq!("relatedto".parse::<Relation>().unwrap(), Relation::RelatedTo);
+        assert_eq!(
+            "related_to".parse::<Relation>().unwrap(),
+            Relation::RelatedTo
+        );
+        assert_eq!(
+            "relatedto".parse::<Relation>().unwrap(),
+            Relation::RelatedTo
+        );
 
         // Test synonyms: references, refers_to
-        assert_eq!("references".parse::<Relation>().unwrap(), Relation::RelatedTo);
-        assert_eq!("refers_to".parse::<Relation>().unwrap(), Relation::RelatedTo);
-        assert_eq!("refers-to".parse::<Relation>().unwrap(), Relation::RelatedTo);
+        assert_eq!(
+            "references".parse::<Relation>().unwrap(),
+            Relation::RelatedTo
+        );
+        assert_eq!(
+            "refers_to".parse::<Relation>().unwrap(),
+            Relation::RelatedTo
+        );
+        assert_eq!(
+            "refers-to".parse::<Relation>().unwrap(),
+            Relation::RelatedTo
+        );
     }
 
     #[test]
@@ -515,8 +539,14 @@ mod tests {
     #[test]
     fn test_relation_case_insensitive() {
         // Test case insensitivity
-        assert_eq!("DEPENDS_ON".parse::<Relation>().unwrap(), Relation::DependsOn);
-        assert_eq!("Depends_On".parse::<Relation>().unwrap(), Relation::DependsOn);
+        assert_eq!(
+            "DEPENDS_ON".parse::<Relation>().unwrap(),
+            Relation::DependsOn
+        );
+        assert_eq!(
+            "Depends_On".parse::<Relation>().unwrap(),
+            Relation::DependsOn
+        );
         assert_eq!("CONTAINS".parse::<Relation>().unwrap(), Relation::PartOf);
         assert_eq!("Contains".parse::<Relation>().unwrap(), Relation::PartOf);
     }

@@ -12,7 +12,7 @@ use std::path::Path;
 use std::sync::Once;
 
 use chrono::{DateTime, Utc};
-use rusqlite::{ffi::sqlite3_auto_extension, params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, ffi::sqlite3_auto_extension, params};
 
 use hyphae_core::{HyphaeError, HyphaeResult, Memory, MemoryStore};
 

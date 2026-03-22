@@ -101,9 +101,7 @@ pub fn cmd_changelog(
     // All memories grouped by topic
     // ─────────────────────────────────────────────────────────────────────────────
 
-    let all_topics = store
-        .list_topics(project.as_deref())
-        .unwrap_or_default();
+    let all_topics = store.list_topics(project.as_deref()).unwrap_or_default();
 
     let mut topic_counts: BTreeMap<String, usize> = BTreeMap::new();
 
@@ -112,10 +110,7 @@ pub fn cmd_changelog(
             .get_by_topic(&topic, project.as_deref())
             .unwrap_or_default();
 
-        let recent_count = memories
-            .iter()
-            .filter(|m| m.created_at > cutoff)
-            .count();
+        let recent_count = memories.iter().filter(|m| m.created_at > cutoff).count();
 
         if recent_count > 0 {
             topic_counts.insert(topic, recent_count);

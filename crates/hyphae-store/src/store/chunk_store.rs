@@ -1,14 +1,14 @@
 use std::collections::HashMap;
 
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{OptionalExtension, params};
 
 use hyphae_core::{
     Chunk, ChunkSearchResult, ChunkStore, Document, DocumentId, HyphaeError, HyphaeResult,
 };
 
-use super::helpers::{embedding_to_blob, row_to_chunk, row_to_document, CHUNK_COLS, DOCUMENT_COLS};
-use super::search::sanitize_fts_query;
 use super::SqliteStore;
+use super::helpers::{CHUNK_COLS, DOCUMENT_COLS, embedding_to_blob, row_to_chunk, row_to_document};
+use super::search::sanitize_fts_query;
 
 // Prefixed chunk columns for JOIN queries
 const C_CHUNK_COLS: &str = "c.id, c.document_id, c.chunk_index, c.content, c.source_path, \

@@ -1,18 +1,18 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{OptionalExtension, params};
 
 use hyphae_core::{
     Concept, ConceptId, ConceptInput, ConceptLink, HyphaeError, HyphaeResult, Label, LinkId,
     LinkInput, Memoir, MemoirId, MemoirStats, MemoirStore, MemoryId, Relation, UpsertReport,
 };
 
+use super::SqliteStore;
 use super::helpers::{
-    row_to_concept, row_to_link, row_to_memoir, CONCEPT_COLS, LINK_COLS, MEMOIR_COLS,
+    CONCEPT_COLS, LINK_COLS, MEMOIR_COLS, row_to_concept, row_to_link, row_to_memoir,
 };
 use super::search::sanitize_fts_query;
-use super::SqliteStore;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Relation Normalization

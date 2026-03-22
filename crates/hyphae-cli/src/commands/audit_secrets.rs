@@ -84,7 +84,8 @@ mod tests {
             "credentials".into(),
             "api_key = sk1234567890abcdefghij".into(),
             hyphae_core::Importance::Medium,
-        ).build();
+        )
+        .build();
         let _id = store.store(memory)?;
 
         // Run audit - should detect the secret
@@ -101,14 +102,16 @@ mod tests {
             "credentials".into(),
             "password = secret123".into(),
             hyphae_core::Importance::Medium,
-        ).build();
+        )
+        .build();
         store.store(mem_with_secret)?;
 
         let mem_clean = hyphae_core::Memory::builder(
             "notes".into(),
             "How to debug memory leaks".into(),
             hyphae_core::Importance::Medium,
-        ).build();
+        )
+        .build();
         store.store(mem_clean)?;
 
         // Audit only credentials topic
