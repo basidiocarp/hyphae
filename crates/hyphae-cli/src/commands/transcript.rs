@@ -121,8 +121,11 @@ fn discover_sessions(path: Option<&std::path::Path>, since: Option<&str>) -> Res
         vec![p.to_path_buf()]
     } else {
         // Scan all Claude Code project session directories
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        let claude_projects = PathBuf::from(&home).join(".claude/projects");
+        let Some(home) = directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf())
+        else {
+            return Ok(sessions);
+        };
+        let claude_projects = home.join(".claude/projects");
         if !claude_projects.exists() {
             return Ok(sessions);
         }

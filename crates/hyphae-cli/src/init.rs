@@ -43,7 +43,7 @@ pub enum InitMode {
 }
 
 fn home_dir() -> Option<PathBuf> {
-    std::env::var("HOME").ok().map(PathBuf::from)
+    directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf())
 }
 
 pub fn detect_editors() -> Vec<Editor> {
@@ -101,22 +101,12 @@ pub fn resolve_hyphae_binary() -> Result<PathBuf> {
             return Ok(canonical);
         }
     }
-    which_hyphae().context("could not locate hyphae binary in PATH")
-}
-
-fn which_hyphae() -> Option<PathBuf> {
-    let path_var = std::env::var("PATH").ok()?;
-    for dir in path_var.split(':') {
-        let candidate = PathBuf::from(dir).join("hyphae");
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
+    which::which("hyphae").context("could not locate hyphae binary in PATH")
 }
 
 pub fn config_path_for(editor: &Editor) -> PathBuf {
-    let home = home_dir().unwrap_or_else(|| PathBuf::from("/"));
+    let home = home_dir()
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     match editor {
         Editor::ClaudeCode => home.join(".claude.json"),
         Editor::Cursor => home.join(".cursor/mcp.json"),
@@ -148,7 +138,7 @@ pub fn config_path_for(editor: &Editor) -> PathBuf {
 }
 
 fn backup_path(path: &Path) -> PathBuf {
-    PathBuf::from(format!("{}.bak", path.display()))
+    path.with_extension("bak")
 }
 
 fn claude_dir() -> Result<PathBuf> {
@@ -546,6 +536,13 @@ mod tests {
     }
 
     #[test]
+    fn test_backup_path_replaces_extension() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("settings.json");
+        assert_eq!(backup_path(&path), dir.path().join("settings.bak"));
+    }
+
+    #[test]
     fn test_merge_preserves_existing_mcp_servers() {
         let dir = TempDir::new().unwrap();
         let config_path = dir.path().join("claude.json");
@@ -701,7 +698,7 @@ mod tests {
                     "matcher": "Write",
                     "hooks": [{
                         "type": "command",
-                        "command": "/tmp/existing.sh"
+                        "command": dir.path().join("existing.sh").to_string_lossy()
                     }]
                 }]
             }
@@ -720,7 +717,7 @@ mod tests {
         assert_eq!(post_tool_use.len(), 2);
         assert_eq!(
             post_tool_use[0]["hooks"][0]["command"].as_str().unwrap(),
-            "/tmp/existing.sh"
+            dir.path().join("existing.sh").to_string_lossy()
         );
     }
 

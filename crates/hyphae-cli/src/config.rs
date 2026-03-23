@@ -231,7 +231,7 @@ fn config_path() -> Option<PathBuf> {
 }
 
 fn dirs_home() -> Option<PathBuf> {
-    std::env::var("HOME").ok().map(PathBuf::from)
+    directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf())
 }
 
 /// Show the active config path (for `hyphae config show`).
@@ -317,9 +317,12 @@ decay_rate = 0.90
 
     #[test]
     fn test_parse_full_toml() {
+        let temp_db = tempfile::TempDir::new().unwrap();
+        let db_path = temp_db.path().join("test.db");
+        let db_path_str = db_path.to_string_lossy().to_string();
         let toml_str = r#"
 [store]
-path = "/tmp/test.db"
+path = "__TEST_DB__"
 
 [memory]
 default_importance = "high"
@@ -339,8 +342,9 @@ limit = 20
 transport = "stdio"
 instructions = "Custom instructions here"
 "#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.store.path.as_deref(), Some("/tmp/test.db"));
+        let toml_str = toml_str.replace("__TEST_DB__", db_path.to_string_lossy().as_ref());
+        let config: Config = toml::from_str(&toml_str).unwrap();
+        assert_eq!(config.store.path.as_deref(), Some(db_path_str.as_str()));
         assert!(!config.extraction.enabled);
         assert_eq!(config.recall.limit, 20);
         assert!(config.mcp.instructions.is_some());

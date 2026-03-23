@@ -82,9 +82,8 @@ fn get_db_path() -> PathBuf {
     directories::ProjectDirs::from("", "", "hyphae")
         .map(|d| d.data_dir().join("hyphae.db"))
         .unwrap_or_else(|| {
-            std::env::var("HOME")
-                .ok()
-                .map(|h| PathBuf::from(h).join(".local/share/hyphae/hyphae.db"))
+            directories::BaseDirs::new()
+                .map(|d| d.data_local_dir().join("hyphae").join("hyphae.db"))
                 .unwrap_or_else(|| PathBuf::from(".local/share/hyphae/hyphae.db"))
         })
 }

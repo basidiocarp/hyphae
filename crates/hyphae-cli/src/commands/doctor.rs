@@ -180,7 +180,7 @@ fn check_mcp(warnings: &mut u32) {
 fn check_config(warnings: &mut u32) {
     let config_dir = directories::ProjectDirs::from("", "", "hyphae")
         .map(|d| d.config_dir().to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("~/.config/hyphae"));
+        .unwrap_or_else(|| PathBuf::from(".config/hyphae"));
     let config_path = config_dir.join("config.toml");
 
     if config_path.exists() {
@@ -216,8 +216,8 @@ fn check_embeddings(warnings: &mut u32) {
         pass("FastEmbed support compiled in");
 
         // Check model cache
-        if let Ok(home) = std::env::var("HOME") {
-            let cache_dir = PathBuf::from(home).join(".cache/hyphae/models");
+        if let Some(home) = directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf()) {
+            let cache_dir = home.join(".cache/hyphae/models");
             if cache_dir.exists() {
                 let model_count = std::fs::read_dir(&cache_dir)
                     .map(|entries| entries.count())

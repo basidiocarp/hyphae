@@ -135,11 +135,13 @@ fn remove_file(path: &Path, opts: &WatchOptions, store: &SqliteStore) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[test]
     fn test_debounce_skips_rapid_events() {
         let mut debounce: HashMap<PathBuf, Instant> = HashMap::new();
-        let path = PathBuf::from("/tmp/test.txt");
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test.txt");
         debounce.insert(path.clone(), Instant::now());
         let skip = debounce
             .get(&path)
@@ -150,10 +152,22 @@ mod tests {
 
     #[test]
     fn test_skip_hidden_files() {
-        let hidden = Path::new("/tmp/.hidden_file.txt");
-        let visible = Path::new("/tmp/visible.txt");
-        assert!(hyphae_ingest::should_skip(hidden));
-        assert!(!hyphae_ingest::should_skip(visible));
+        let root = std::env::temp_dir().join(format!(
+            "hyphae-watch-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let project = root.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let hidden = project.join(".hidden_file.txt");
+        let visible = project.join("visible.txt");
+        assert!(hyphae_ingest::should_skip(&hidden));
+        assert!(!hyphae_ingest::should_skip(&visible));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

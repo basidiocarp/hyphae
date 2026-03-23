@@ -10,7 +10,7 @@ set -euo pipefail
 
 # Config
 EXTRACT_EVERY=15           # Extract every N tool calls
-COUNTER_FILE="${HYPHAE_HOOK_COUNTER:-/tmp/hyphae-hook-counter}"
+COUNTER_FILE="${HYPHAE_HOOK_COUNTER:-${TMPDIR:-${TEMP:-${TMP:-.}}}/hyphae-hook-counter}"
 HYPHAE_BIN=${HYPHAE_BIN:-__HYPHAE_BIN__}
 
 # Read hook input
