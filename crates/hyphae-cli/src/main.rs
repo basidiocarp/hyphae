@@ -294,6 +294,10 @@ fn main() -> Result<()> {
             commands::transcript::run(&store, path, since, dry_run, resolved_project.as_deref())?;
         }
 
+        Commands::CodexNotify { notification } => {
+            commands::codex_notify::run(&store, notification.clone(), resolved_project.as_deref())?;
+        }
+
         Commands::ExportTrainingData {
             format,
             topic,

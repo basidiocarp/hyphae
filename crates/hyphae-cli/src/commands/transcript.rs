@@ -1,8 +1,9 @@
-//! `hyphae ingest-sessions` — import Claude Code session transcripts.
+//! `hyphae ingest-sessions` - import Claude Code and Codex session transcripts.
 
 use anyhow::Result;
 use hyphae_store::SqliteStore;
-use std::path::PathBuf;
+use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
 
 pub fn run(
     store: &SqliteStore,
@@ -11,7 +12,7 @@ pub fn run(
     dry_run: bool,
     project: Option<&str>,
 ) -> Result<()> {
-    let sessions = discover_sessions(path.as_deref(), since.as_deref())?;
+    let sessions = discover_sessions(path.as_deref(), since.as_deref());
 
     if sessions.is_empty() {
         println!("No session transcripts found.");
@@ -23,7 +24,6 @@ pub fn run(
     let mut errors = 0usize;
 
     for session_path in &sessions {
-        // Parse transcript
         let summary = match hyphae_ingest::transcript::parse_transcript(session_path) {
             Ok(s) => s,
             Err(e) => {
@@ -33,9 +33,8 @@ pub fn run(
             }
         };
 
-        // Check dedup via session_id keyword
-        let keyword = format!("session_id:{}", summary.session_id);
-        match store.memory_exists_with_keyword(&keyword) {
+        let dedupe_hash = session_hash(&summary.session_id, session_path);
+        match store.memory_exists_with_keyword(&dedupe_hash) {
             Ok(true) => {
                 if dry_run {
                     println!(
@@ -47,7 +46,7 @@ pub fn run(
                 continue;
             }
             Ok(false) => {}
-            Err(_) => {} // Proceed if check fails
+            Err(_) => {}
         }
 
         let text = hyphae_ingest::transcript::summary_to_text(&summary);
@@ -58,40 +57,46 @@ pub fn run(
                 Some(summary.project.clone())
             }
         });
+        let project_name = resolved_project.as_deref().unwrap_or("unknown");
 
         if dry_run {
             println!(
-                "[dry-run] Would ingest: {} ({} messages, {} files, {} errors) → session/{}",
+                "[dry-run] Would ingest {} session: {} ({} messages, {} files, {} errors) -> session/{}",
+                summary.runtime,
                 summary.session_id,
                 summary.message_count,
                 summary.files_modified.len(),
                 summary.errors.len(),
-                resolved_project.as_deref().unwrap_or("unknown"),
+                project_name,
             );
             imported += 1;
             continue;
         }
 
-        // Store as memory
-        let topic = format!(
-            "session/{}",
-            resolved_project.as_deref().unwrap_or("unknown")
-        );
+        let topic = format!("session/{}", project_name);
         use hyphae_core::memory::{Importance, Memory};
         use hyphae_core::store::MemoryStore;
-        let mut builder =
-            Memory::builder(topic, text, Importance::Medium).keywords(vec![keyword.clone()]);
+        let mut builder = Memory::builder(topic, text, Importance::Medium).keywords(vec![
+            format!("hash:{dedupe_hash}"),
+            format!("session_id:{}", summary.session_id),
+        ]);
         if let Some(ref proj) = resolved_project {
             builder = builder.project(proj.clone());
         }
-        let memory = builder.build();
+        let memory = builder
+            .source(session_source(
+                &summary.runtime,
+                &summary.session_id,
+                session_path,
+            ))
+            .build();
 
         match store.store(memory) {
             Ok(_) => {
                 imported += 1;
                 println!(
-                    "  Ingested: {} ({} messages)",
-                    summary.session_id, summary.message_count
+                    "  Ingested {} session: {} ({} messages)",
+                    summary.runtime, summary.session_id, summary.message_count
                 );
             }
             Err(e) => {
@@ -107,65 +112,143 @@ pub fn run(
     Ok(())
 }
 
-/// Discover session transcript files from Claude Code directories.
-fn discover_sessions(path: Option<&std::path::Path>, since: Option<&str>) -> Result<Vec<PathBuf>> {
-    let mut sessions = Vec::new();
+fn session_hash(session_id: &str, path: &Path) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(session_id.as_bytes());
+    hasher.update(b"\n");
+    hasher.update(path.to_string_lossy().as_bytes());
+    let hex = format!("{:x}", hasher.finalize());
+    hex[..12].to_string()
+}
 
-    let since_ts = since.and_then(|s| {
-        chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
-            .ok()
-            .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp())
-    });
-
-    let dirs_to_scan = if let Some(p) = path {
-        vec![p.to_path_buf()]
-    } else {
-        // Scan all Claude Code project session directories
-        let Some(home) = directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf())
-        else {
-            return Ok(sessions);
-        };
-        let claude_projects = home.join(".claude/projects");
-        if !claude_projects.exists() {
-            return Ok(sessions);
-        }
-        let mut dirs = Vec::new();
-        if let Ok(entries) = std::fs::read_dir(&claude_projects) {
-            for entry in entries.flatten() {
-                let sessions_dir = entry.path().join("sessions");
-                if sessions_dir.is_dir() {
-                    dirs.push(sessions_dir);
-                }
+fn session_source(
+    runtime: &hyphae_ingest::transcript::SessionRuntime,
+    session_id: &str,
+    session_path: &Path,
+) -> hyphae_core::memory::MemorySource {
+    match runtime {
+        hyphae_ingest::transcript::SessionRuntime::ClaudeCode => {
+            hyphae_core::memory::MemorySource::ClaudeCode {
+                session_id: session_id.to_string(),
+                file_path: Some(session_path.display().to_string()),
             }
         }
-        dirs
-    };
-
-    for dir in &dirs_to_scan {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().is_some_and(|e| e == "jsonl") {
-                    // Check since filter
-                    if let Some(ts) = since_ts {
-                        if let Ok(meta) = path.metadata() {
-                            if let Ok(modified) = meta.modified() {
-                                let file_ts = modified
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .map(|d| d.as_secs() as i64)
-                                    .unwrap_or(0);
-                                if file_ts < ts {
-                                    continue;
-                                }
-                            }
-                        }
-                    }
-                    sessions.push(path);
-                }
+        hyphae_ingest::transcript::SessionRuntime::Codex => {
+            hyphae_core::memory::MemorySource::Conversation {
+                thread_id: session_id.to_string(),
             }
         }
     }
+}
+
+/// Discover session transcript files from Claude Code and Codex directories.
+fn discover_sessions(path: Option<&Path>, since: Option<&str>) -> Vec<PathBuf> {
+    let since_ts = since.and_then(|s| {
+        chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+            .ok()
+            .and_then(|d| d.and_hms_opt(0, 0, 0))
+            .map(|dt| dt.and_utc().timestamp())
+    });
+
+    let mut sessions = Vec::new();
+    if let Some(p) = path {
+        collect_jsonl_files(p, &mut sessions);
+    } else {
+        let Some(home) = directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf())
+        else {
+            return sessions;
+        };
+
+        let claude_projects = home.join(".claude/projects");
+        collect_jsonl_files(&claude_projects, &mut sessions);
+
+        let codex_history = home.join(".codex/history.jsonl");
+        collect_jsonl_files(&codex_history, &mut sessions);
+
+        let codex_sessions = home.join(".codex/sessions");
+        collect_jsonl_files(&codex_sessions, &mut sessions);
+    }
+
+    sessions.retain(|path| {
+        if let Some(ts) = since_ts {
+            if let Ok(meta) = path.metadata() {
+                if let Ok(modified) = meta.modified() {
+                    let file_ts = modified
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0);
+                    return file_ts >= ts;
+                }
+            }
+        }
+        true
+    });
 
     sessions.sort();
-    Ok(sessions)
+    sessions.dedup();
+    sessions
+}
+
+fn collect_jsonl_files(path: &Path, sessions: &mut Vec<PathBuf>) {
+    if path.is_file() {
+        if path.extension().is_some_and(|ext| ext == "jsonl") {
+            sessions.push(path.to_path_buf());
+        }
+        return;
+    }
+
+    if !path.is_dir() {
+        return;
+    }
+
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let entry_path = entry.path();
+        if entry_path.is_dir() {
+            collect_jsonl_files(&entry_path, sessions);
+        } else if entry_path.extension().is_some_and(|ext| ext == "jsonl") {
+            sessions.push(entry_path);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_discover_sessions_includes_codex_history_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let history = dir.path().join("history.jsonl");
+        std::fs::write(&history, r#"{"session_id":"sess-1","ts":1,"text":"hello"}"#).unwrap();
+
+        let sessions = discover_sessions(Some(dir.path()), None);
+        assert_eq!(sessions, vec![history]);
+    }
+
+    #[test]
+    fn test_codex_history_ingests_successfully() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                r#"{"session_id":"sess-1","ts":1,"text":"//help"}"#,
+                "\n",
+                r#"{"session_id":"sess-1","ts":2,"text":"Please review the repo"}"#,
+            ),
+        )
+        .unwrap();
+
+        let store = SqliteStore::in_memory().unwrap();
+        run(&store, Some(path.clone()), None, false, Some("demo")).unwrap();
+        assert!(
+            store
+                .memory_exists_with_keyword(&session_hash("sess-1", path.as_path()))
+                .unwrap()
+        );
+    }
 }

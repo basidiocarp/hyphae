@@ -482,6 +482,14 @@ fn write_toml_config(config_path: &Path, binary_path: &Path) -> Result<()> {
         map.insert("hyphae".to_string(), toml::Value::Table(hyphae_table));
     }
 
+    root.insert(
+        "notify".to_string(),
+        toml::Value::Array(vec![
+            toml::Value::String("hyphae".to_string()),
+            toml::Value::String("codex-notify".to_string()),
+        ]),
+    );
+
     let toml_str =
         toml::to_string_pretty(&toml::Value::Table(root)).context("serializing TOML config")?;
     std::fs::write(config_path, toml_str)
@@ -652,6 +660,8 @@ mod tests {
             value["mcp_servers"]["hyphae"]["command"].as_str().unwrap(),
             "/usr/local/bin/hyphae"
         );
+        assert_eq!(value["notify"][0].as_str().unwrap(), "hyphae");
+        assert_eq!(value["notify"][1].as_str().unwrap(), "codex-notify");
     }
 
     #[test]

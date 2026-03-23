@@ -45,6 +45,7 @@ All commands accept the global `--db <path>` flag to override the default databa
   - [`hyphae evaluate`](#hyphae-evaluate----measure-agent-improvement)
 - [Configuration and setup](#configuration-and-setup)
   - [`hyphae init`](#hyphae-init----automatic-configuration)
+  - [`hyphae codex-notify`](#hyphae-codex-notify----handle-codex-turn-complete-notifications)
   - [`hyphae config`](#hyphae-config----show-configuration)
   - [`hyphae serve`](#hyphae-serve----start-the-mcp-server)
 - [Benchmarks](#benchmarks)
@@ -875,6 +876,16 @@ hyphae init [-m <mode>]
 | OpenAI Codex CLI | `~/.codex/config.toml` |
 | OpenCode | `~/.config/opencode/opencode.json` |
 
+For OpenAI Codex CLI, `hyphae init` also writes:
+
+```toml
+notify = ["hyphae", "codex-notify"]
+
+[mcp_servers.hyphae]
+command = "/path/to/hyphae"
+args = ["serve"]
+```
+
 ```bash
 # Standard setup
 hyphae init
@@ -885,6 +896,22 @@ hyphae init --mode all
 # Just slash commands
 hyphae init --mode skill
 ```
+
+---
+
+### `hyphae codex-notify` -- Handle Codex turn-complete notifications
+
+```
+hyphae codex-notify '<json-notification>'
+```
+
+This command is normally invoked by Codex via:
+
+```toml
+notify = ["hyphae", "codex-notify"]
+```
+
+It stores a compact session summary when Codex emits `agent-turn-complete`, including the thread id, turn id, working directory, and a snippet of the user/assistant exchange.
 
 ---
 

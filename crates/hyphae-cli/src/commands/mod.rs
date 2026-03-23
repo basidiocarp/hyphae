@@ -2,6 +2,7 @@ pub mod audit_secrets;
 pub mod backup;
 pub mod bench;
 pub mod changelog;
+pub mod codex_notify;
 pub mod docs;
 pub mod doctor;
 pub mod evaluate;
