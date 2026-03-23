@@ -1,5 +1,6 @@
 pub mod chunker;
 pub mod readers;
+pub mod session;
 pub mod transcript;
 
 use chrono::Utc;

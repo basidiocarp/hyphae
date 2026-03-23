@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
 use hyphae_core::{Importance, Memory, MemorySource, MemoryStore};
+use hyphae_ingest::session::{NormalizedSession, truncate_snippet};
 use hyphae_store::SqliteStore;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::path::Path;
 
 #[derive(Debug, Deserialize)]
 struct CodexNotification {
@@ -77,47 +77,18 @@ fn build_turn_record(
     notification: &CodexNotification,
     project_override: Option<&str>,
 ) -> Result<CodexTurnRecord> {
-    let project = project_override
-        .map(str::to_string)
-        .or_else(|| project_from_cwd(notification.cwd.as_deref()))
-        .unwrap_or_else(|| "unknown".to_string());
-
-    let thread_id = notification.thread_id.clone();
-    let turn_id = notification.turn_id.clone();
-
-    let mut raw_lines = Vec::new();
-    raw_lines.push(format!("type: {}", notification.event_type));
-    if let Some(thread_id) = &thread_id {
-        raw_lines.push(format!("thread-id: {thread_id}"));
-    }
-    if let Some(turn_id) = &turn_id {
-        raw_lines.push(format!("turn-id: {turn_id}"));
-    }
-    if let Some(cwd) = &notification.cwd {
-        raw_lines.push(format!("cwd: {cwd}"));
-    }
-    if !notification.input_messages.is_empty() {
-        raw_lines.push("input-messages:".to_string());
-        for message in &notification.input_messages {
-            raw_lines.push(format!("  - {}", value_to_snippet(message)));
-        }
-    }
-    if let Some(last_assistant_message) = &notification.last_assistant_message {
-        raw_lines.push(format!(
-            "last-assistant-message: {}",
-            truncate_snippet(last_assistant_message, 200)
-        ));
-    }
-
+    let session = build_normalized_session(notification, project_override);
+    let project = session.project().unwrap_or("unknown").to_string();
+    let turn_label = notification
+        .turn_id
+        .as_deref()
+        .or(notification.thread_id.as_deref())
+        .unwrap_or("unknown");
     let assistant_snippet = notification
         .last_assistant_message
         .as_deref()
         .map(|s| truncate_snippet(s, 140))
         .unwrap_or_else(|| "turn complete".to_string());
-    let turn_label = turn_id
-        .as_deref()
-        .or(thread_id.as_deref())
-        .unwrap_or("unknown");
 
     let input_snippets = notification
         .input_messages
@@ -135,41 +106,19 @@ fn build_turn_record(
         )
     };
 
-    let dedupe_source = {
-        let mut parts = vec![notification.event_type.clone()];
-        if let Some(thread_id) = &thread_id {
-            parts.push(thread_id.clone());
-        }
-        if let Some(turn_id) = &turn_id {
-            parts.push(turn_id.clone());
-        }
-        if let Some(cwd) = &notification.cwd {
-            parts.push(cwd.clone());
-        }
-        parts.push(
-            notification
-                .last_assistant_message
-                .clone()
-                .unwrap_or_default(),
-        );
-        for message in &notification.input_messages {
-            parts.push(serde_json::to_string(message).unwrap_or_default());
-        }
-        parts.join("\n")
-    };
-    let dedupe_hash = hash_prefix(&dedupe_source);
+    let dedupe_hash = hash_prefix(&dedupe_source(notification));
 
     let mut keywords = vec![
         "host:codex".to_string(),
         "event:agent-turn-complete".to_string(),
     ];
-    if let Some(thread_id) = thread_id {
+    if let Some(thread_id) = notification.thread_id.as_deref() {
         keywords.push(format!("thread_id:{thread_id}"));
     }
-    if let Some(turn_id) = turn_id {
+    if let Some(turn_id) = notification.turn_id.as_deref() {
         keywords.push(format!("turn_id:{turn_id}"));
     }
-    if let Some(cwd) = &notification.cwd {
+    if let Some(cwd) = notification.cwd.as_deref() {
         keywords.push(format!("cwd:{cwd}"));
     }
 
@@ -182,19 +131,51 @@ fn build_turn_record(
     Ok(CodexTurnRecord {
         project,
         summary,
-        raw_excerpt: raw_lines.join("\n"),
+        raw_excerpt: session.raw_excerpt().join("\n"),
         keywords,
         dedupe_hash,
         source,
     })
 }
 
-fn project_from_cwd(cwd: Option<&str>) -> Option<String> {
-    let cwd = cwd?;
-    Path::new(cwd)
-        .file_name()
-        .map(|name| name.to_string_lossy().to_string())
-        .filter(|name| !name.is_empty())
+fn build_normalized_session(
+    notification: &CodexNotification,
+    project_override: Option<&str>,
+) -> NormalizedSession {
+    let mut session = NormalizedSession::new(hyphae_ingest::transcript::SessionRuntime::Codex);
+    session.note_raw_excerpt_line(format!("type: {}", notification.event_type));
+    if let Some(thread_id) = notification.thread_id.as_deref() {
+        session.note_raw_excerpt_line(format!("thread-id: {thread_id}"));
+        session.note_session_id(thread_id);
+    }
+    if let Some(turn_id) = notification.turn_id.as_deref() {
+        session.note_raw_excerpt_line(format!("turn-id: {turn_id}"));
+    }
+    if let Some(project) = project_override {
+        session.note_project(project.to_string());
+    }
+    if let Some(cwd) = notification.cwd.as_deref() {
+        session.note_raw_excerpt_line(format!("cwd: {cwd}"));
+        session.note_project_from_cwd(cwd);
+    }
+    if !notification.input_messages.is_empty() {
+        session.note_raw_excerpt_line("input-messages:");
+        for message in &notification.input_messages {
+            let snippet = value_to_snippet(message);
+            session.note_raw_excerpt_line(format!("  - {snippet}"));
+            session.note_highlight(&snippet);
+            session.note_message();
+        }
+    }
+    if let Some(last_assistant_message) = notification.last_assistant_message.as_deref() {
+        session.note_highlight(last_assistant_message);
+        session.note_raw_excerpt_line(format!(
+            "last-assistant-message: {}",
+            truncate_snippet(last_assistant_message, 200)
+        ));
+        session.note_message();
+    }
+    session
 }
 
 fn hash_prefix(text: &str) -> String {
@@ -203,15 +184,27 @@ fn hash_prefix(text: &str) -> String {
     hex[..12].to_string()
 }
 
-fn truncate_snippet(text: &str, limit: usize) -> String {
-    let trimmed = text.trim();
-    let mut chars = trimmed.chars();
-    let snippet: String = chars.by_ref().take(limit).collect();
-    if chars.next().is_some() {
-        format!("{snippet}...")
-    } else {
-        snippet
+fn dedupe_source(notification: &CodexNotification) -> String {
+    let mut parts = vec![notification.event_type.clone()];
+    if let Some(thread_id) = &notification.thread_id {
+        parts.push(thread_id.clone());
     }
+    if let Some(turn_id) = &notification.turn_id {
+        parts.push(turn_id.clone());
+    }
+    if let Some(cwd) = &notification.cwd {
+        parts.push(cwd.clone());
+    }
+    parts.push(
+        notification
+            .last_assistant_message
+            .clone()
+            .unwrap_or_default(),
+    );
+    for message in &notification.input_messages {
+        parts.push(serde_json::to_string(message).unwrap_or_default());
+    }
+    parts.join("\n")
 }
 
 fn value_to_snippet(value: &serde_json::Value) -> String {

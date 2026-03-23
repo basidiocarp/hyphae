@@ -1,9 +1,10 @@
 //! Parse Claude Code and Codex session transcripts (JSONL format) for ingestion into hyphae.
 
 use anyhow::{Context, Result};
-use std::collections::HashSet;
 use std::fmt;
 use std::path::Path;
+
+use crate::session::{NormalizedSession, truncate_snippet};
 
 /// Runtime that produced a session transcript.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,13 +40,7 @@ pub fn parse_transcript(path: &Path) -> Result<TranscriptSummary> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read {}", path.display()))?;
 
-    let mut message_count = 0usize;
-    let mut files: HashSet<String> = HashSet::new();
-    let mut commands: Vec<String> = Vec::new();
-    let mut errors: Vec<String> = Vec::new();
-    let mut highlights: Vec<String> = Vec::new();
-    let mut session_id = String::new();
-    let mut project = String::new();
+    let mut normalized = NormalizedSession::new(SessionRuntime::ClaudeCode);
     let mut runtime = None;
 
     for line in content.lines() {
@@ -62,58 +57,29 @@ pub fn parse_transcript(path: &Path) -> Result<TranscriptSummary> {
         let line_runtime = detect_runtime(&val);
         if runtime.is_none() {
             runtime = Some(line_runtime);
+            normalized = NormalizedSession::new(line_runtime);
         }
 
-        match line_runtime {
+        normalized.note_raw_excerpt_line(line);
+
+        match runtime.unwrap_or(line_runtime) {
             SessionRuntime::Codex => {
-                parse_codex_line(
-                    &val,
-                    &mut message_count,
-                    &mut session_id,
-                    &mut project,
-                    &mut highlights,
-                );
+                parse_codex_line(&val, &mut normalized);
             }
             SessionRuntime::ClaudeCode => {
-                parse_claude_line(
-                    &val,
-                    &mut message_count,
-                    &mut session_id,
-                    &mut project,
-                    &mut files,
-                    &mut commands,
-                    &mut errors,
-                    &mut highlights,
-                );
+                parse_claude_line(&val, &mut normalized);
             }
         }
     }
 
     let runtime = runtime.unwrap_or(SessionRuntime::ClaudeCode);
 
-    // Fallback session ID from filename.
-    if session_id.is_empty() {
-        session_id = path
-            .file_stem()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-    }
-
-    // Codex history files are often global, so derive the project only when the path is useful.
-    if project.is_empty() {
-        project = project_from_path(path).unwrap_or_default();
-    }
-
-    Ok(TranscriptSummary {
+    Ok(TranscriptSummary::from_normalized(
+        normalized,
         runtime,
-        session_id,
-        project,
-        message_count,
-        files_modified: files.into_iter().collect(),
-        commands_run: commands,
-        errors,
-        highlights,
-    })
+        path,
+        project_from_path(path).unwrap_or_default(),
+    ))
 }
 
 fn detect_runtime(value: &serde_json::Value) -> SessionRuntime {
@@ -131,50 +97,32 @@ fn detect_runtime(value: &serde_json::Value) -> SessionRuntime {
     }
 }
 
-fn parse_claude_line(
-    value: &serde_json::Value,
-    message_count: &mut usize,
-    session_id: &mut String,
-    project: &mut String,
-    files: &mut HashSet<String>,
-    commands: &mut Vec<String>,
-    errors: &mut Vec<String>,
-    highlights: &mut Vec<String>,
-) {
-    if session_id.is_empty() {
-        if let Some(uuid) = value.get("uuid").and_then(|u| u.as_str()) {
-            *session_id = uuid.to_string();
-        }
+fn parse_claude_line(value: &serde_json::Value, normalized: &mut NormalizedSession) {
+    if let Some(uuid) = value.get("uuid").and_then(|u| u.as_str()) {
+        normalized.note_session_id(uuid);
     }
 
-    if project.is_empty() {
-        if let Some(cwd) = value.get("cwd").and_then(|c| c.as_str()) {
-            *project = project_from_cwd(cwd).unwrap_or_default();
-        }
+    if let Some(cwd) = value.get("cwd").and_then(|c| c.as_str()) {
+        normalized.note_project_from_cwd(cwd);
     }
 
     let msg_type = value.get("type").and_then(|t| t.as_str()).unwrap_or("");
     match msg_type {
         "user" | "assistant" => {
-            *message_count += 1;
+            normalized.note_message();
         }
         _ => {}
     }
 
     if let Some(message) = value.get("message") {
         if let Some(content) = message.get("content") {
-            capture_text(content, highlights);
-            capture_claude_tool_context(content, files, commands, errors);
+            capture_text(content, normalized);
+            capture_claude_tool_context(content, normalized);
         }
     }
 }
 
-fn capture_claude_tool_context(
-    content: &serde_json::Value,
-    files: &mut HashSet<String>,
-    commands: &mut Vec<String>,
-    errors: &mut Vec<String>,
-) {
+fn capture_claude_tool_context(content: &serde_json::Value, normalized: &mut NormalizedSession) {
     let Some(content_arr) = content.as_array() else {
         return;
     };
@@ -186,14 +134,12 @@ fn capture_claude_tool_context(
                 match name {
                     "Edit" | "Write" | "MultiEdit" => {
                         if let Some(fp) = input.get("file_path").and_then(|f| f.as_str()) {
-                            files.insert(fp.to_string());
+                            normalized.note_file_modified(fp);
                         }
                     }
                     "Bash" => {
                         if let Some(cmd) = input.get("command").and_then(|c| c.as_str()) {
-                            if commands.len() < 50 {
-                                commands.push(truncate_snippet(cmd, 100));
-                            }
+                            normalized.note_command(truncate_snippet(cmd, 100));
                         }
                     }
                     _ => {}
@@ -208,39 +154,27 @@ fn capture_claude_tool_context(
                 .unwrap_or(false)
         {
             if let Some(err_content) = item.get("content").and_then(|c| c.as_str()) {
-                if errors.len() < 20 {
-                    errors.push(truncate_snippet(err_content, 200));
-                }
+                normalized.note_error(truncate_snippet(err_content, 200));
             }
         }
     }
 }
 
-fn parse_codex_line(
-    value: &serde_json::Value,
-    message_count: &mut usize,
-    session_id: &mut String,
-    project: &mut String,
-    highlights: &mut Vec<String>,
-) {
+fn parse_codex_line(value: &serde_json::Value, normalized: &mut NormalizedSession) {
     let event_type = value.get("type").and_then(|t| t.as_str()).unwrap_or("");
 
     if event_type.is_empty() {
-        if session_id.is_empty() {
-            if let Some(id) = value.get("session_id").and_then(|s| s.as_str()) {
-                *session_id = id.to_string();
-            }
+        if let Some(id) = value.get("session_id").and_then(|s| s.as_str()) {
+            normalized.note_session_id(id);
         }
 
-        if project.is_empty() {
-            if let Some(cwd) = value.get("cwd").and_then(|c| c.as_str()) {
-                *project = project_from_cwd(cwd).unwrap_or_default();
-            }
+        if let Some(cwd) = value.get("cwd").and_then(|c| c.as_str()) {
+            normalized.note_project_from_cwd(cwd);
         }
 
         if let Some(text) = value.get("text").and_then(|t| t.as_str()) {
-            *message_count += 1;
-            capture_snippet(text, highlights);
+            normalized.note_message();
+            normalized.note_highlight(text);
         }
         return;
     }
@@ -248,33 +182,33 @@ fn parse_codex_line(
     let payload = value.get("payload");
     match event_type {
         "session_meta" => {
-            if session_id.is_empty() {
+            if normalized.session_id().is_none() {
                 if let Some(id) = payload
                     .and_then(|p| p.get("id"))
                     .and_then(|id| id.as_str())
                     .or_else(|| value.get("session_id").and_then(|s| s.as_str()))
                 {
-                    *session_id = id.to_string();
+                    normalized.note_session_id(id);
                 }
             }
 
-            if project.is_empty() {
+            if normalized.project().is_none() {
                 if let Some(cwd) = payload
                     .and_then(|p| p.get("cwd"))
                     .and_then(|cwd| cwd.as_str())
                     .or_else(|| value.get("cwd").and_then(|cwd| cwd.as_str()))
                 {
-                    *project = project_from_cwd(cwd).unwrap_or_default();
+                    normalized.note_project_from_cwd(cwd);
                 }
             }
         }
         "turn_context" => {
-            if project.is_empty() {
+            if normalized.project().is_none() {
                 if let Some(cwd) = payload
                     .and_then(|p| p.get("cwd"))
                     .and_then(|cwd| cwd.as_str())
                 {
-                    *project = project_from_cwd(cwd).unwrap_or_default();
+                    normalized.note_project_from_cwd(cwd);
                 }
             }
         }
@@ -285,11 +219,11 @@ fn parse_codex_line(
                 .unwrap_or("");
 
             if matches!(payload_type, "user_message" | "assistant_message") {
-                *message_count += 1;
+                normalized.note_message();
             }
 
             if let Some(message) = payload.and_then(|p| p.get("message")) {
-                capture_text(message, highlights);
+                capture_text(message, normalized);
             }
         }
         "response_item" => {
@@ -298,22 +232,15 @@ fn parse_codex_line(
                 .and_then(|value| value.as_str())
                 == Some("message")
             {
-                *message_count += 1;
+                normalized.note_message();
             }
 
             if let Some(content) = payload.and_then(|p| p.get("content")) {
-                capture_text(content, highlights);
+                capture_text(content, normalized);
             }
         }
         _ => {}
     }
-}
-
-fn project_from_cwd(cwd: &str) -> Option<String> {
-    Path::new(cwd)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .filter(|name| !name.is_empty())
 }
 
 fn project_from_path(path: &Path) -> Option<String> {
@@ -326,48 +253,60 @@ fn project_from_path(path: &Path) -> Option<String> {
     }
 }
 
-fn capture_text(value: &serde_json::Value, highlights: &mut Vec<String>) {
+fn capture_text(value: &serde_json::Value, normalized: &mut NormalizedSession) {
     if let Some(text) = value.as_str() {
-        capture_snippet(text, highlights);
+        normalized.note_highlight(text);
         return;
     }
 
     if let Some(obj) = value.as_object() {
         if let Some(text) = obj.get("text").and_then(|t| t.as_str()) {
-            capture_snippet(text, highlights);
+            normalized.note_highlight(text);
         }
         if let Some(content) = obj.get("content") {
-            capture_text(content, highlights);
+            capture_text(content, normalized);
         }
         return;
     }
 
     if let Some(items) = value.as_array() {
         for item in items {
-            capture_text(item, highlights);
+            capture_text(item, normalized);
         }
     }
 }
 
-fn capture_snippet(text: &str, highlights: &mut Vec<String>) {
-    if highlights.len() >= 5 {
-        return;
-    }
+impl TranscriptSummary {
+    fn from_normalized(
+        normalized: NormalizedSession,
+        runtime: SessionRuntime,
+        path: &Path,
+        fallback_project: String,
+    ) -> Self {
+        let session_id = normalized
+            .session_id()
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                path.file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "unknown".to_string())
+            });
 
-    let snippet = truncate_snippet(text, 160);
-    if !snippet.is_empty() {
-        highlights.push(snippet);
-    }
-}
+        let project = normalized
+            .project()
+            .map(str::to_string)
+            .unwrap_or(fallback_project);
 
-fn truncate_snippet(text: &str, limit: usize) -> String {
-    let trimmed = text.trim();
-    let mut chars = trimmed.chars();
-    let snippet: String = chars.by_ref().take(limit).collect();
-    if chars.next().is_some() {
-        format!("{snippet}...")
-    } else {
-        snippet
+        Self {
+            runtime,
+            session_id,
+            project,
+            message_count: normalized.message_count(),
+            files_modified: normalized.files_modified().iter().cloned().collect(),
+            commands_run: normalized.commands_run().to_vec(),
+            errors: normalized.errors().to_vec(),
+            highlights: normalized.highlights().to_vec(),
+        }
     }
 }
 
