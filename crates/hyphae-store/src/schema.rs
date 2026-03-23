@@ -48,12 +48,6 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         CREATE INDEX IF NOT EXISTS idx_memories_weight ON memories(weight);
         CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at);
         CREATE INDEX IF NOT EXISTS idx_memories_importance_weight ON memories(importance, weight);
-        CREATE INDEX IF NOT EXISTS idx_memories_project ON memories(project);
-        CREATE INDEX IF NOT EXISTS idx_memories_branch ON memories(branch);
-        CREATE INDEX IF NOT EXISTS idx_memories_worktree ON memories(worktree);
-        CREATE INDEX IF NOT EXISTS idx_memories_expires_at ON memories(expires_at);
-        CREATE INDEX IF NOT EXISTS idx_memories_invalidated_at ON memories(invalidated_at);
-        CREATE INDEX IF NOT EXISTS idx_memories_superseded_by ON memories(superseded_by);
 
         -- Memoir tables
         CREATE TABLE IF NOT EXISTS memoirs (
@@ -380,12 +374,11 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         .unwrap_or(0)
         > 0;
     if !has_project_memories {
-        tx.execute_batch(
-            "ALTER TABLE memories ADD COLUMN project TEXT;
-             CREATE INDEX IF NOT EXISTS idx_memories_project ON memories(project);",
-        )
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        tx.execute_batch("ALTER TABLE memories ADD COLUMN project TEXT;")
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
     }
+    tx.execute_batch("CREATE INDEX IF NOT EXISTS idx_memories_project ON memories(project);")
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
     let has_branch_memories: bool = tx
         .query_row(
@@ -396,12 +389,11 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         .unwrap_or(0)
         > 0;
     if !has_branch_memories {
-        tx.execute_batch(
-            "ALTER TABLE memories ADD COLUMN branch TEXT;
-             CREATE INDEX IF NOT EXISTS idx_memories_branch ON memories(branch);",
-        )
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        tx.execute_batch("ALTER TABLE memories ADD COLUMN branch TEXT;")
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
     }
+    tx.execute_batch("CREATE INDEX IF NOT EXISTS idx_memories_branch ON memories(branch);")
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
     let has_worktree_memories: bool = tx
         .query_row(
@@ -412,12 +404,11 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         .unwrap_or(0)
         > 0;
     if !has_worktree_memories {
-        tx.execute_batch(
-            "ALTER TABLE memories ADD COLUMN worktree TEXT;
-             CREATE INDEX IF NOT EXISTS idx_memories_worktree ON memories(worktree);",
-        )
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        tx.execute_batch("ALTER TABLE memories ADD COLUMN worktree TEXT;")
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
     }
+    tx.execute_batch("CREATE INDEX IF NOT EXISTS idx_memories_worktree ON memories(worktree);")
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
     // Migration: add project column to documents
     let has_project_documents: bool = tx
@@ -446,12 +437,11 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         .unwrap_or(0)
         > 0;
     if !has_expires_at {
-        tx.execute_batch(
-            "ALTER TABLE memories ADD COLUMN expires_at TEXT;
-             CREATE INDEX IF NOT EXISTS idx_memories_expires_at ON memories(expires_at);",
-        )
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        tx.execute_batch("ALTER TABLE memories ADD COLUMN expires_at TEXT;")
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
     }
+    tx.execute_batch("CREATE INDEX IF NOT EXISTS idx_memories_expires_at ON memories(expires_at);")
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
     let has_invalidated_at: bool = tx
         .query_row(
@@ -462,12 +452,13 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         .unwrap_or(0)
         > 0;
     if !has_invalidated_at {
-        tx.execute_batch(
-            "ALTER TABLE memories ADD COLUMN invalidated_at TEXT;
-             CREATE INDEX IF NOT EXISTS idx_memories_invalidated_at ON memories(invalidated_at);",
-        )
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        tx.execute_batch("ALTER TABLE memories ADD COLUMN invalidated_at TEXT;")
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
     }
+    tx.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_memories_invalidated_at ON memories(invalidated_at);",
+    )
+    .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
     let has_invalidation_reason: bool = tx
         .query_row(
@@ -491,12 +482,13 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         .unwrap_or(0)
         > 0;
     if !has_superseded_by {
-        tx.execute_batch(
-            "ALTER TABLE memories ADD COLUMN superseded_by TEXT;
-             CREATE INDEX IF NOT EXISTS idx_memories_superseded_by ON memories(superseded_by);",
-        )
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        tx.execute_batch("ALTER TABLE memories ADD COLUMN superseded_by TEXT;")
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
     }
+    tx.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_memories_superseded_by ON memories(superseded_by);",
+    )
+    .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
     // sqlite-vec virtual table for vector search (dimension-aware)
     let vec_exists: bool = tx
@@ -631,5 +623,65 @@ mod tests {
             documents_has_project,
             "documents table should have project column"
         );
+    }
+
+    #[test]
+    fn test_init_db_migrates_older_memories_schema_before_creating_new_indexes() {
+        ensure_vec_init();
+        let conn = Connection::open_in_memory().unwrap();
+
+        conn.execute_batch(
+            "
+            CREATE TABLE memories (
+                id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT '',
+                last_accessed TEXT NOT NULL,
+                access_count INTEGER DEFAULT 0,
+                weight REAL DEFAULT 1.0,
+                topic TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                raw_excerpt TEXT,
+                keywords TEXT,
+                importance TEXT NOT NULL,
+                source_type TEXT NOT NULL,
+                source_data TEXT,
+                related_ids TEXT,
+                embedding BLOB,
+                project TEXT,
+                expires_at TEXT
+            );
+
+            CREATE INDEX idx_memories_topic ON memories(topic);
+            CREATE INDEX idx_memories_weight ON memories(weight);
+            CREATE INDEX idx_memories_created ON memories(created_at);
+            CREATE INDEX idx_memories_importance_weight ON memories(importance, weight);
+            CREATE INDEX idx_memories_project ON memories(project);
+            CREATE INDEX idx_memories_expires_at ON memories(expires_at);
+            ",
+        )
+        .unwrap();
+
+        init_db(&conn).unwrap();
+
+        for column in [
+            "project",
+            "branch",
+            "worktree",
+            "expires_at",
+            "invalidated_at",
+            "invalidation_reason",
+            "superseded_by",
+        ] {
+            let has_column: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name = ?1",
+                    [column],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0)
+                > 0;
+            assert!(has_column, "memories table should have {column} column");
+        }
     }
 }

@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.9.1 - 2026-03-23
+
+### Fixed
+
+- **Older DB migration failure**: Hyphae now adds new `memories` columns before creating related indexes, so older databases without `branch`, `worktree`, or invalidation columns no longer fail to open.
+- **Codex notify storage on existing installs**: `hyphae codex-notify` can now write memories into upgraded pre-0.8 databases instead of crashing during schema initialization.
+
 ## v0.9.0 - 2026-03-23
 
 ### Added
