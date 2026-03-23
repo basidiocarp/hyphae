@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.8.0 - 2026-03-23
+
+### Added
+
+- **Codex notify adapter**: Added `hyphae codex-notify` and `hyphae init` support for Codex `notify = ["hyphae", "codex-notify"]`, so Codex can emit turn-complete events into Hyphae without Claude-specific hooks.
+- **Codex session transcript ingestion**: `hyphae ingest-sessions` now understands real Codex session event streams in addition to Claude transcripts and legacy Codex text history.
+
+### Changed
+
+- **Normalized host session ingestion**: Codex notify handling and transcript parsing now accumulate through a shared normalized session model instead of separate host-specific state paths.
+- **Codex integration docs**: CLI and setup docs now describe Codex as a first-class integration path alongside Claude Code.
+
 ## v0.7.1 - 2026-03-22
 
 ### Fixed
