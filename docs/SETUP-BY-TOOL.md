@@ -188,7 +188,7 @@ command = "/path/to/hyphae"
 args = ["serve"]
 ```
 
-`hyphae codex-notify` stores a compact turn summary for `agent-turn-complete` and lightweight lifecycle breadcrumbs for other Codex notify events.
+`hyphae codex-notify` stores a compact turn summary for `agent-turn-complete` and normalized lifecycle notes for other Codex notify events.
 
 **Config file (TOML):** `~/.codex/config.toml`
 ```toml

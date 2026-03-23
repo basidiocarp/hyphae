@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use hyphae_core::{Importance, Memory, MemorySource, MemoryStore};
-use hyphae_ingest::session::{NormalizedSession, truncate_snippet};
+use hyphae_ingest::session::{NormalizedSession, normalize_codex_event_type, truncate_snippet};
 use hyphae_store::SqliteStore;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -86,16 +86,17 @@ fn build_record(
 ) -> Result<Option<CodexMemoryRecord>> {
     let session = build_normalized_session(notification, project_override);
     let project = session.project().unwrap_or("unknown").to_string();
+    let normalized_event_type = normalize_codex_event_type(&notification.event_type);
     let turn_label = notification
         .turn_id
         .as_deref()
         .or(notification.thread_id.as_deref())
         .unwrap_or("unknown");
-    if notification.event_type.is_empty() {
+    if normalized_event_type.is_empty() {
         return Ok(None);
     }
 
-    if notification.event_type == "agent-turn-complete" {
+    if normalized_event_type == "agent-turn-complete" {
         return Ok(Some(build_turn_record(
             notification,
             &session,
@@ -109,6 +110,7 @@ fn build_record(
         &session,
         project,
         turn_label,
+        &normalized_event_type,
     )))
 }
 
@@ -132,13 +134,18 @@ fn build_turn_record(
         .collect::<Vec<_>>()
         .join(" | ");
 
+    let state_suffix = session
+        .codex_lifecycle_state_summary()
+        .map(|summary| format!(" [{summary}]"))
+        .unwrap_or_default();
+
     let summary = if input_snippets.is_empty() {
         format!("Codex turn complete in {project} ({turn_label}): {assistant_snippet}")
     } else {
         format!(
             "Codex turn complete in {project} ({turn_label}): {input_snippets} -> {assistant_snippet}"
         )
-    };
+    } + &state_suffix;
 
     let dedupe_hash = hash_prefix(&dedupe_source(notification));
 
@@ -147,6 +154,9 @@ fn build_turn_record(
         "event:agent-turn-complete".to_string(),
         "event_kind:summary".to_string(),
     ];
+    if let Some(keyword) = session.codex_lifecycle_state_keyword() {
+        keywords.push(keyword);
+    }
     if let Some(thread_id) = notification.thread_id.as_deref() {
         keywords.push(format!("thread_id:{thread_id}"));
     }
@@ -182,17 +192,23 @@ fn build_lifecycle_record(
     session: &NormalizedSession,
     project: String,
     turn_label: &str,
+    normalized_event_type: &str,
 ) -> CodexMemoryRecord {
     let lifecycle_snippet = lifecycle_snippet(notification);
+    let state_suffix = session
+        .codex_lifecycle_state_summary()
+        .map(|summary| format!(" [state: {summary}]"))
+        .unwrap_or_default();
+
     let summary = if lifecycle_snippet.is_empty() {
         format!(
-            "Codex lifecycle event {} in {project} ({turn_label})",
-            notification.event_type
+            "Codex lifecycle event {} in {project} ({turn_label}){}",
+            normalized_event_type, state_suffix
         )
     } else {
         format!(
-            "Codex lifecycle event {} in {project} ({turn_label}): {lifecycle_snippet}",
-            notification.event_type
+            "Codex lifecycle event {} in {project} ({turn_label}): {lifecycle_snippet}{}",
+            normalized_event_type, state_suffix
         )
     };
 
@@ -200,9 +216,12 @@ fn build_lifecycle_record(
 
     let mut keywords = vec![
         "host:codex".to_string(),
-        format!("event:{}", notification.event_type),
+        format!("event:{normalized_event_type}"),
         "event_kind:lifecycle".to_string(),
     ];
+    if let Some(keyword) = session.codex_lifecycle_state_keyword() {
+        keywords.push(keyword);
+    }
     if let Some(thread_id) = notification.thread_id.as_deref() {
         keywords.push(format!("thread_id:{thread_id}"));
     }
@@ -253,6 +272,14 @@ fn build_normalized_session(
         session.note_raw_excerpt_line(format!("cwd: {cwd}"));
         session.note_project_from_cwd(cwd);
     }
+    if !notification.event_type.is_empty() {
+        let lifecycle_detail = lifecycle_snippet(notification);
+        if let Some(recorded) =
+            session.record_codex_lifecycle_event(&notification.event_type, &lifecycle_detail)
+        {
+            session.note_raw_excerpt_line(format!("lifecycle: {}", recorded.note));
+        }
+    }
     if !notification.input_messages.is_empty() {
         session.note_raw_excerpt_line("input-messages:");
         for message in &notification.input_messages {
@@ -288,7 +315,7 @@ fn hash_prefix(text: &str) -> String {
 }
 
 fn dedupe_source(notification: &CodexNotification) -> String {
-    let mut parts = vec![notification.event_type.clone()];
+    let mut parts = vec![normalize_codex_event_type(&notification.event_type)];
     if let Some(thread_id) = &notification.thread_id {
         parts.push(thread_id.clone());
     }
@@ -402,7 +429,14 @@ mod tests {
         let hash = record.dedupe_hash.clone();
         assert!(record.summary.contains("myapp"));
         assert!(record.summary.contains("turn-9"));
+        assert!(record.summary.contains("phase turn-complete"));
         assert!(record.raw_excerpt.contains("thread-id: thread-7"));
+        assert!(
+            record
+                .keywords
+                .iter()
+                .any(|keyword| keyword == "state:turn-complete")
+        );
 
         run(&store, payload, None).unwrap();
 
@@ -413,12 +447,32 @@ mod tests {
     fn test_stores_lifecycle_breadcrumbs_for_non_turn_complete_events() {
         let store = SqliteStore::in_memory().unwrap();
         let payload = serde_json::json!({
-            "type": "approval-requested",
+            "type": "approval_requested",
             "thread-id": "thread-7",
             "cwd": "/Users/williamnewton/projects/myapp",
             "reason": "needs approval before writing files"
         });
-        run(&store, serde_json::to_string(&payload).unwrap(), None).unwrap();
+        let serialized = serde_json::to_string(&payload).unwrap();
+        let record = build_record(&parse_notification(&serialized).unwrap(), None)
+            .unwrap()
+            .unwrap();
+        assert!(
+            record
+                .keywords
+                .iter()
+                .any(|k| k == "event:approval-requested")
+        );
+        assert!(record.summary.contains("approval-requested"));
+        assert!(record.summary.contains("phase awaiting-approval"));
+        assert!(record.raw_excerpt.contains("lifecycle: approval-requested"));
+        assert!(
+            record
+                .keywords
+                .iter()
+                .any(|keyword| keyword == "state:awaiting-approval")
+        );
+
+        run(&store, serialized, None).unwrap();
 
         let results = store
             .search_by_keywords(&["approval-requested"], 10, 0, None)
@@ -435,5 +489,39 @@ mod tests {
                 .unwrap_or_default()
                 .contains("reason: needs approval before writing files")
         );
+    }
+
+    #[test]
+    fn test_normalized_turn_complete_variants_store_turn_summary() {
+        let payload = serde_json::json!({
+            "type": "agent_turn_complete",
+            "thread-id": "thread-8",
+            "turn-id": "turn-4",
+            "cwd": "/Users/williamnewton/projects/myapp",
+            "last-assistant-message": "Wrapped up the turn."
+        });
+
+        let record = build_record(
+            &parse_notification(&serde_json::to_string(&payload).unwrap()).unwrap(),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(record.importance, Importance::Medium);
+        assert!(
+            record
+                .keywords
+                .iter()
+                .any(|keyword| keyword == "event:agent-turn-complete")
+        );
+        assert!(
+            record
+                .keywords
+                .iter()
+                .any(|keyword| keyword == "state:turn-complete")
+        );
+        assert!(record.summary.contains("Codex turn complete"));
+        assert!(!record.summary.contains("Codex lifecycle event"));
     }
 }

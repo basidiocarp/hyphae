@@ -911,7 +911,7 @@ This command is normally invoked by Codex via:
 notify = ["hyphae", "codex-notify"]
 ```
 
-It stores a compact session summary when Codex emits `agent-turn-complete`, and it also records lighter lifecycle breadcrumbs for other Codex notify events when they carry useful context.
+It stores a compact session summary when Codex emits `agent-turn-complete`, and it also normalizes other Codex notify events into searchable lifecycle notes when they carry useful context.
 
 ---
 

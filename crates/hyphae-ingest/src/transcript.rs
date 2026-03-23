@@ -4,7 +4,9 @@ use anyhow::{Context, Result};
 use std::fmt;
 use std::path::Path;
 
-use crate::session::{NormalizedSession, truncate_snippet};
+use crate::session::{
+    CodexLifecycleState, NormalizedSession, summarize_codex_lifecycle_state, truncate_snippet,
+};
 
 /// Runtime that produced a session transcript.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +35,8 @@ pub struct TranscriptSummary {
     pub commands_run: Vec<String>,
     pub errors: Vec<String>,
     pub highlights: Vec<String>,
+    pub lifecycle_events: Vec<String>,
+    pub lifecycle_state: Option<CodexLifecycleState>,
 }
 
 /// Parse a Claude Code or Codex JSONL transcript file into a summary.
@@ -182,6 +186,7 @@ fn parse_codex_line(value: &serde_json::Value, normalized: &mut NormalizedSessio
     let payload = value.get("payload");
     match event_type {
         "session_meta" => {
+            normalized.note_codex_session_started();
             if normalized.session_id().is_none() {
                 if let Some(id) = payload
                     .and_then(|p| p.get("id"))
@@ -230,7 +235,7 @@ fn parse_codex_line(value: &serde_json::Value, normalized: &mut NormalizedSessio
                 normalized.note_raw_excerpt_line(format!("event_msg: {payload_type}"));
                 normalized.note_highlight(payload_type);
                 if let Some(payload) = payload {
-                    capture_codex_lifecycle_payload(payload, normalized);
+                    capture_codex_lifecycle_payload(payload_type, payload, normalized);
                 }
             }
         }
@@ -252,6 +257,7 @@ fn parse_codex_line(value: &serde_json::Value, normalized: &mut NormalizedSessio
 }
 
 fn capture_codex_lifecycle_payload(
+    event_type: &str,
     payload: &serde_json::Value,
     normalized: &mut NormalizedSession,
 ) {
@@ -259,11 +265,41 @@ fn capture_codex_lifecycle_payload(
         normalized.note_project_from_cwd(cwd);
     }
 
+    let lifecycle_detail = summarize_codex_lifecycle_payload(payload);
+    if !lifecycle_detail.is_empty() {
+        normalized.record_codex_lifecycle_event(event_type, &lifecycle_detail);
+    }
+
     for key in ["message", "reason", "status", "summary", "text", "content"] {
         if let Some(value) = payload.get(key) {
             capture_text(value, normalized);
         }
     }
+}
+
+fn summarize_codex_lifecycle_payload(payload: &serde_json::Value) -> String {
+    let mut parts = Vec::new();
+    for key in ["reason", "message", "status", "summary"] {
+        if let Some(value) = payload.get(key) {
+            let snippet = value_to_lifecycle_snippet(value);
+            if !snippet.is_empty() {
+                parts.push(snippet);
+            }
+        }
+    }
+
+    if parts.is_empty() {
+        for key in ["text", "content"] {
+            if let Some(value) = payload.get(key) {
+                let snippet = value_to_lifecycle_snippet(value);
+                if !snippet.is_empty() {
+                    parts.push(snippet);
+                }
+            }
+        }
+    }
+
+    parts.join(" · ")
 }
 
 fn project_from_path(path: &Path) -> Option<String> {
@@ -299,6 +335,32 @@ fn capture_text(value: &serde_json::Value, normalized: &mut NormalizedSession) {
     }
 }
 
+fn value_to_lifecycle_snippet(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(text) => truncate_snippet(text, 140),
+        serde_json::Value::Number(number) => number.to_string(),
+        serde_json::Value::Bool(value) => value.to_string(),
+        serde_json::Value::Null => String::new(),
+        serde_json::Value::Array(items) => items
+            .iter()
+            .map(value_to_lifecycle_snippet)
+            .filter(|snippet| !snippet.is_empty())
+            .collect::<Vec<_>>()
+            .join(" | "),
+        serde_json::Value::Object(map) => {
+            if let Some(text) = map.get("text").and_then(|value| value.as_str()) {
+                return truncate_snippet(text, 140);
+            }
+            if let Some(text) = map.get("content").and_then(|value| value.as_str()) {
+                return truncate_snippet(text, 140);
+            }
+            serde_json::to_string(value)
+                .map(|s| truncate_snippet(&s, 140))
+                .unwrap_or_else(|_| "<unserializable>".to_string())
+        }
+    }
+}
+
 impl TranscriptSummary {
     fn from_normalized(
         normalized: NormalizedSession,
@@ -329,6 +391,8 @@ impl TranscriptSummary {
             commands_run: normalized.commands_run().to_vec(),
             errors: normalized.errors().to_vec(),
             highlights: normalized.highlights().to_vec(),
+            lifecycle_events: normalized.lifecycle_events().to_vec(),
+            lifecycle_state: normalized.codex_lifecycle_state().cloned(),
         }
     }
 }
@@ -358,6 +422,26 @@ pub fn summary_to_text(summary: &TranscriptSummary) -> String {
                 .collect::<Vec<_>>()
                 .join(" | ")
         ));
+    }
+
+    if !summary.lifecycle_events.is_empty() {
+        parts.push(format!(
+            "Lifecycle events: {}",
+            summary
+                .lifecycle_events
+                .iter()
+                .take(4)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(" | ")
+        ));
+    }
+
+    if let Some(state) = &summary.lifecycle_state {
+        let state_summary = summarize_codex_lifecycle_state(state);
+        if !state_summary.is_empty() {
+            parts.push(format!("Lifecycle state: {state_summary}"));
+        }
     }
 
     if !summary.files_modified.is_empty() {
@@ -523,6 +607,24 @@ mod tests {
                 .iter()
                 .any(|snippet| snippet.contains("needs approval before writing files"))
         );
+        assert!(
+            summary
+                .lifecycle_events
+                .iter()
+                .any(|snippet| snippet.contains("approval-requested"))
+        );
+        assert_eq!(
+            summary.lifecycle_state,
+            Some(CodexLifecycleState {
+                session_started: true,
+                session_ended: false,
+                turns_completed: 0,
+                approvals_requested: 1,
+                approvals_resolved: 0,
+                pending_approvals: 1,
+                last_event: Some("approval-requested".to_string()),
+            })
+        );
     }
 
     #[test]
@@ -536,11 +638,73 @@ mod tests {
             commands_run: vec!["cargo test".to_string()],
             errors: vec![],
             highlights: vec!["turn summary".to_string()],
+            lifecycle_events: vec!["approval-requested: needs approval".to_string()],
+            lifecycle_state: Some(CodexLifecycleState {
+                session_started: true,
+                session_ended: false,
+                turns_completed: 1,
+                approvals_requested: 1,
+                approvals_resolved: 0,
+                pending_approvals: 1,
+                last_event: Some("agent-turn-complete".to_string()),
+            }),
         };
         let text = summary_to_text(&summary);
         assert!(text.contains("Codex session"));
         assert!(text.contains("turn summary"));
+        assert!(text.contains("Lifecycle events"));
+        assert!(text.contains("Lifecycle state"));
+        assert!(text.contains("phase awaiting-approval"));
+        assert!(text.contains("1 turn(s) completed"));
         assert!(text.contains("10 messages"));
         assert!(text.contains("src/main.rs"));
+    }
+
+    #[test]
+    fn test_parse_codex_transcript_reconciles_state_transitions() {
+        let dir = tempfile::tempdir().unwrap();
+        let codex_dir = dir.path().join(".codex").join("sessions");
+        std::fs::create_dir_all(&codex_dir).unwrap();
+        let path = codex_dir.join("reconcile-test.jsonl");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(
+            f,
+            r#"{{"type":"session_meta","timestamp":"2026-03-23T11:00:00.000Z","payload":{{"id":"rollout-2","cwd":"/Users/test/demo-project","model_provider":"openai"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            f,
+            r#"{{"type":"event_msg","timestamp":"2026-03-23T11:00:01.000Z","payload":{{"type":"approval_requested","reason":"needs approval before writing files"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            f,
+            r#"{{"type":"event_msg","timestamp":"2026-03-23T11:00:02.000Z","payload":{{"type":"approval_approved","message":"approval granted"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            f,
+            r#"{{"type":"event_msg","timestamp":"2026-03-23T11:00:03.000Z","payload":{{"type":"agent_turn_complete","summary":"turn wrapped"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            f,
+            r#"{{"type":"event_msg","timestamp":"2026-03-23T11:00:04.000Z","payload":{{"type":"session_complete","status":"done"}}}}"#
+        )
+        .unwrap();
+
+        let summary = parse_transcript(&path).unwrap();
+        assert_eq!(
+            summary.lifecycle_state,
+            Some(CodexLifecycleState {
+                session_started: true,
+                session_ended: true,
+                turns_completed: 1,
+                approvals_requested: 1,
+                approvals_resolved: 1,
+                pending_approvals: 0,
+                last_event: Some("session-complete".to_string()),
+            })
+        );
     }
 }
