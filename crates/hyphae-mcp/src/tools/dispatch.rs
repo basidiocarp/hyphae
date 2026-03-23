@@ -27,6 +27,8 @@ pub fn call_tool(
         }
         "hyphae_memory_recall" => memory::tool_recall(store, embedder, args, compact, project),
         "hyphae_memory_forget" => memory::tool_forget(store, args),
+        "hyphae_memory_invalidate" => memory::tool_invalidate(store, args),
+        "hyphae_memory_list_invalidated" => memory::tool_list_invalidated(store, args, project),
         "hyphae_memory_update" => memory::tool_update(store, embedder, args),
         "hyphae_memory_consolidate" => memory::tool_consolidate(store, args),
         "hyphae_memory_list_topics" => memory::tool_list_topics(store, project),

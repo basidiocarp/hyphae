@@ -28,6 +28,7 @@ impl SqliteStore {
              WHERE m.id IN (
                  SELECT id FROM memories_fts WHERE memories_fts MATCH ?1
              )
+             AND m.invalidated_at IS NULL
              ORDER BY m.weight DESC
              LIMIT ?2",
             cols = helpers::SELECT_COLS,
@@ -80,6 +81,7 @@ impl SqliteStore {
                  WHERE memories_fts MATCH ?1
                  AND project IN ({in_clause})
              )
+             AND m.invalidated_at IS NULL
              ORDER BY m.weight DESC
              LIMIT ?2",
             cols = helpers::SELECT_COLS,
@@ -116,7 +118,11 @@ impl SqliteStore {
         let mut stmt = self
             .conn
             .prepare_cached(
-                "SELECT COALESCE(project, '(none)'), COUNT(*) FROM memories GROUP BY project ORDER BY project",
+                "SELECT COALESCE(project, '(none)'), COUNT(*)
+                 FROM memories
+                 WHERE invalidated_at IS NULL
+                 GROUP BY project
+                 ORDER BY project",
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 

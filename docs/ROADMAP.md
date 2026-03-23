@@ -23,10 +23,14 @@ Detect when a new memory is semantically equivalent to an existing one and merge
 ### Conflict detection
 Flag when a new memory contradicts an existing one. "You stored 'API uses JWT' but also 'API uses session cookies' — which is current?"
 
+Partially shipped: ordinary memories can now be invalidated with a reason and optional replacement memory, and invalidated entries are hidden from default recall while remaining reviewable.
+
 ## Medium Impact — Developer Experience
 
 ### `hyphae init` command
 Auto-detect the user's editor (Claude Code, Cursor, Zed, etc.) and write the correct MCP config. Zero-friction onboarding.
+
+Partially shipped: `hyphae init` now supports lifecycle hook installation for Claude Code, including `PostToolUse`, `PreCompact`, and `SessionEnd`.
 
 ### Git-aware ingestion
 Respect `.gitignore`, auto-ingest on commit hooks, track file hashes to skip unchanged files. `hyphae ingest . --git-aware`.
@@ -42,6 +46,8 @@ Ingest an entire agent conversation transcript and extract the key decisions, di
 
 ### Memory provenance
 Track where each memory came from (which conversation, which file, which commit). `hyphae trace <memory-id>` shows the full lineage.
+
+Partially shipped: memories now persist project, branch, and worktree metadata. Traceability to commit and richer provenance queries are still open.
 
 ### Temporal queries
 "What did I know about auth as of last Tuesday?" Point-in-time snapshots of the knowledge base. Useful for understanding how understanding evolved.
@@ -59,6 +65,8 @@ Optional encrypted sync between machines via S3/R2/git. Work on laptop, recall o
 
 ### Multi-agent shared memory
 Multiple agents (code review bot, CI bot, planning agent) read/write to the same hyphae instance with agent-scoped namespaces.
+
+Partially shipped: memories are now branch/worktree-aware, which reduces cross-branch contamination and lays groundwork for agent-scoped memory.
 
 ### Webhook/event hooks
 Trigger external actions on memory events. "When a critical memory is stored, post to Slack." Extensibility point for workflows.

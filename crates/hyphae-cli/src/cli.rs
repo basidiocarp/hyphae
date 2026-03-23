@@ -45,6 +45,26 @@ pub(crate) enum Commands {
         limit: usize,
     },
 
+    /// Invalidate a memory without deleting it
+    Invalidate {
+        /// Memory ID to invalidate
+        #[arg(short, long)]
+        id: String,
+        /// Optional reason for invalidation
+        #[arg(long)]
+        reason: Option<String>,
+        /// Optional replacement memory ID
+        #[arg(long)]
+        superseded_by: Option<String>,
+    },
+
+    /// List invalidated memories for review
+    ListInvalidated {
+        /// Maximum results
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+    },
+
     /// Extract facts from input text
     Extract {
         /// Input text file (reads stdin if omitted)
@@ -132,6 +152,9 @@ pub(crate) enum Commands {
         /// Specific editor to configure (auto-detects if omitted)
         #[arg(short, long, value_enum)]
         editor: Option<crate::init::Editor>,
+        /// Setup mode
+        #[arg(short, long, value_enum, default_value_t = crate::init::InitMode::Mcp)]
+        mode: crate::init::InitMode,
     },
 
     /// Watch a directory and auto-ingest file changes

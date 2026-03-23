@@ -13,6 +13,8 @@ Common problems and their fixes, plus answers to frequently asked questions. If 
 **Solutions:**
 - Run `hyphae init` and check the output for each tool
 - Verify that the MCP config file exists (e.g., `~/.claude.json` for Claude Code)
+- If you want Claude Code lifecycle capture, run `hyphae init --mode hook` and verify
+  `~/.claude/settings.json` contains `PostToolUse`, `PreCompact`, and `SessionEnd` entries
 - Test the server manually:
   ```bash
   echo '{"jsonrpc":"2.0","id":1,"method":"initialize"}' | hyphae serve

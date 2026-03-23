@@ -8,6 +8,18 @@ pub trait MemoryStore {
     fn get(&self, id: &MemoryId) -> HyphaeResult<Option<Memory>>;
     fn update(&self, memory: &Memory) -> HyphaeResult<()>;
     fn delete(&self, id: &MemoryId) -> HyphaeResult<()>;
+    fn invalidate(
+        &self,
+        id: &MemoryId,
+        reason: Option<&str>,
+        superseded_by: Option<&MemoryId>,
+    ) -> HyphaeResult<()>;
+    fn list_invalidated(
+        &self,
+        limit: usize,
+        offset: usize,
+        project: Option<&str>,
+    ) -> HyphaeResult<Vec<Memory>>;
 
     // Search
     fn search_by_keywords(

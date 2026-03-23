@@ -11,11 +11,14 @@ set -euo pipefail
 # Config
 EXTRACT_EVERY=15           # Extract every N tool calls
 COUNTER_FILE="${HYPHAE_HOOK_COUNTER:-/tmp/hyphae-hook-counter}"
-HYPHAE_BIN="${HYPHAE_BIN:-hyphae}"
+HYPHAE_BIN=${HYPHAE_BIN:-__HYPHAE_BIN__}
 
 # Read hook input
 INPUT=$(cat)
-TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)
+if ! command -v jq >/dev/null 2>&1; then
+  exit 0
+fi
+TOOL_NAME=$(printf '%s' "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)
 
 # Skip Hyphae's own tools (avoid infinite loop)
 case "$TOOL_NAME" in
@@ -45,13 +48,23 @@ fi
 echo "0" > "$COUNTER_FILE"
 
 # Extract from tool output if available
-TOOL_OUTPUT=$(echo "$INPUT" | jq -r '.tool_output // empty' 2>/dev/null)
+TOOL_OUTPUT=$(
+  printf '%s' "$INPUT" | jq -r '
+    (.tool_response // .tool_output // empty)
+    | if type == "string" then . else tojson end
+  ' 2>/dev/null
+)
 if [ -z "$TOOL_OUTPUT" ]; then
   exit 0
 fi
 
 # Get project name from cwd
-PROJECT=$(basename "$(pwd)" 2>/dev/null || echo "project")
+PROJECT_CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
+if [ -n "$PROJECT_CWD" ]; then
+  PROJECT=$(basename "$PROJECT_CWD" 2>/dev/null || echo "project")
+else
+  PROJECT=$(basename "$(pwd)" 2>/dev/null || echo "project")
+fi
 
 # Extract facts and store (async, don't block the agent)
 echo "$TOOL_OUTPUT" | "$HYPHAE_BIN" extract -p "$PROJECT" 2>/dev/null &

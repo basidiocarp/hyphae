@@ -11,6 +11,24 @@ pub(crate) fn print_memory(memory: &Memory, score: Option<f32>) {
     if let Some(p) = &memory.project {
         println!("  project: {p}");
     }
+    if let Some(branch) = &memory.branch {
+        println!("  branch: {branch}");
+    }
+    if let Some(worktree) = &memory.worktree {
+        println!("  worktree: {worktree}");
+    }
+    if let Some(invalidated_at) = memory.invalidated_at {
+        println!(
+            "  invalidated_at: {}",
+            invalidated_at.format("%Y-%m-%d %H:%M:%S UTC")
+        );
+    }
+    if let Some(reason) = &memory.invalidation_reason {
+        println!("  invalidation_reason: {reason}");
+    }
+    if let Some(superseded_by) = &memory.superseded_by {
+        println!("  superseded_by: {superseded_by}");
+    }
 }
 
 /// Truncate `s` to at most `max` bytes, appending `…` if truncated.

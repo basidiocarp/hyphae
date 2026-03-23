@@ -56,8 +56,13 @@ pub struct Memory {
     pub related_ids: Vec<MemoryId>,
 
     pub project: Option<String>,
+    pub branch: Option<String>,
+    pub worktree: Option<String>,
 
     pub expires_at: Option<DateTime<Utc>>,
+    pub invalidated_at: Option<DateTime<Utc>>,
+    pub invalidation_reason: Option<String>,
+    pub superseded_by: Option<MemoryId>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub embedding: Option<Vec<f32>>,
@@ -70,6 +75,22 @@ impl Memory {
 
     pub fn builder(topic: String, summary: String, importance: Importance) -> MemoryBuilder {
         MemoryBuilder::new(topic, summary, importance)
+    }
+
+    pub fn is_invalidated(&self) -> bool {
+        self.invalidated_at.is_some()
+    }
+
+    pub fn invalidate(
+        &mut self,
+        reason: Option<String>,
+        superseded_by: Option<MemoryId>,
+        when: DateTime<Utc>,
+    ) {
+        self.invalidated_at = Some(when);
+        self.invalidation_reason = reason;
+        self.superseded_by = superseded_by;
+        self.updated_at = when;
     }
 }
 
@@ -85,7 +106,12 @@ pub struct MemoryBuilder {
     related_ids: Vec<MemoryId>,
     weight: Weight,
     project: Option<String>,
+    branch: Option<String>,
+    worktree: Option<String>,
     expires_at: Option<DateTime<Utc>>,
+    invalidated_at: Option<DateTime<Utc>>,
+    invalidation_reason: Option<String>,
+    superseded_by: Option<MemoryId>,
 }
 
 impl MemoryBuilder {
@@ -101,7 +127,12 @@ impl MemoryBuilder {
             related_ids: Vec::new(),
             weight: Weight::default(),
             project: None,
+            branch: None,
+            worktree: None,
             expires_at: None,
+            invalidated_at: None,
+            invalidation_reason: None,
+            superseded_by: None,
         }
     }
 
@@ -135,6 +166,16 @@ impl MemoryBuilder {
         self
     }
 
+    pub fn branch(mut self, branch: String) -> Self {
+        self.branch = Some(branch);
+        self
+    }
+
+    pub fn worktree(mut self, worktree: String) -> Self {
+        self.worktree = Some(worktree);
+        self
+    }
+
     pub fn weight(mut self, weight: f32) -> Self {
         self.weight = Weight::new_clamped(weight);
         self
@@ -142,6 +183,21 @@ impl MemoryBuilder {
 
     pub fn expires_at(mut self, dt: DateTime<Utc>) -> Self {
         self.expires_at = Some(dt);
+        self
+    }
+
+    pub fn invalidated_at(mut self, dt: DateTime<Utc>) -> Self {
+        self.invalidated_at = Some(dt);
+        self
+    }
+
+    pub fn invalidation_reason(mut self, reason: String) -> Self {
+        self.invalidation_reason = Some(reason);
+        self
+    }
+
+    pub fn superseded_by(mut self, memory_id: MemoryId) -> Self {
+        self.superseded_by = Some(memory_id);
         self
     }
 
@@ -167,7 +223,12 @@ impl MemoryBuilder {
             source: self.source,
             related_ids: self.related_ids,
             project: self.project,
+            branch: self.branch,
+            worktree: self.worktree,
             expires_at,
+            invalidated_at: self.invalidated_at,
+            invalidation_reason: self.invalidation_reason,
+            superseded_by: self.superseded_by,
             embedding: self.embedding,
         }
     }
@@ -271,6 +332,8 @@ mod tests {
         assert!(m.raw_excerpt.is_none());
         assert!(m.embedding.is_none());
         assert!(m.related_ids.is_empty());
+        assert!(m.branch.is_none());
+        assert!(m.worktree.is_none());
         assert_eq!(m.access_count, 0);
     }
 

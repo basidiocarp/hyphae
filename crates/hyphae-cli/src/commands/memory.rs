@@ -1,7 +1,9 @@
 use anyhow::Result;
-use hyphae_core::{Embedder, MemoryStore};
+use hyphae_core::{Embedder, GitContext, MemoryId, MemoryStore};
 use hyphae_store::SqliteStore;
 use regex::Regex;
+
+use crate::project;
 
 fn parse_importance(s: &str) -> hyphae_core::Importance {
     match s.parse() {
@@ -67,6 +69,9 @@ pub(crate) fn cmd_store(
 
     let mut mem = hyphae_core::Memory::new(topic, content, parse_importance(importance));
     mem.project = project;
+    let GitContext { branch, worktree } = project::detect_git_context();
+    mem.branch = branch;
+    mem.worktree = worktree;
     store.store(mem)?;
     println!("Memory stored");
     Ok(())
@@ -79,6 +84,37 @@ pub(crate) fn cmd_search(
     project: Option<String>,
 ) -> Result<()> {
     let results = store.search_fts(&query, limit, 0, project.as_deref())?;
+    for mem in &results {
+        crate::display::print_memory(mem, None);
+    }
+    Ok(())
+}
+
+pub(crate) fn cmd_invalidate(
+    store: &SqliteStore,
+    id: String,
+    reason: Option<String>,
+    superseded_by: Option<String>,
+) -> Result<()> {
+    let memory_id = MemoryId::from(id.clone());
+    let superseded_by_id = superseded_by.as_deref().map(MemoryId::from);
+
+    store.invalidate(&memory_id, reason.as_deref(), superseded_by_id.as_ref())?;
+    println!("Memory invalidated: {id}");
+    Ok(())
+}
+
+pub(crate) fn cmd_list_invalidated(
+    store: &SqliteStore,
+    limit: usize,
+    project: Option<String>,
+) -> Result<()> {
+    let results = store.list_invalidated(limit, 0, project.as_deref())?;
+    if results.is_empty() {
+        println!("No invalidated memories.");
+        return Ok(());
+    }
+
     for mem in &results {
         crate::display::print_memory(mem, None);
     }

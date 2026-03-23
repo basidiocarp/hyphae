@@ -38,7 +38,10 @@ Installs `/recall` and `/remember` in `~/.claude/commands/`.
 ```bash
 hyphae init --mode hook
 ```
-Installs a hook that automatically extracts context after each tool call (git commit, edit, etc.).
+Installs the recommended Claude Code lifecycle hooks:
+- `PostToolUse` for periodic context extraction after tool calls
+- `PreCompact` for a lightweight capture marker before compaction
+- `SessionEnd` for session-end breadcrumbs
 
 **Compact mode recommended:** Claude Code benefits from compact mode to save tokens. Enable in `~/.config/hyphae/config.toml`:
 ```toml

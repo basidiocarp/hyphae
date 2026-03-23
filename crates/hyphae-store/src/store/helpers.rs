@@ -100,18 +100,34 @@ pub(crate) fn row_to_memory(row: &rusqlite::Row) -> rusqlite::Result<Memory> {
         source,
         related_ids,
         project: row.get("project").ok(),
+        branch: row.get("branch").ok(),
+        worktree: row.get("worktree").ok(),
         expires_at: row
             .get::<_, Option<String>>("expires_at")
             .ok()
             .flatten()
             .map(|s| parse_dt(&s)),
+        invalidated_at: row
+            .get::<_, Option<String>>("invalidated_at")
+            .ok()
+            .flatten()
+            .map(|s| parse_dt(&s)),
+        invalidation_reason: row.get("invalidation_reason").ok(),
+        superseded_by: row
+            .get::<_, Option<String>>("superseded_by")
+            .ok()
+            .flatten()
+            .map(MemoryId::from),
         embedding,
     })
 }
 
 pub(crate) const SELECT_COLS: &str = "id, created_at, updated_at, last_accessed, access_count, weight, \
      topic, summary, raw_excerpt, keywords, \
-     importance, source_type, source_data, related_ids, embedding, project, expires_at";
+     importance, source_type, source_data, related_ids, embedding, project, branch, worktree, \
+     expires_at, invalidated_at, invalidation_reason, superseded_by";
+
+pub(crate) const ACTIVE_MEMORY_CLAUSE: &str = "invalidated_at IS NULL";
 
 // ---------------------------------------------------------------------------
 // Memoir / Concept helpers

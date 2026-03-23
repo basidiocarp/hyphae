@@ -2,7 +2,8 @@ use chrono::Utc;
 use serde_json::Value;
 
 use hyphae_core::{
-    Embedder, Importance, MemoirStore, Memory, MemoryId, MemoryStore, Weight, detect_secrets,
+    Embedder, Importance, MemoirStore, Memory, MemoryId, MemoryStore, Weight,
+    detect_git_context_from, detect_secrets,
 };
 use hyphae_store::SqliteStore;
 use hyphae_store::context;
@@ -115,6 +116,22 @@ pub(crate) fn tool_store(
 
     if let Some(p) = project {
         builder = builder.project(p.to_string());
+    }
+
+    let git_context = detect_git_context_from(None);
+    let detected_branch = git_context.branch;
+    let detected_worktree = git_context.worktree;
+    if let Some(branch) = get_str(args, "branch")
+        .map(str::to_owned)
+        .or(detected_branch)
+    {
+        builder = builder.branch(branch);
+    }
+    if let Some(worktree) = get_str(args, "worktree")
+        .map(str::to_owned)
+        .or(detected_worktree)
+    {
+        builder = builder.worktree(worktree);
     }
 
     if let Some(raw) = get_str(args, "raw_excerpt") {
@@ -337,6 +354,12 @@ pub(crate) fn tool_recall(
                         if let Some(ref p) = mem.project {
                             output.push_str(&format!("  project: {p}\n"));
                         }
+                        if let Some(ref branch) = mem.branch {
+                            output.push_str(&format!("  branch: {branch}\n"));
+                        }
+                        if let Some(ref worktree) = mem.worktree {
+                            output.push_str(&format!("  worktree: {worktree}\n"));
+                        }
                         if let Some(ref raw) = mem.raw_excerpt {
                             output.push_str(&format!("  raw: {raw}\n"));
                         }
@@ -496,6 +519,15 @@ pub(crate) fn tool_recall(
             if !mem.keywords.is_empty() {
                 output.push_str(&format!("  keywords: {}\n", mem.keywords.join(", ")));
             }
+            if let Some(ref p) = mem.project {
+                output.push_str(&format!("  project: {p}\n"));
+            }
+            if let Some(ref branch) = mem.branch {
+                output.push_str(&format!("  branch: {branch}\n"));
+            }
+            if let Some(ref worktree) = mem.worktree {
+                output.push_str(&format!("  worktree: {worktree}\n"));
+            }
             if let Some(ref raw) = mem.raw_excerpt {
                 output.push_str(&format!("  raw: {raw}\n"));
             }
@@ -526,6 +558,35 @@ pub(crate) fn tool_forget(store: &SqliteStore, args: &Value) -> ToolResult {
     }
 }
 
+pub(crate) fn tool_invalidate(store: &SqliteStore, args: &Value) -> ToolResult {
+    let id = match get_str(args, "id") {
+        Some(id) => id,
+        None => return ToolResult::error("missing required field: id".into()),
+    };
+    let reason = get_str(args, "reason");
+    if let Some(reason) = reason {
+        if let Err(e) = validate_max_length(reason, "reason", 1024) {
+            return e;
+        }
+    }
+    let superseded_by = get_str(args, "superseded_by").map(MemoryId::from);
+
+    let memory_id = MemoryId::from(id);
+    match store.invalidate(&memory_id, reason, superseded_by.as_ref()) {
+        Ok(()) => {
+            let mut output = format!("Invalidated memory: {id}");
+            if let Some(reason) = reason {
+                output.push_str(&format!("\nreason: {reason}"));
+            }
+            if let Some(superseded_by) = superseded_by {
+                output.push_str(&format!("\nsuperseded_by: {superseded_by}"));
+            }
+            ToolResult::text(output)
+        }
+        Err(e) => ToolResult::error(format!("failed to invalidate: {e}")),
+    }
+}
+
 pub(crate) fn tool_consolidate(store: &SqliteStore, args: &Value) -> ToolResult {
     let topic = match validate_required_string(args, "topic") {
         Ok(t) => t,
@@ -544,6 +605,46 @@ pub(crate) fn tool_consolidate(store: &SqliteStore, args: &Value) -> ToolResult 
     match store.consolidate_topic(topic, consolidated) {
         Ok(()) => ToolResult::text(format!("Consolidated topic: {topic}")),
         Err(e) => ToolResult::error(format!("failed to consolidate: {e}")),
+    }
+}
+
+pub(crate) fn tool_list_invalidated(
+    store: &SqliteStore,
+    args: &Value,
+    project: Option<&str>,
+) -> ToolResult {
+    let limit = get_bounded_i64(args, "limit", 20, 1, 100) as usize;
+    let offset = get_bounded_i64(args, "offset", 0, 0, 10_000) as usize;
+
+    match store.list_invalidated(limit, offset, project) {
+        Ok(memories) => {
+            if memories.is_empty() {
+                return ToolResult::text("No invalidated memories.".into());
+            }
+
+            let mut output = String::from("Invalidated memories:\n");
+            for mem in memories {
+                output.push_str(&format!("  [{}] [{}] {}\n", mem.id, mem.topic, mem.summary));
+                if let Some(reason) = mem.invalidation_reason {
+                    output.push_str(&format!("    reason: {reason}\n"));
+                }
+                if let Some(superseded_by) = mem.superseded_by {
+                    output.push_str(&format!("    superseded_by: {superseded_by}\n"));
+                }
+                if let Some(invalidated_at) = mem.invalidated_at {
+                    output.push_str(&format!(
+                        "    invalidated_at: {}\n",
+                        invalidated_at.format("%Y-%m-%d %H:%M")
+                    ));
+                }
+                if let Some(project) = mem.project {
+                    output.push_str(&format!("    project: {project}\n"));
+                }
+            }
+
+            ToolResult::text(output)
+        }
+        Err(e) => ToolResult::error(format!("failed to list invalidated memories: {e}")),
     }
 }
 
@@ -905,6 +1006,12 @@ pub(crate) fn tool_recall_global(store: &SqliteStore, args: &Value, compact: boo
                 ));
                 if !mem.keywords.is_empty() {
                     output.push_str(&format!("    keywords: {}\n", mem.keywords.join(", ")));
+                }
+                if let Some(branch) = &mem.branch {
+                    output.push_str(&format!("    branch: {branch}\n"));
+                }
+                if let Some(worktree) = &mem.worktree {
+                    output.push_str(&format!("    worktree: {worktree}\n"));
                 }
                 output.push('\n');
             }

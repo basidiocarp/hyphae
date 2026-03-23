@@ -853,7 +853,7 @@ hyphae init [-m <mode>]
 | `mcp` | Configure the MCP server | Auto-detects and configures 14 AI tools                           |
 | `cli` | Inject into CLAUDE.md | Adds `hyphae store`/`hyphae recall` instructions                  |
 | `skill` | Install slash commands | `/recall`, `/remember` for Claude Code, `.mdc` for Cursor, etc.   |
-| `hook` | Install PostToolUse hook | Automatic extraction after each tool call                         |
+| `hook` | Install Claude Code lifecycle hooks | Installs `PostToolUse`, `PreCompact`, and `SessionEnd` capture hooks |
 | `all` | All of the above | Configure MCP + CLI + Skills + Hook                               |
 
 **14 supported tools (MCP mode):**

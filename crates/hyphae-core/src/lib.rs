@@ -4,6 +4,7 @@ pub mod embedder;
 pub mod error;
 #[cfg(feature = "embeddings")]
 pub mod fastembed_embedder;
+pub mod git_context;
 pub mod http_embedder;
 pub mod ids;
 pub mod memoir;
@@ -18,6 +19,7 @@ pub use embedder::Embedder;
 pub use error::{HyphaeError, HyphaeResult};
 #[cfg(feature = "embeddings")]
 pub use fastembed_embedder::FastEmbedder;
+pub use git_context::{GitContext, detect_git_context_from};
 pub use http_embedder::HttpEmbedder;
 pub use ids::*;
 pub use memoir::{Concept, ConceptLink, Confidence, Label, Memoir, MemoirStats, Relation};

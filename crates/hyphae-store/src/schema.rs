@@ -34,13 +34,26 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
             source_type TEXT NOT NULL,
             source_data TEXT, -- JSON
 
-            related_ids TEXT -- JSON array
+            related_ids TEXT, -- JSON array
+            project TEXT,
+            branch TEXT,
+            worktree TEXT,
+            expires_at TEXT,
+            invalidated_at TEXT,
+            invalidation_reason TEXT,
+            superseded_by TEXT
         );
 
         CREATE INDEX IF NOT EXISTS idx_memories_topic ON memories(topic);
         CREATE INDEX IF NOT EXISTS idx_memories_weight ON memories(weight);
         CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at);
         CREATE INDEX IF NOT EXISTS idx_memories_importance_weight ON memories(importance, weight);
+        CREATE INDEX IF NOT EXISTS idx_memories_project ON memories(project);
+        CREATE INDEX IF NOT EXISTS idx_memories_branch ON memories(branch);
+        CREATE INDEX IF NOT EXISTS idx_memories_worktree ON memories(worktree);
+        CREATE INDEX IF NOT EXISTS idx_memories_expires_at ON memories(expires_at);
+        CREATE INDEX IF NOT EXISTS idx_memories_invalidated_at ON memories(invalidated_at);
+        CREATE INDEX IF NOT EXISTS idx_memories_superseded_by ON memories(superseded_by);
 
         -- Memoir tables
         CREATE TABLE IF NOT EXISTS memoirs (
@@ -374,6 +387,38 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
     }
 
+    let has_branch_memories: bool = tx
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name='branch'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if !has_branch_memories {
+        tx.execute_batch(
+            "ALTER TABLE memories ADD COLUMN branch TEXT;
+             CREATE INDEX IF NOT EXISTS idx_memories_branch ON memories(branch);",
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    }
+
+    let has_worktree_memories: bool = tx
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name='worktree'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if !has_worktree_memories {
+        tx.execute_batch(
+            "ALTER TABLE memories ADD COLUMN worktree TEXT;
+             CREATE INDEX IF NOT EXISTS idx_memories_worktree ON memories(worktree);",
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    }
+
     // Migration: add project column to documents
     let has_project_documents: bool = tx
         .query_row(
@@ -404,6 +449,51 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         tx.execute_batch(
             "ALTER TABLE memories ADD COLUMN expires_at TEXT;
              CREATE INDEX IF NOT EXISTS idx_memories_expires_at ON memories(expires_at);",
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    }
+
+    let has_invalidated_at: bool = tx
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name='invalidated_at'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if !has_invalidated_at {
+        tx.execute_batch(
+            "ALTER TABLE memories ADD COLUMN invalidated_at TEXT;
+             CREATE INDEX IF NOT EXISTS idx_memories_invalidated_at ON memories(invalidated_at);",
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    }
+
+    let has_invalidation_reason: bool = tx
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name='invalidation_reason'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if !has_invalidation_reason {
+        tx.execute_batch("ALTER TABLE memories ADD COLUMN invalidation_reason TEXT")
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    }
+
+    let has_superseded_by: bool = tx
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name='superseded_by'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if !has_superseded_by {
+        tx.execute_batch(
+            "ALTER TABLE memories ADD COLUMN superseded_by TEXT;
+             CREATE INDEX IF NOT EXISTS idx_memories_superseded_by ON memories(superseded_by);",
         )
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
     }

@@ -35,6 +35,14 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                         "type": "string",
                         "maxLength": 65536,
                         "description": "Optional verbatim (code, exact error message, etc.)"
+                    },
+                    "branch": {
+                        "type": "string",
+                        "description": "Optional git branch for the memory. If omitted, Hyphae will try to detect it from the current working tree."
+                    },
+                    "worktree": {
+                        "type": "string",
+                        "description": "Optional git worktree root for the memory. If omitted, Hyphae will try to detect it from the current working tree."
                     }
                 },
                 "required": ["topic", "content"]
@@ -92,6 +100,51 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     }
                 },
                 "required": ["id"]
+            }
+        }),
+        json!({
+            "name": "hyphae_memory_invalidate",
+            "description": "Invalidate a specific memory without deleting it. Invalidated memories are hidden from normal recall by default but remain available for review.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Memory ID to invalidate"
+                    },
+                    "reason": {
+                        "type": "string",
+                        "maxLength": 1024,
+                        "description": "Optional reason the memory is no longer valid"
+                    },
+                    "superseded_by": {
+                        "type": "string",
+                        "description": "Optional replacement memory ID"
+                    }
+                },
+                "required": ["id"]
+            }
+        }),
+        json!({
+            "name": "hyphae_memory_list_invalidated",
+            "description": "List invalidated memories for review. Use to audit stale or replaced memories that are hidden from normal recall.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "default": 20,
+                        "minimum": 1,
+                        "maximum": 100,
+                        "description": "Max number of invalidated memories to return"
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "default": 0,
+                        "minimum": 0,
+                        "description": "Number of invalidated memories to skip"
+                    }
+                }
             }
         }),
         json!({

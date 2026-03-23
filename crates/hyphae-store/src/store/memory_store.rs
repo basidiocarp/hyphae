@@ -8,7 +8,9 @@ use hyphae_core::{
 };
 
 use super::SqliteStore;
-use super::helpers::{SELECT_COLS, embedding_to_blob, row_to_memory, source_data, source_type};
+use super::helpers::{
+    ACTIVE_MEMORY_CLAUSE, SELECT_COLS, embedding_to_blob, row_to_memory, source_data, source_type,
+};
 use super::search::sanitize_fts_query;
 
 impl MemoryStore for SqliteStore {
@@ -23,8 +25,9 @@ impl MemoryStore for SqliteStore {
             .execute(
                 "INSERT INTO memories (id, created_at, updated_at, last_accessed, access_count, weight,
                  topic, summary, raw_excerpt, keywords,
-                 importance, source_type, source_data, related_ids, embedding, project, expires_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                 importance, source_type, source_data, related_ids, embedding, project, branch, worktree,
+                 expires_at, invalidated_at, invalidation_reason, superseded_by)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
                 params![
                     memory.id.as_ref(),
                     memory.created_at.to_rfc3339(),
@@ -42,7 +45,12 @@ impl MemoryStore for SqliteStore {
                     related_json,
                     emb_blob,
                     memory.project.as_deref(),
+                    memory.branch.as_deref(),
+                    memory.worktree.as_deref(),
                     memory.expires_at.map(|dt| dt.to_rfc3339()),
+                    memory.invalidated_at.map(|dt| dt.to_rfc3339()),
+                    memory.invalidation_reason.as_deref(),
+                    memory.superseded_by.as_ref().map(MemoryId::as_ref),
                 ],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
@@ -95,7 +103,8 @@ impl MemoryStore for SqliteStore {
                  updated_at = ?2, last_accessed = ?3, access_count = ?4, weight = ?5,
                  topic = ?6, summary = ?7, raw_excerpt = ?8, keywords = ?9,
                  importance = ?10, source_type = ?11, source_data = ?12, related_ids = ?13,
-                 embedding = ?14, expires_at = ?15
+                 embedding = ?14, project = ?15, branch = ?16, worktree = ?17, expires_at = ?18,
+                 invalidated_at = ?19, invalidation_reason = ?20, superseded_by = ?21
                  WHERE id = ?1",
                 params![
                     memory.id.as_ref(),
@@ -112,7 +121,13 @@ impl MemoryStore for SqliteStore {
                     sd,
                     related_json,
                     emb_blob,
+                    memory.project.as_deref(),
+                    memory.branch.as_deref(),
+                    memory.worktree.as_deref(),
                     memory.expires_at.map(|dt| dt.to_rfc3339()),
+                    memory.invalidated_at.map(|dt| dt.to_rfc3339()),
+                    memory.invalidation_reason.as_deref(),
+                    memory.superseded_by.as_ref().map(MemoryId::as_ref),
                 ],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
@@ -139,6 +154,68 @@ impl MemoryStore for SqliteStore {
         tx.commit()
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
         Ok(())
+    }
+
+    fn invalidate(
+        &self,
+        id: &MemoryId,
+        reason: Option<&str>,
+        superseded_by: Option<&MemoryId>,
+    ) -> HyphaeResult<()> {
+        let now = Utc::now().to_rfc3339();
+        let changed = self
+            .conn
+            .execute(
+                "UPDATE memories
+                 SET invalidated_at = ?2,
+                     invalidation_reason = ?3,
+                     superseded_by = ?4,
+                     updated_at = ?2
+                 WHERE id = ?1",
+                params![
+                    id.as_ref(),
+                    now,
+                    reason,
+                    superseded_by.map(MemoryId::as_ref),
+                ],
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        if changed == 0 {
+            return Err(HyphaeError::NotFound(id.to_string()));
+        }
+
+        Ok(())
+    }
+
+    fn list_invalidated(
+        &self,
+        limit: usize,
+        offset: usize,
+        project: Option<&str>,
+    ) -> HyphaeResult<Vec<Memory>> {
+        let sql = format!(
+            "SELECT {SELECT_COLS}
+             FROM memories
+             WHERE invalidated_at IS NOT NULL
+               AND (project = ?1 OR ?1 IS NULL)
+             ORDER BY invalidated_at DESC, updated_at DESC
+             LIMIT ?2 OFFSET ?3"
+        );
+        let mut stmt = self
+            .conn
+            .prepare_cached(&sql)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![project, limit as i64, offset as i64], row_to_memory)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| HyphaeError::Database(e.to_string()))?);
+        }
+        Ok(results)
     }
 
     fn delete(&self, id: &MemoryId) -> HyphaeResult<()> {
@@ -191,7 +268,13 @@ impl MemoryStore for SqliteStore {
         let project_pos = keywords.len() + 3;
 
         let query = format!(
-            "SELECT {SELECT_COLS} FROM memories WHERE ({where_clause}) AND (project = ?{project_pos} OR ?{project_pos} IS NULL) ORDER BY weight DESC LIMIT ?{limit_pos} OFFSET ?{offset_pos}"
+            "SELECT {SELECT_COLS}
+             FROM memories
+             WHERE ({where_clause})
+               AND {ACTIVE_MEMORY_CLAUSE}
+               AND (project = ?{project_pos} OR ?{project_pos} IS NULL)
+             ORDER BY weight DESC
+             LIMIT ?{limit_pos} OFFSET ?{offset_pos}"
         );
 
         let mut stmt = self
@@ -243,6 +326,7 @@ impl MemoryStore for SqliteStore {
                  WHERE memories_fts MATCH ?1
                  AND (project = ?3 OR ?3 IS NULL)
              )
+             AND m.{ACTIVE_MEMORY_CLAUSE}
              ORDER BY m.weight DESC
              LIMIT ?2 OFFSET ?4"
         );
@@ -304,7 +388,11 @@ impl MemoryStore for SqliteStore {
         let in_clause = placeholders.join(",");
         let project_pos = knn_rows.len() + 1;
         let sql = format!(
-            "SELECT {SELECT_COLS} FROM memories WHERE id IN ({in_clause}) AND (project = ?{project_pos} OR ?{project_pos} IS NULL)"
+            "SELECT {SELECT_COLS}
+             FROM memories
+             WHERE id IN ({in_clause})
+               AND {ACTIVE_MEMORY_CLAUSE}
+               AND (project = ?{project_pos} OR ?{project_pos} IS NULL)"
         );
 
         let mut stmt = self
@@ -362,10 +450,12 @@ impl MemoryStore for SqliteStore {
         let fts_sql = "SELECT m.id, m.created_at, m.updated_at, m.last_accessed, m.access_count, m.weight, \
                     m.topic, m.summary, m.raw_excerpt, m.keywords, \
                     m.importance, m.source_type, m.source_data, m.related_ids, m.embedding, \
-                    m.project, m.expires_at, fts.rank \
+                    m.project, m.branch, m.worktree, m.expires_at, m.invalidated_at, \
+                    m.invalidation_reason, m.superseded_by, fts.rank \
              FROM memories_fts fts \
              JOIN memories m ON m.id = fts.id \
              WHERE memories_fts MATCH ?1 \
+             AND m.invalidated_at IS NULL \
              AND (fts.project = ?3 OR ?3 IS NULL) \
              ORDER BY fts.rank \
              LIMIT ?2";
@@ -378,7 +468,7 @@ impl MemoryStore for SqliteStore {
                 Ok(mut stmt) => {
                     match stmt.query_map(params![sanitized, pool_size as i64, project], |row| {
                         let memory = row_to_memory(row)?;
-                        let rank: f32 = row.get(17)?;
+                        let rank: f32 = row.get(22)?;
                         Ok((memory, rank))
                     }) {
                         Ok(rows) => {
@@ -452,7 +542,7 @@ impl MemoryStore for SqliteStore {
                     END
                     / (1.0 + access_count * 0.1)
                 )
-                WHERE importance != 'critical'",
+                WHERE importance != 'critical' AND invalidated_at IS NULL",
                 params![decay_factor],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
@@ -470,7 +560,10 @@ impl MemoryStore for SqliteStore {
 
         tx.execute(
             "DELETE FROM vec_memories WHERE memory_id IN (
-                SELECT id FROM memories WHERE weight < ?1 AND importance NOT IN ('critical', 'high')
+                SELECT id FROM memories
+                WHERE weight < ?1
+                  AND importance NOT IN ('critical', 'high')
+                  AND invalidated_at IS NULL
             )",
             params![weight_threshold],
         )
@@ -478,7 +571,10 @@ impl MemoryStore for SqliteStore {
 
         let changed = tx
             .execute(
-                "DELETE FROM memories WHERE weight < ?1 AND importance NOT IN ('critical', 'high')",
+                "DELETE FROM memories
+                 WHERE weight < ?1
+                   AND importance NOT IN ('critical', 'high')
+                   AND invalidated_at IS NULL",
                 params![weight_threshold],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
@@ -490,7 +586,12 @@ impl MemoryStore for SqliteStore {
 
     fn get_by_topic(&self, topic: &str, project: Option<&str>) -> HyphaeResult<Vec<Memory>> {
         let sql = format!(
-            "SELECT {SELECT_COLS} FROM memories WHERE topic = ?1 AND (project = ?2 OR ?2 IS NULL) ORDER BY weight DESC"
+            "SELECT {SELECT_COLS}
+             FROM memories
+             WHERE topic = ?1
+               AND {ACTIVE_MEMORY_CLAUSE}
+               AND (project = ?2 OR ?2 IS NULL)
+             ORDER BY weight DESC"
         );
         let mut stmt = self
             .conn
@@ -511,7 +612,14 @@ impl MemoryStore for SqliteStore {
     fn list_topics(&self, project: Option<&str>) -> HyphaeResult<Vec<(String, usize)>> {
         let mut stmt = self
             .conn
-            .prepare_cached("SELECT topic, COUNT(*) FROM memories WHERE (project = ?1 OR ?1 IS NULL) GROUP BY topic ORDER BY topic")
+            .prepare_cached(
+                "SELECT topic, COUNT(*)
+                 FROM memories
+                 WHERE invalidated_at IS NULL
+                   AND (project = ?1 OR ?1 IS NULL)
+                 GROUP BY topic
+                 ORDER BY topic",
+            )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         let rows = stmt
@@ -537,14 +645,17 @@ impl MemoryStore for SqliteStore {
 
         tx.execute(
             "DELETE FROM vec_memories WHERE memory_id IN (
-                SELECT id FROM memories WHERE topic = ?1
+                SELECT id FROM memories WHERE topic = ?1 AND invalidated_at IS NULL
             )",
             params![topic],
         )
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
-        tx.execute("DELETE FROM memories WHERE topic = ?1", params![topic])
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        tx.execute(
+            "DELETE FROM memories WHERE topic = ?1 AND invalidated_at IS NULL",
+            params![topic],
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         // Inline the INSERT (instead of self.store()) to stay within the transaction
         let keywords_json = serde_json::to_string(&consolidated.keywords)?;
@@ -556,8 +667,9 @@ impl MemoryStore for SqliteStore {
         tx.execute(
             "INSERT INTO memories (id, created_at, updated_at, last_accessed, access_count, weight,
              topic, summary, raw_excerpt, keywords,
-             importance, source_type, source_data, related_ids, embedding, project, expires_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+             importance, source_type, source_data, related_ids, embedding, project, branch, worktree,
+             expires_at, invalidated_at, invalidation_reason, superseded_by)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
             params![
                 consolidated.id.as_ref(),
                 consolidated.created_at.to_rfc3339(),
@@ -575,7 +687,12 @@ impl MemoryStore for SqliteStore {
                 related_json,
                 emb_blob,
                 consolidated.project.as_deref(),
+                consolidated.branch.as_deref(),
+                consolidated.worktree.as_deref(),
                 consolidated.expires_at.map(|dt| dt.to_rfc3339()),
+                consolidated.invalidated_at.map(|dt| dt.to_rfc3339()),
+                consolidated.invalidation_reason.as_deref(),
+                consolidated.superseded_by.as_ref().map(MemoryId::as_ref),
             ],
         )
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
@@ -597,7 +714,7 @@ impl MemoryStore for SqliteStore {
     fn count(&self, project: Option<&str>) -> HyphaeResult<usize> {
         self.conn
             .query_row(
-                "SELECT COUNT(*) FROM memories WHERE (project = ?1 OR ?1 IS NULL)",
+                "SELECT COUNT(*) FROM memories WHERE invalidated_at IS NULL AND (project = ?1 OR ?1 IS NULL)",
                 params![project],
                 |row| row.get::<_, usize>(0),
             )
@@ -607,7 +724,7 @@ impl MemoryStore for SqliteStore {
     fn count_by_topic(&self, topic: &str, project: Option<&str>) -> HyphaeResult<usize> {
         self.conn
             .query_row(
-                "SELECT COUNT(*) FROM memories WHERE topic = ?1 AND (project = ?2 OR ?2 IS NULL)",
+                "SELECT COUNT(*) FROM memories WHERE topic = ?1 AND invalidated_at IS NULL AND (project = ?2 OR ?2 IS NULL)",
                 params![topic, project],
                 |row| row.get::<_, usize>(0),
             )
@@ -645,7 +762,7 @@ impl MemoryStore for SqliteStore {
                     COUNT(CASE WHEN weight < 0.5
                         AND julianday('now') - julianday(last_accessed) > 14
                         THEN 1 END)
-                 FROM memories WHERE topic = ?1 AND (project = ?2 OR ?2 IS NULL)",
+                 FROM memories WHERE topic = ?1 AND invalidated_at IS NULL AND (project = ?2 OR ?2 IS NULL)",
                 params![topic, project],
                 |row| {
                     Ok((
@@ -699,7 +816,7 @@ impl MemoryStore for SqliteStore {
                     COALESCE(AVG(weight), 0.0),
                     MIN(created_at),
                     MAX(created_at)
-                 FROM memories WHERE (project = ?1 OR ?1 IS NULL)",
+                 FROM memories WHERE invalidated_at IS NULL AND (project = ?1 OR ?1 IS NULL)",
                 params![project],
                 |row| {
                     Ok((
@@ -737,7 +854,10 @@ impl MemoryStore for SqliteStore {
 
         tx.execute(
             "DELETE FROM vec_memories WHERE memory_id IN (
-                SELECT id FROM memories WHERE expires_at IS NOT NULL AND expires_at < ?1
+                SELECT id FROM memories
+                WHERE invalidated_at IS NULL
+                  AND expires_at IS NOT NULL
+                  AND expires_at < ?1
             )",
             params![now],
         )
@@ -745,7 +865,10 @@ impl MemoryStore for SqliteStore {
 
         let changed = tx
             .execute(
-                "DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at < ?1",
+                "DELETE FROM memories
+                 WHERE invalidated_at IS NULL
+                   AND expires_at IS NOT NULL
+                   AND expires_at < ?1",
                 params![now],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;

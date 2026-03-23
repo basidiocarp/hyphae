@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use hyphae_core::{GitContext, detect_git_context_from};
+
 /// Detect a project name from the current environment.
 /// Resolution order: git repo basename → cwd basename → None
 pub fn detect_project() -> Option<String> {
@@ -22,6 +24,10 @@ pub fn detect_project() -> Option<String> {
         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
 }
 
+pub fn detect_git_context() -> GitContext {
+    detect_git_context_from(None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -32,5 +38,12 @@ mod tests {
         if let Some(name) = result {
             assert!(!name.is_empty());
         }
+    }
+
+    #[test]
+    fn test_detect_git_context_returns_struct() {
+        let ctx = detect_git_context();
+        assert!(ctx.branch.is_none() || !ctx.branch.as_deref().unwrap_or_default().is_empty());
+        assert!(ctx.worktree.is_none() || !ctx.worktree.as_deref().unwrap_or_default().is_empty());
     }
 }

@@ -100,7 +100,10 @@ impl SqliteStore {
         let now = Utc::now().to_rfc3339();
         self.conn
             .query_row(
-                "SELECT COUNT(*) FROM memories WHERE expires_at IS NOT NULL AND expires_at < ?1",
+                "SELECT COUNT(*) FROM memories
+                 WHERE invalidated_at IS NULL
+                   AND expires_at IS NOT NULL
+                   AND expires_at < ?1",
                 params![now],
                 |row| row.get::<_, usize>(0),
             )
@@ -111,7 +114,10 @@ impl SqliteStore {
     pub fn count_low_weight(&self, weight_threshold: f32) -> HyphaeResult<usize> {
         self.conn
             .query_row(
-                "SELECT COUNT(*) FROM memories WHERE weight < ?1 AND importance NOT IN ('critical', 'high')",
+                "SELECT COUNT(*) FROM memories
+                 WHERE invalidated_at IS NULL
+                   AND weight < ?1
+                   AND importance NOT IN ('critical', 'high')",
                 params![weight_threshold],
                 |row| row.get::<_, usize>(0),
             )
@@ -124,7 +130,10 @@ impl SqliteStore {
         let exists: bool = self
             .conn
             .query_row(
-                "SELECT 1 FROM memories WHERE keywords LIKE ?1 LIMIT 1",
+                "SELECT 1 FROM memories
+                 WHERE invalidated_at IS NULL
+                   AND keywords LIKE ?1
+                 LIMIT 1",
                 params![pattern],
                 |_row| Ok(true),
             )
@@ -1429,6 +1438,82 @@ mod tests {
         Memory::builder(topic.into(), summary.into(), Importance::Medium)
             .project(project.to_string())
             .build()
+    }
+
+    #[test]
+    fn test_store_round_trip_preserves_branch_and_worktree() {
+        let store = test_store();
+        let memory = Memory::builder("test".into(), "branch aware".into(), Importance::Medium)
+            .project("alpha".into())
+            .branch("feature/root-detection".into())
+            .worktree("/tmp/worktrees/alpha-feature".into())
+            .build();
+        let id = memory.id.clone();
+
+        store.store(memory).unwrap();
+        let loaded = store.get(&id).unwrap().unwrap();
+
+        assert_eq!(loaded.project.as_deref(), Some("alpha"));
+        assert_eq!(loaded.branch.as_deref(), Some("feature/root-detection"));
+        assert_eq!(
+            loaded.worktree.as_deref(),
+            Some("/tmp/worktrees/alpha-feature")
+        );
+    }
+
+    #[test]
+    fn test_invalidate_hides_memory_from_default_search_but_preserves_storage() {
+        let store = test_store();
+        let original = Memory::builder(
+            "flags".into(),
+            "Legacy deploy flag --old-mode".into(),
+            Importance::Medium,
+        )
+        .project("alpha".into())
+        .build();
+        let original_id = original.id.clone();
+        let replacement = Memory::builder(
+            "flags".into(),
+            "Use deploy flag --new-mode".into(),
+            Importance::Medium,
+        )
+        .project("alpha".into())
+        .build();
+        let replacement_id = replacement.id.clone();
+
+        store.store(original).unwrap();
+        store.store(replacement).unwrap();
+        store
+            .invalidate(
+                &original_id,
+                Some("replaced by newer deploy flow"),
+                Some(&replacement_id),
+            )
+            .unwrap();
+
+        let retrieved = store.get(&original_id).unwrap().unwrap();
+        assert!(retrieved.invalidated_at.is_some());
+        assert_eq!(
+            retrieved.invalidation_reason.as_deref(),
+            Some("replaced by newer deploy flow")
+        );
+        assert_eq!(retrieved.superseded_by, Some(replacement_id.clone()));
+
+        let fts_results = store.search_fts("old-mode", 10, 0, Some("alpha")).unwrap();
+        assert!(fts_results.is_empty());
+
+        let keyword_results = store
+            .search_by_keywords(&["old-mode"], 10, 0, Some("alpha"))
+            .unwrap();
+        assert!(keyword_results.is_empty());
+
+        let invalidated = store.list_invalidated(10, 0, Some("alpha")).unwrap();
+        assert_eq!(invalidated.len(), 1);
+        assert_eq!(invalidated[0].id, original_id);
+
+        assert_eq!(store.count(Some("alpha")).unwrap(), 1);
+        let stats = store.stats(Some("alpha")).unwrap();
+        assert_eq!(stats.total_memories, 1);
     }
 
     #[test]

@@ -396,7 +396,7 @@ hyphae embed --force
 ```bash
 hyphae init                  # Auto-detect and configure MCP for all found tools
 hyphae init --mode skill     # Install slash commands and rules
-hyphae init --mode hook      # Install Claude Code PostToolUse hook for auto-extraction
+hyphae init --mode hook      # Install Claude Code PostToolUse, PreCompact, and SessionEnd hooks
 hyphae init --mode cli       # Show manual CLI setup instructions
 ```
 
@@ -491,4 +491,3 @@ Store architecture decisions with `-i high`, invariant facts (ports, URLs) with 
 
 - **Tool-specific setup** — MCP config files, slash commands, and hooks for every supported tool: [SETUP-BY-TOOL.md](SETUP-BY-TOOL.md)
 - **Troubleshooting & FAQ** — Fix common issues and get answers to frequent questions: [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
-

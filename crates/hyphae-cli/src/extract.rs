@@ -9,6 +9,8 @@ use anyhow::Result;
 use hyphae_core::{Importance, Memory, MemoryStore};
 use hyphae_store::SqliteStore;
 
+use crate::project;
+
 /// Minimum score threshold for a sentence to be considered an extractable fact.
 const DEFAULT_MIN_SCORE: f32 = 3.0;
 
@@ -22,9 +24,13 @@ const DEFAULT_MAX_FACTS: usize = 20;
 /// Returns the number of facts stored.
 pub fn extract_and_store(store: &SqliteStore, text: &str, project: &str) -> Result<usize> {
     let facts = extract_facts(text, project);
+    let git = project::detect_git_context();
     let mut stored = 0;
     for (topic, content, importance) in &facts {
-        let mem = Memory::new(topic.clone(), content.clone(), *importance);
+        let mut mem = Memory::new(topic.clone(), content.clone(), *importance);
+        mem.project = Some(project.to_string());
+        mem.branch = git.branch.clone();
+        mem.worktree = git.worktree.clone();
         store.store(mem)?;
         stored += 1;
     }
@@ -63,7 +69,11 @@ pub fn recall_context(store: &SqliteStore, query: &str, limit: usize) -> Result<
          Use it to answer efficiently without re-reading files.\n\n",
     );
     for mem in &relevant {
-        ctx.push_str(&format!("- {}\n", mem.summary));
+        if let Some(branch) = &mem.branch {
+            ctx.push_str(&format!("- [{}] {}\n", branch, mem.summary));
+        } else {
+            ctx.push_str(&format!("- {}\n", mem.summary));
+        }
     }
     ctx.push_str("\n---\n\n");
 

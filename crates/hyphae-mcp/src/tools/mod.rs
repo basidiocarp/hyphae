@@ -88,6 +88,7 @@ pub(super) fn resolve_memoir(store: &SqliteStore, name: &str) -> Result<Memoir, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hyphae_core::{Importance, Memory, MemoryStore};
 
     fn test_store() -> SqliteStore {
         SqliteStore::in_memory().unwrap()
@@ -205,6 +206,22 @@ mod tests {
     }
 
     #[test]
+    fn test_invalidate_missing_id() {
+        let store = test_store();
+        let result = call_tool(
+            &store,
+            None,
+            "hyphae_memory_invalidate",
+            &json!({}),
+            false,
+            None,
+            false,
+        );
+        assert!(result.is_error);
+        assert!(result.content[0].text.contains("id"));
+    }
+
+    #[test]
     fn test_store_and_recall_roundtrip() {
         let store = test_store();
         let store_result = call_tool(
@@ -230,6 +247,137 @@ mod tests {
         );
         assert!(!recall_result.is_error);
         assert!(recall_result.content[0].text.contains("Rust"));
+    }
+
+    #[test]
+    fn test_invalidate_hides_memory_from_recall_but_preserves_review_surface() {
+        let store = test_store();
+        let original = Memory::builder(
+            "flags".into(),
+            "Legacy deploy flag --old-mode".into(),
+            Importance::Medium,
+        )
+        .project("alpha".into())
+        .build();
+        let original_id = original.id.clone();
+        let replacement = Memory::builder(
+            "flags".into(),
+            "Use deploy flag --new-mode".into(),
+            Importance::Medium,
+        )
+        .project("alpha".into())
+        .build();
+        let replacement_id = replacement.id.clone();
+
+        store.store(original).unwrap();
+        store.store(replacement).unwrap();
+
+        let invalidate_result = call_tool(
+            &store,
+            None,
+            "hyphae_memory_invalidate",
+            &json!({
+                "id": original_id.to_string(),
+                "reason": "replaced by the new deploy flow",
+                "superseded_by": replacement_id.to_string()
+            }),
+            false,
+            Some("alpha"),
+            false,
+        );
+        assert!(!invalidate_result.is_error);
+        assert!(
+            invalidate_result.content[0]
+                .text
+                .contains("Invalidated memory")
+        );
+
+        let recall_result = call_tool(
+            &store,
+            None,
+            "hyphae_memory_recall",
+            &json!({"query": "old-mode"}),
+            false,
+            Some("alpha"),
+            false,
+        );
+        assert!(!recall_result.is_error);
+        assert!(recall_result.content[0].text.contains("No memories"));
+
+        let review_result = call_tool(
+            &store,
+            None,
+            "hyphae_memory_list_invalidated",
+            &json!({"limit": 10}),
+            false,
+            Some("alpha"),
+            false,
+        );
+        assert!(!review_result.is_error);
+        assert!(
+            review_result.content[0]
+                .text
+                .contains(&original_id.to_string())
+        );
+        assert!(
+            review_result.content[0]
+                .text
+                .contains("replaced by the new deploy flow")
+        );
+        assert!(
+            review_result.content[0]
+                .text
+                .contains(&replacement_id.to_string())
+        );
+
+        let stored = store.get(&original_id).unwrap().unwrap();
+        assert!(stored.invalidated_at.is_some());
+        assert_eq!(
+            stored.invalidation_reason.as_deref(),
+            Some("replaced by the new deploy flow")
+        );
+        assert_eq!(stored.superseded_by, Some(replacement_id));
+    }
+
+    #[test]
+    fn test_store_and_recall_surfaces_branch_and_worktree() {
+        let store = test_store();
+        let store_result = call_tool(
+            &store,
+            None,
+            "hyphae_memory_store",
+            &json!({
+                "topic": "test-project",
+                "content": "Branch specific setup",
+                "branch": "feature/branch-aware-memory",
+                "worktree": "/tmp/worktrees/feature-branch-aware-memory"
+            }),
+            false,
+            Some("alpha"),
+            false,
+        );
+        assert!(!store_result.is_error);
+
+        let recall_result = call_tool(
+            &store,
+            None,
+            "hyphae_memory_recall",
+            &json!({"query": "Branch specific setup"}),
+            false,
+            Some("alpha"),
+            false,
+        );
+        assert!(!recall_result.is_error);
+        assert!(
+            recall_result.content[0]
+                .text
+                .contains("branch: feature/branch-aware-memory")
+        );
+        assert!(
+            recall_result.content[0]
+                .text
+                .contains("worktree: /tmp/worktrees/feature-branch-aware-memory")
+        );
     }
 
     #[test]

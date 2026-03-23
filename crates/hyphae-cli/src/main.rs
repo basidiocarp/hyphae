@@ -98,8 +98,8 @@ fn main() -> Result<()> {
             commands::cmd_config(&cfg);
             return Ok(());
         }
-        Commands::Init { editor } => {
-            init::run_init(editor.clone())?;
+        Commands::Init { editor, mode } => {
+            init::run_init(editor.clone(), *mode)?;
             return Ok(());
         }
         Commands::SelfUpdate { check } => {
@@ -139,6 +139,18 @@ fn main() -> Result<()> {
 
         Commands::Search { query, limit } => {
             commands::memory::cmd_search(&store, query, limit, resolved_project)?;
+        }
+
+        Commands::Invalidate {
+            id,
+            reason,
+            superseded_by,
+        } => {
+            commands::memory::cmd_invalidate(&store, id, reason, superseded_by)?;
+        }
+
+        Commands::ListInvalidated { limit } => {
+            commands::memory::cmd_list_invalidated(&store, limit, resolved_project)?;
         }
 
         Commands::Extract { file, project } => {
