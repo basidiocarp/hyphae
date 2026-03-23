@@ -220,10 +220,18 @@ fn parse_codex_line(value: &serde_json::Value, normalized: &mut NormalizedSessio
 
             if matches!(payload_type, "user_message" | "assistant_message") {
                 normalized.note_message();
+                if let Some(message) = payload.and_then(|p| p.get("message")) {
+                    capture_text(message, normalized);
+                }
+                return;
             }
 
-            if let Some(message) = payload.and_then(|p| p.get("message")) {
-                capture_text(message, normalized);
+            if !payload_type.is_empty() && payload_type != "token_count" {
+                normalized.note_raw_excerpt_line(format!("event_msg: {payload_type}"));
+                normalized.note_highlight(payload_type);
+                if let Some(payload) = payload {
+                    capture_codex_lifecycle_payload(payload, normalized);
+                }
             }
         }
         "response_item" => {
@@ -240,6 +248,21 @@ fn parse_codex_line(value: &serde_json::Value, normalized: &mut NormalizedSessio
             }
         }
         _ => {}
+    }
+}
+
+fn capture_codex_lifecycle_payload(
+    payload: &serde_json::Value,
+    normalized: &mut NormalizedSession,
+) {
+    if let Some(cwd) = payload.get("cwd").and_then(|value| value.as_str()) {
+        normalized.note_project_from_cwd(cwd);
+    }
+
+    for key in ["message", "reason", "status", "summary", "text", "content"] {
+        if let Some(value) = payload.get(key) {
+            capture_text(value, normalized);
+        }
     }
 }
 
@@ -462,6 +485,11 @@ mod tests {
         .unwrap();
         writeln!(
             f,
+            r#"{{"type":"event_msg","timestamp":"2026-03-23T11:00:03.500Z","payload":{{"type":"approval_requested","reason":"needs approval before writing files","message":"Approve the file write?"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            f,
             r#"{{"type":"event_msg","timestamp":"2026-03-23T11:00:04.000Z","payload":{{"type":"token_count","info":{{"total_token_usage":{{"input_tokens":1200,"output_tokens":480,"cached_input_tokens":250}}}}}}}}"#
         )
         .unwrap();
@@ -482,6 +510,18 @@ mod tests {
                 .highlights
                 .iter()
                 .any(|snippet| snippet.contains("Start with the tests"))
+        );
+        assert!(
+            summary
+                .highlights
+                .iter()
+                .any(|snippet| snippet.contains("approval_requested"))
+        );
+        assert!(
+            summary
+                .highlights
+                .iter()
+                .any(|snippet| snippet.contains("needs approval before writing files"))
         );
     }
 

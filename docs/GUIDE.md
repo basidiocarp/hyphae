@@ -25,7 +25,7 @@ cargo install --path crates/hyphae-cli
 hyphae init
 ```
 
-This auto-detects your AI tools and configures the MCP server. Supports 14 tools: Claude Code, Claude Desktop, Cursor, Windsurf, VS Code, Gemini, Zed, Amp, Amazon Q, Cline, Roo Code, Kilo Code, Codex CLI, OpenCode. Codex CLI also gets `notify = ["hyphae", "codex-notify"]` so turn-complete events can feed Hyphae automatically.
+This auto-detects your AI tools and configures the MCP server. Supports 14 tools: Claude Code, Claude Desktop, Cursor, Windsurf, VS Code, Gemini, Zed, Amp, Amazon Q, Cline, Roo Code, Kilo Code, Codex CLI, OpenCode. Codex CLI also gets `notify = ["hyphae", "codex-notify"]` so turn-complete events and lighter lifecycle breadcrumbs can feed Hyphae automatically.
 
 ### 3. Use
 

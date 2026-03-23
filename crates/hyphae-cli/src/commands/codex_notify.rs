@@ -4,6 +4,7 @@ use hyphae_ingest::session::{NormalizedSession, truncate_snippet};
 use hyphae_store::SqliteStore;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Deserialize)]
 struct CodexNotification {
@@ -18,16 +19,21 @@ struct CodexNotification {
     input_messages: Vec<serde_json::Value>,
     #[serde(rename = "last-assistant-message")]
     last_assistant_message: Option<String>,
+    #[serde(flatten, default)]
+    extra_fields: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone)]
-struct CodexTurnRecord {
+struct CodexMemoryRecord {
     project: String,
     summary: String,
     raw_excerpt: String,
     keywords: Vec<String>,
     dedupe_hash: String,
     source: MemorySource,
+    importance: Importance,
+    weight: f32,
+    topic: String,
 }
 
 pub fn run(
@@ -36,11 +42,11 @@ pub fn run(
     project_override: Option<&str>,
 ) -> Result<()> {
     let notification = parse_notification(&notification_json)?;
-    if notification.event_type != "agent-turn-complete" {
-        return Ok(());
-    }
 
-    let record = build_turn_record(&notification, project_override)?;
+    let Some(record) = build_record(&notification, project_override)? else {
+        return Ok(());
+    };
+
     if store.memory_exists_with_keyword(&record.dedupe_hash)? {
         return Ok(());
     }
@@ -49,11 +55,12 @@ pub fn run(
     keywords.push(format!("hash:{}", record.dedupe_hash));
 
     let mut builder = Memory::builder(
-        format!("session/{}", record.project),
+        record.topic.clone(),
         record.summary.clone(),
-        Importance::Medium,
+        record.importance,
     )
     .keywords(keywords)
+    .weight(record.weight)
     .raw_excerpt(record.raw_excerpt.clone())
     .source(record.source.clone());
 
@@ -64,7 +71,7 @@ pub fn run(
     let memory = builder.build();
     store
         .store(memory)
-        .context("failed to store Codex turn summary")?;
+        .context("failed to store Codex lifecycle event")?;
 
     Ok(())
 }
@@ -73,10 +80,10 @@ fn parse_notification(notification_json: &str) -> Result<CodexNotification> {
     serde_json::from_str(notification_json).with_context(|| "failed to parse Codex notification")
 }
 
-fn build_turn_record(
+fn build_record(
     notification: &CodexNotification,
     project_override: Option<&str>,
-) -> Result<CodexTurnRecord> {
+) -> Result<Option<CodexMemoryRecord>> {
     let session = build_normalized_session(notification, project_override);
     let project = session.project().unwrap_or("unknown").to_string();
     let turn_label = notification
@@ -84,6 +91,33 @@ fn build_turn_record(
         .as_deref()
         .or(notification.thread_id.as_deref())
         .unwrap_or("unknown");
+    if notification.event_type.is_empty() {
+        return Ok(None);
+    }
+
+    if notification.event_type == "agent-turn-complete" {
+        return Ok(Some(build_turn_record(
+            notification,
+            &session,
+            project,
+            turn_label,
+        )));
+    }
+
+    Ok(Some(build_lifecycle_record(
+        notification,
+        &session,
+        project,
+        turn_label,
+    )))
+}
+
+fn build_turn_record(
+    notification: &CodexNotification,
+    session: &NormalizedSession,
+    project: String,
+    turn_label: &str,
+) -> CodexMemoryRecord {
     let assistant_snippet = notification
         .last_assistant_message
         .as_deref()
@@ -111,6 +145,7 @@ fn build_turn_record(
     let mut keywords = vec![
         "host:codex".to_string(),
         "event:agent-turn-complete".to_string(),
+        "event_kind:summary".to_string(),
     ];
     if let Some(thread_id) = notification.thread_id.as_deref() {
         keywords.push(format!("thread_id:{thread_id}"));
@@ -127,15 +162,75 @@ fn build_turn_record(
         .clone()
         .map(|thread_id| MemorySource::Conversation { thread_id })
         .unwrap_or(MemorySource::Manual);
+    let topic = format!("session/{project}");
 
-    Ok(CodexTurnRecord {
+    CodexMemoryRecord {
         project,
         summary,
         raw_excerpt: session.raw_excerpt().join("\n"),
         keywords,
         dedupe_hash,
         source,
-    })
+        importance: Importance::Medium,
+        weight: 0.75,
+        topic,
+    }
+}
+
+fn build_lifecycle_record(
+    notification: &CodexNotification,
+    session: &NormalizedSession,
+    project: String,
+    turn_label: &str,
+) -> CodexMemoryRecord {
+    let lifecycle_snippet = lifecycle_snippet(notification);
+    let summary = if lifecycle_snippet.is_empty() {
+        format!(
+            "Codex lifecycle event {} in {project} ({turn_label})",
+            notification.event_type
+        )
+    } else {
+        format!(
+            "Codex lifecycle event {} in {project} ({turn_label}): {lifecycle_snippet}",
+            notification.event_type
+        )
+    };
+
+    let dedupe_hash = hash_prefix(&dedupe_source(notification));
+
+    let mut keywords = vec![
+        "host:codex".to_string(),
+        format!("event:{}", notification.event_type),
+        "event_kind:lifecycle".to_string(),
+    ];
+    if let Some(thread_id) = notification.thread_id.as_deref() {
+        keywords.push(format!("thread_id:{thread_id}"));
+    }
+    if let Some(turn_id) = notification.turn_id.as_deref() {
+        keywords.push(format!("turn_id:{turn_id}"));
+    }
+    if let Some(cwd) = notification.cwd.as_deref() {
+        keywords.push(format!("cwd:{cwd}"));
+    }
+
+    let source = notification
+        .thread_id
+        .clone()
+        .map(|thread_id| MemorySource::Conversation { thread_id })
+        .unwrap_or(MemorySource::Manual);
+    let topic = format!("session/{project}/codex-lifecycle");
+
+    CodexMemoryRecord {
+        project,
+        summary,
+        raw_excerpt: session.raw_excerpt().join("\n"),
+        keywords,
+        dedupe_hash,
+        source,
+        importance: Importance::Low,
+        weight: 0.35,
+        topic,
+    }
 }
 
 fn build_normalized_session(
@@ -175,6 +270,14 @@ fn build_normalized_session(
         ));
         session.note_message();
     }
+    if !notification.extra_fields.is_empty() {
+        session.note_raw_excerpt_line("extra-fields:");
+        for (key, value) in notification.extra_fields.iter().take(5) {
+            let snippet = value_to_snippet(value);
+            session.note_raw_excerpt_line(format!("  - {key}: {snippet}"));
+            session.note_highlight(&format!("{key}: {snippet}"));
+        }
+    }
     session
 }
 
@@ -204,7 +307,49 @@ fn dedupe_source(notification: &CodexNotification) -> String {
     for message in &notification.input_messages {
         parts.push(serde_json::to_string(message).unwrap_or_default());
     }
+    for (key, value) in &notification.extra_fields {
+        parts.push(format!(
+            "{key}={}",
+            serde_json::to_string(value).unwrap_or_default()
+        ));
+    }
     parts.join("\n")
+}
+
+fn lifecycle_snippet(notification: &CodexNotification) -> String {
+    let mut parts = Vec::new();
+    if let Some(thread_id) = notification.thread_id.as_deref() {
+        parts.push(format!("thread {thread_id}"));
+    }
+    if let Some(turn_id) = notification.turn_id.as_deref() {
+        parts.push(format!("turn {turn_id}"));
+    }
+    if let Some(cwd) = notification.cwd.as_deref() {
+        parts.push(format!("cwd {cwd}"));
+    }
+    if !notification.input_messages.is_empty() {
+        let input = notification
+            .input_messages
+            .iter()
+            .take(2)
+            .map(value_to_snippet)
+            .filter(|snippet| !snippet.is_empty())
+            .collect::<Vec<_>>()
+            .join(" | ");
+        if !input.is_empty() {
+            parts.push(input);
+        }
+    }
+    if let Some(last_assistant_message) = notification.last_assistant_message.as_deref() {
+        parts.push(truncate_snippet(last_assistant_message, 120));
+    }
+    for (key, value) in notification.extra_fields.iter().take(3) {
+        let snippet = value_to_snippet(value);
+        if !snippet.is_empty() {
+            parts.push(format!("{key}: {snippet}"));
+        }
+    }
+    parts.join(" · ")
 }
 
 fn value_to_snippet(value: &serde_json::Value) -> String {
@@ -251,7 +396,9 @@ mod tests {
         });
         let payload = serde_json::to_string(&notification).unwrap();
 
-        let record = build_turn_record(&parse_notification(&payload).unwrap(), None).unwrap();
+        let record = build_record(&parse_notification(&payload).unwrap(), None)
+            .unwrap()
+            .unwrap();
         let hash = record.dedupe_hash.clone();
         assert!(record.summary.contains("myapp"));
         assert!(record.summary.contains("turn-9"));
@@ -263,13 +410,30 @@ mod tests {
     }
 
     #[test]
-    fn test_ignores_non_turn_complete_events() {
+    fn test_stores_lifecycle_breadcrumbs_for_non_turn_complete_events() {
         let store = SqliteStore::in_memory().unwrap();
         let payload = serde_json::json!({
             "type": "approval-requested",
-            "thread-id": "thread-7"
+            "thread-id": "thread-7",
+            "cwd": "/Users/williamnewton/projects/myapp",
+            "reason": "needs approval before writing files"
         });
         run(&store, serde_json::to_string(&payload).unwrap(), None).unwrap();
-        assert!(!store.memory_exists_with_keyword("thread-7").unwrap());
+
+        let results = store
+            .search_by_keywords(&["approval-requested"], 10, 0, None)
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        let memory = &results[0];
+        assert_eq!(memory.importance, Importance::Low);
+        assert!(memory.summary.contains("approval-requested"));
+        assert!(memory.summary.contains("needs approval"));
+        assert!(
+            memory
+                .raw_excerpt
+                .as_deref()
+                .unwrap_or_default()
+                .contains("reason: needs approval before writing files")
+        );
     }
 }

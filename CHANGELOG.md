@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.9.0 - 2026-03-23
+
+### Added
+
+- **Codex lifecycle breadcrumbs**: `hyphae codex-notify` now stores lighter-weight lifecycle memories for non-`agent-turn-complete` Codex notifications instead of silently ignoring them.
+
+### Changed
+
+- **Richer Codex transcript reconciliation**: Codex session ingestion now preserves lifecycle payload context like approvals and status messages through the normalized session path.
+- **Codex integration docs**: CLI and setup docs now explain the notify adapter as a durable turn-summary path plus lighter lifecycle breadcrumb capture.
+
 ## v0.8.0 - 2026-03-23
 
 ### Added

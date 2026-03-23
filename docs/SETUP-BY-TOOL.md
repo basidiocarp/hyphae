@@ -179,7 +179,7 @@ Installs `/hyphae-recall` and `/hyphae-remember` in `~/.config/amp/skills/`.
 hyphae init  # Automatically configures ~/.codex/config.toml
 ```
 
-That config now includes both MCP registration and Codex turn-complete notifications:
+That config now includes both MCP registration and Codex lifecycle notifications:
 ```toml
 notify = ["hyphae", "codex-notify"]
 
@@ -188,7 +188,7 @@ command = "/path/to/hyphae"
 args = ["serve"]
 ```
 
-`hyphae codex-notify` stores a compact turn summary when Codex emits `agent-turn-complete`.
+`hyphae codex-notify` stores a compact turn summary for `agent-turn-complete` and lightweight lifecycle breadcrumbs for other Codex notify events.
 
 **Config file (TOML):** `~/.codex/config.toml`
 ```toml

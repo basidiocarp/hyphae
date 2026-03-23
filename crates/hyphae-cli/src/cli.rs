@@ -226,7 +226,7 @@ pub(crate) enum Commands {
         fix: bool,
     },
 
-    /// Handle a Codex notify event from the Codex CLI integration
+    /// Handle Codex notify events from the Codex CLI integration
     CodexNotify {
         /// JSON notification payload passed by Codex
         #[arg(value_name = "JSON")]
