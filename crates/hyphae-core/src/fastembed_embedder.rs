@@ -64,12 +64,10 @@ fn model_dimensions(model: &EmbeddingModel) -> usize {
 
 /// Resolve the cache directory for embedding models.
 ///
-/// Uses `~/.cache/hyphae/models/` so models are shared across databases
+/// Uses the platform cache directory so models are shared across databases
 /// and not re-downloaded per project.
 fn cache_directory() -> Option<std::path::PathBuf> {
-    std::env::var("HOME")
-        .ok()
-        .map(|h| std::path::PathBuf::from(h).join(".cache/hyphae/models"))
+    directories::ProjectDirs::from("", "", "hyphae").map(|dirs| dirs.cache_dir().join("models"))
 }
 
 impl FastEmbedder {

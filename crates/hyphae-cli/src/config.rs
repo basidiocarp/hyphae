@@ -2,7 +2,7 @@
 //!
 //! Lookup order:
 //! 1. `$HYPHAE_CONFIG` environment variable
-//! 2. Platform config path (for example `~/.config/hyphae/config.toml`)
+//! 2. Platform config path (for example an OS-specific `hyphae/config.toml`)
 //! 3. Built-in defaults (everything is optional)
 
 use std::path::PathBuf;

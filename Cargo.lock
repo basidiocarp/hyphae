@@ -1288,6 +1288,7 @@ name = "hyphae-core"
 version = "0.9.1"
 dependencies = [
  "chrono",
+ "directories",
  "fastembed",
  "regex",
  "serde",
