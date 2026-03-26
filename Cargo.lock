@@ -1336,6 +1336,7 @@ dependencies = [
  "chrono",
  "hyphae-core",
  "rusqlite",
+ "serde",
  "serde_json",
  "sqlite-vec",
  "tempfile",

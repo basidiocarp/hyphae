@@ -25,7 +25,7 @@ pub use ids::*;
 pub use memoir::{Concept, ConceptLink, Confidence, Label, Memoir, MemoirStats, Relation};
 pub use memoir_store::{ConceptInput, LinkInput, MemoirStore, UpsertReport};
 pub use memory::{
-    Importance, Memory, MemoryBuilder, MemorySource, StoreStats, TopicHealth, Weight,
+    Importance, Memory, MemoryBuilder, MemorySource, SessionHost, StoreStats, TopicHealth, Weight,
 };
 pub use secrets::detect_secrets;
 pub use store::MemoryStore;

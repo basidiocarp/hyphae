@@ -271,24 +271,53 @@ impl std::str::FromStr for Importance {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionHost {
+    ClaudeCode,
+    Codex,
+}
+
+impl fmt::Display for SessionHost {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ClaudeCode => write!(f, "claude-code"),
+            Self::Codex => write!(f, "codex"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum MemorySource {
-    ClaudeCode {
+    AgentSession {
+        host: SessionHost,
         session_id: String,
         file_path: Option<String>,
     },
-    Conversation {
-        thread_id: String,
-    },
     Manual,
+}
+
+impl MemorySource {
+    pub fn agent_session(
+        host: SessionHost,
+        session_id: impl Into<String>,
+        file_path: Option<String>,
+    ) -> Self {
+        Self::AgentSession {
+            host,
+            session_id: session_id.into(),
+            file_path,
+        }
+    }
 }
 
 impl fmt::Display for MemorySource {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ClaudeCode { session_id, .. } => write!(f, "claude-code:{session_id}"),
-            Self::Conversation { thread_id } => write!(f, "conversation:{thread_id}"),
+            Self::AgentSession {
+                host, session_id, ..
+            } => write!(f, "{host}:{session_id}"),
             Self::Manual => write!(f, "manual"),
         }
     }
@@ -356,12 +385,15 @@ mod tests {
     fn test_memory_source_serde_roundtrip() {
         let sources = vec![
             MemorySource::Manual,
-            MemorySource::ClaudeCode {
+            MemorySource::AgentSession {
+                host: SessionHost::ClaudeCode,
                 session_id: "sess-1".into(),
                 file_path: Some("src/main.rs".into()),
             },
-            MemorySource::Conversation {
-                thread_id: "thread-42".into(),
+            MemorySource::AgentSession {
+                host: SessionHost::Codex,
+                session_id: "thread-42".into(),
+                file_path: None,
             },
         ];
         for src in sources {

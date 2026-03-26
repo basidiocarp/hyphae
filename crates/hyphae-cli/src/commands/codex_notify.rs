@@ -158,6 +158,7 @@ fn build_turn_record(
         keywords.push(keyword);
     }
     if let Some(thread_id) = notification.thread_id.as_deref() {
+        keywords.push(format!("session_id:{thread_id}"));
         keywords.push(format!("thread_id:{thread_id}"));
     }
     if let Some(turn_id) = notification.turn_id.as_deref() {
@@ -170,7 +171,9 @@ fn build_turn_record(
     let source = notification
         .thread_id
         .clone()
-        .map(|thread_id| MemorySource::Conversation { thread_id })
+        .map(|thread_id| {
+            MemorySource::agent_session(hyphae_core::SessionHost::Codex, thread_id, None)
+        })
         .unwrap_or(MemorySource::Manual);
     let topic = format!("session/{project}");
 
@@ -223,6 +226,7 @@ fn build_lifecycle_record(
         keywords.push(keyword);
     }
     if let Some(thread_id) = notification.thread_id.as_deref() {
+        keywords.push(format!("session_id:{thread_id}"));
         keywords.push(format!("thread_id:{thread_id}"));
     }
     if let Some(turn_id) = notification.turn_id.as_deref() {
@@ -235,7 +239,9 @@ fn build_lifecycle_record(
     let source = notification
         .thread_id
         .clone()
-        .map(|thread_id| MemorySource::Conversation { thread_id })
+        .map(|thread_id| {
+            MemorySource::agent_session(hyphae_core::SessionHost::Codex, thread_id, None)
+        })
         .unwrap_or(MemorySource::Manual);
     let topic = format!("session/{project}/codex-lifecycle");
 
@@ -523,5 +529,11 @@ mod tests {
         );
         assert!(record.summary.contains("Codex turn complete"));
         assert!(!record.summary.contains("Codex lifecycle event"));
+        assert!(
+            record
+                .keywords
+                .iter()
+                .any(|keyword| keyword == "session_id:thread-8")
+        );
     }
 }

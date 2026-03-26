@@ -129,15 +129,18 @@ fn session_source(
 ) -> hyphae_core::memory::MemorySource {
     match runtime {
         hyphae_ingest::transcript::SessionRuntime::ClaudeCode => {
-            hyphae_core::memory::MemorySource::ClaudeCode {
-                session_id: session_id.to_string(),
-                file_path: Some(session_path.display().to_string()),
-            }
+            hyphae_core::memory::MemorySource::agent_session(
+                hyphae_core::memory::SessionHost::ClaudeCode,
+                session_id,
+                Some(session_path.display().to_string()),
+            )
         }
         hyphae_ingest::transcript::SessionRuntime::Codex => {
-            hyphae_core::memory::MemorySource::Conversation {
-                thread_id: session_id.to_string(),
-            }
+            hyphae_core::memory::MemorySource::agent_session(
+                hyphae_core::memory::SessionHost::Codex,
+                session_id,
+                Some(session_path.display().to_string()),
+            )
         }
     }
 }

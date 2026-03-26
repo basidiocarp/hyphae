@@ -182,10 +182,11 @@ fn import_single(store: &SqliteStore, parsed: &ParsedMemory, force: bool) -> Res
     let memory = Memory::builder(topic, summary, importance)
         .keywords(keywords)
         .raw_excerpt(parsed.source_path.clone())
-        .source(MemorySource::ClaudeCode {
-            session_id: format!("import-{}", parsed.hash_prefix),
-            file_path: Some(parsed.source_path.clone()),
-        })
+        .source(MemorySource::agent_session(
+            hyphae_core::SessionHost::ClaudeCode,
+            format!("import-{}", parsed.hash_prefix),
+            Some(parsed.source_path.clone()),
+        ))
         .build();
 
     store.store(memory)?;

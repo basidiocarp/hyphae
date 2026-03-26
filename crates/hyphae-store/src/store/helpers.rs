@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 
 use hyphae_core::{
     Chunk, ChunkMetadata, Concept, ConceptId, ConceptLink, Confidence, Document, Importance, Label,
-    Memoir, Memory, MemoryId, MemorySource, Relation, SourceType, Weight,
+    Memoir, Memory, MemoryId, MemorySource, Relation, SessionHost, SourceType, Weight,
 };
 
 // ---------------------------------------------------------------------------
@@ -11,8 +11,7 @@ use hyphae_core::{
 
 pub(crate) fn source_type(source: &MemorySource) -> &'static str {
     match source {
-        MemorySource::ClaudeCode { .. } => "claude_code",
-        MemorySource::Conversation { .. } => "conversation",
+        MemorySource::AgentSession { .. } => "agent_session",
         MemorySource::Manual => "manual",
     }
 }
@@ -27,10 +26,37 @@ pub(crate) fn source_data(source: &MemorySource) -> Option<String> {
 pub(crate) fn parse_source(source_type_str: &str, source_data_str: Option<String>) -> MemorySource {
     match source_type_str {
         "manual" => MemorySource::Manual,
+        "claude_code" => source_data_str
+            .and_then(|d| serde_json::from_str::<LegacyClaudeCodeSource>(&d).ok())
+            .map(|legacy| MemorySource::AgentSession {
+                host: SessionHost::ClaudeCode,
+                session_id: legacy.session_id,
+                file_path: legacy.file_path,
+            })
+            .unwrap_or(MemorySource::Manual),
+        "conversation" => source_data_str
+            .and_then(|d| serde_json::from_str::<LegacyConversationSource>(&d).ok())
+            .map(|legacy| MemorySource::AgentSession {
+                host: SessionHost::Codex,
+                session_id: legacy.thread_id,
+                file_path: None,
+            })
+            .unwrap_or(MemorySource::Manual),
         _ => source_data_str
             .and_then(|d| serde_json::from_str(&d).ok())
             .unwrap_or(MemorySource::Manual),
     }
+}
+
+#[derive(serde::Deserialize)]
+struct LegacyClaudeCodeSource {
+    session_id: String,
+    file_path: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct LegacyConversationSource {
+    thread_id: String,
 }
 
 pub(crate) fn embedding_to_blob(embedding: &[f32]) -> Vec<u8> {
@@ -349,19 +375,22 @@ mod tests {
 
     #[test]
     fn test_source_type_conversation() {
-        let source = MemorySource::Conversation {
-            thread_id: "test-thread".to_string(),
+        let source = MemorySource::AgentSession {
+            host: SessionHost::Codex,
+            session_id: "test-thread".to_string(),
+            file_path: None,
         };
-        assert_eq!(source_type(&source), "conversation");
+        assert_eq!(source_type(&source), "agent_session");
     }
 
     #[test]
     fn test_source_type_claude_code() {
-        let source = MemorySource::ClaudeCode {
+        let source = MemorySource::AgentSession {
+            host: SessionHost::ClaudeCode,
             session_id: "test-session".to_string(),
             file_path: None,
         };
-        assert_eq!(source_type(&source), "claude_code");
+        assert_eq!(source_type(&source), "agent_session");
     }
 
     #[test]
@@ -372,8 +401,10 @@ mod tests {
 
     #[test]
     fn test_source_data_conversation() {
-        let source = MemorySource::Conversation {
-            thread_id: "test-thread".to_string(),
+        let source = MemorySource::AgentSession {
+            host: SessionHost::Codex,
+            session_id: "test-thread".to_string(),
+            file_path: None,
         };
         let data = source_data(&source);
         assert!(data.is_some());
@@ -397,5 +428,37 @@ mod tests {
             MemorySource::Manual => (),
             _ => panic!("Expected Manual variant"),
         }
+    }
+
+    #[test]
+    fn test_parse_source_legacy_claude_code_maps_to_agent_session() {
+        let source = parse_source(
+            "claude_code",
+            Some(r#"{"session_id":"test-session","file_path":"session.jsonl"}"#.to_string()),
+        );
+        assert_eq!(
+            source,
+            MemorySource::AgentSession {
+                host: SessionHost::ClaudeCode,
+                session_id: "test-session".to_string(),
+                file_path: Some("session.jsonl".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_source_legacy_conversation_maps_to_codex_agent_session() {
+        let source = parse_source(
+            "conversation",
+            Some(r#"{"thread_id":"thread-1"}"#.to_string()),
+        );
+        assert_eq!(
+            source,
+            MemorySource::AgentSession {
+                host: SessionHost::Codex,
+                session_id: "thread-1".to_string(),
+                file_path: None,
+            }
+        );
     }
 }
