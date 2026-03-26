@@ -28,13 +28,13 @@ cargo install --path crates/hyphae-cli
 cargo build --release --no-default-features
 ```
 
-Then configure your AI tools:
+Then configure your editors and agent runtimes:
 
 ```bash
 hyphae init
 ```
 
-This auto-detects and configures. Your agent now has access to 35 MCP tools.
+This auto-detects and configures the supported integrations. Your setup now has access to 35 MCP tools.
 
 ## How It Works
 

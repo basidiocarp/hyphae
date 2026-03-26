@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **More platform-neutral setup guidance**: Setup docs and `hyphae init` messaging now describe supported editors and agent runtimes more generally, and clarify that `hyphae init` resolves the correct config path automatically for each integration.
+
 ## v0.9.2 - 2026-03-26
 
 ### Fixed

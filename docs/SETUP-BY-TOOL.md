@@ -2,6 +2,8 @@
 
 Step-by-step MCP configuration for every AI coding tool Hyphae supports. In most cases `hyphae init` handles everything automatically — the sections below show what it does under the hood and how to configure manually when needed.
 
+Paths below are examples for the relevant platform and editor combination. `hyphae init` resolves the correct config location automatically for each supported tool.
+
 ---
 
 ## Claude Code

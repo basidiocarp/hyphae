@@ -338,7 +338,7 @@ fn install_claude_hooks(binary_path: &Path) -> Result<()> {
             installed_events.join(", "),
             settings_path.display()
         );
-        println!("Restart Claude Code to pick up the new hooks.");
+        println!("Restart the editor to pick up the new hooks.");
     }
 
     Ok(())
