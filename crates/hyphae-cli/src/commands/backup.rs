@@ -2,11 +2,13 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::path::PathBuf;
 
+use crate::paths::default_db_path;
+
 /// ─────────────────────────────────────────────────────────────────────────
 /// Create a Backup of the Database
 /// ─────────────────────────────────────────────────────────────────────────
 pub(crate) fn cmd_backup(output: Option<PathBuf>) -> Result<()> {
-    let db_path = get_db_path();
+    let db_path = default_db_path();
 
     if !db_path.exists() {
         return Err(anyhow::anyhow!(
@@ -58,7 +60,7 @@ pub(crate) fn cmd_restore(path: PathBuf) -> Result<()> {
         })
         .ok_or_else(|| anyhow::anyhow!("backup file is not a valid SQLite database"))?;
 
-    let db_path = get_db_path();
+    let db_path = default_db_path();
 
     // Ensure parent directory exists
     if let Some(parent) = db_path.parent() {
@@ -73,17 +75,4 @@ pub(crate) fn cmd_restore(path: PathBuf) -> Result<()> {
     println!("Location: {}", db_path.display());
 
     Ok(())
-}
-
-/// ─────────────────────────────────────────────────────────────────────────
-/// Get Database Path
-/// ─────────────────────────────────────────────────────────────────────────
-fn get_db_path() -> PathBuf {
-    directories::ProjectDirs::from("", "", "hyphae")
-        .map(|d| d.data_dir().join("hyphae.db"))
-        .unwrap_or_else(|| {
-            directories::BaseDirs::new()
-                .map(|d| d.data_local_dir().join("hyphae").join("hyphae.db"))
-                .unwrap_or_else(|| PathBuf::from(".local/share/hyphae/hyphae.db"))
-        })
 }

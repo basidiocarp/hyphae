@@ -4,6 +4,7 @@ use anyhow::Result;
 use std::path::PathBuf;
 
 use crate::init::{Editor, config_path_for, detect_editors};
+use crate::paths::{default_config_path, default_db_path};
 
 pub fn run(fix: bool) -> Result<()> {
     println!();
@@ -287,10 +288,8 @@ fn codex_notify_configured(config_path: &std::path::Path) -> Result<bool> {
 }
 
 fn check_config(warnings: &mut u32) {
-    let config_dir = directories::ProjectDirs::from("", "", "hyphae")
-        .map(|d| d.config_dir().to_path_buf())
-        .unwrap_or_else(|| PathBuf::from(".config/hyphae"));
-    let config_path = config_dir.join("config.toml");
+    let config_path =
+        default_config_path().unwrap_or_else(|| PathBuf::from(".config/hyphae/config.toml"));
 
     if config_path.exists() {
         pass(&format!("Config file: {}", config_path.display()));
@@ -413,12 +412,6 @@ fn warn(msg: &str) {
 
 fn fail(msg: &str) {
     println!("  \x1b[31m\u{2717}\x1b[0m {msg}");
-}
-
-fn default_db_path() -> PathBuf {
-    directories::ProjectDirs::from("", "", "hyphae")
-        .map(|d| d.data_dir().join("hyphae.db"))
-        .unwrap_or_else(|| PathBuf::from(".local/share/hyphae/hyphae.db"))
 }
 
 #[cfg(test)]

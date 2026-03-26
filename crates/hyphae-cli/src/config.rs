@@ -2,13 +2,15 @@
 //!
 //! Lookup order:
 //! 1. `$HYPHAE_CONFIG` environment variable
-//! 2. `~/.config/hyphae/config.toml`
+//! 2. Platform config path (for example `~/.config/hyphae/config.toml`)
 //! 3. Built-in defaults (everything is optional)
 
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
+
+use crate::paths::default_config_path;
 
 /// Top-level configuration.
 #[derive(Debug, Default, Deserialize)]
@@ -216,22 +218,7 @@ pub fn load_config() -> Result<Config> {
 
 /// Resolve the config file path.
 fn config_path() -> Option<PathBuf> {
-    // 1. Environment variable
-    if let Ok(p) = std::env::var("HYPHAE_CONFIG") {
-        return Some(PathBuf::from(p));
-    }
-
-    // 2. ~/.config/hyphae/config.toml
-    if let Some(home) = dirs_home() {
-        let p = home.join(".config").join("hyphae").join("config.toml");
-        return Some(p);
-    }
-
-    None
-}
-
-fn dirs_home() -> Option<PathBuf> {
-    directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf())
+    default_config_path()
 }
 
 /// Show the active config path (for `hyphae config show`).

@@ -16,21 +16,14 @@ mod config;
 mod display;
 mod extract;
 mod init;
+mod paths;
 mod project;
 mod watch;
 
 use cli::{Cli, Commands};
 
 fn open_store(db: Option<PathBuf>, embedding_dims: usize) -> Result<SqliteStore> {
-    let path = db.unwrap_or_else(|| {
-        directories::ProjectDirs::from("", "", "hyphae")
-            .map(|d| d.data_dir().join("hyphae.db"))
-            .unwrap_or_else(|| {
-                directories::BaseDirs::new()
-                    .map(|d| d.data_local_dir().join("hyphae").join("hyphae.db"))
-                    .unwrap_or_else(|| PathBuf::from(".local/share/hyphae/hyphae.db"))
-            })
-    });
+    let path = db.unwrap_or_else(paths::default_db_path);
 
     std::fs::create_dir_all(path.parent().unwrap_or(&PathBuf::from(".")))?;
     SqliteStore::with_dims(&path, embedding_dims)
