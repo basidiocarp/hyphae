@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.9.2 - 2026-03-26
+
+### Fixed
+
+- **Configured DB path handling**: `hyphae doctor`, `backup`, `restore`, and normal startup now all honor `store.path` and CLI `--db` overrides consistently instead of silently falling back to the default database location.
+- **Embedding model cache portability**: FastEmbed model downloads now use the platform cache directory instead of a Unix-shaped `$HOME/.cache/hyphae/models` path.
+
+### Changed
+
+- **Host-neutral session sources**: Claude Code and Codex session-derived memories now share one `agent_session` source model, while older `claude_code` and `conversation` rows continue to load correctly.
+- **Centralized path resolution**: Hyphae CLI data/config path resolution now goes through one shared resolver instead of being recomputed across `main`, `doctor`, `backup`, and config loading.
+- **Clearer import guidance**: `hyphae import-claude-memory` and `hyphae ingest-sessions` now describe Claude memory import versus general agent transcript ingestion more clearly.
+
 ## v0.9.1 - 2026-03-23
 
 ### Fixed
