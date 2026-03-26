@@ -22,7 +22,7 @@ sqlite-vec = "0.1"
 zerocopy = { version = "0.8", features = ["derive"] }
 
 # Embeddings (optional)
-fastembed = "4"
+fastembed = "5"
 
 # Regex
 regex = "1"
