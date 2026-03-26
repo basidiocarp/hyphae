@@ -66,6 +66,7 @@ fn main() -> Result<()> {
 
     let cli = Cli::parse();
     let cfg = config::load_config()?;
+    let resolved_db_path = paths::resolve_db_path(cli.db.clone(), cfg.store.path.as_deref());
 
     let resolved_project: Option<String> = cli
         .project
@@ -99,15 +100,15 @@ fn main() -> Result<()> {
             return Ok(());
         }
         Commands::Doctor { fix } => {
-            commands::doctor::run(*fix)?;
+            commands::doctor::run(*fix, resolved_db_path.clone())?;
             return Ok(());
         }
         Commands::Backup { output } => {
-            commands::backup::cmd_backup(output.clone())?;
+            commands::backup::cmd_backup(output.clone(), resolved_db_path.clone())?;
             return Ok(());
         }
         Commands::Restore { path } => {
-            commands::backup::cmd_restore(path.clone())?;
+            commands::backup::cmd_restore(path.clone(), resolved_db_path.clone())?;
             return Ok(());
         }
         _ => {}
@@ -116,7 +117,7 @@ fn main() -> Result<()> {
     let embedder = init_embedder(&cfg.embeddings.model);
     let embedding_dims = embedder.as_ref().map(|e| e.dimensions()).unwrap_or(384);
 
-    let store = open_store(cli.db, embedding_dims)?;
+    let store = open_store(Some(resolved_db_path), embedding_dims)?;
 
     let embedder_ref: Option<&dyn Embedder> = embedder.as_ref().map(|e| e.as_ref());
 

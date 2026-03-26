@@ -2,14 +2,10 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::path::PathBuf;
 
-use crate::paths::default_db_path;
-
 /// ─────────────────────────────────────────────────────────────────────────
 /// Create a Backup of the Database
 /// ─────────────────────────────────────────────────────────────────────────
-pub(crate) fn cmd_backup(output: Option<PathBuf>) -> Result<()> {
-    let db_path = default_db_path();
-
+pub(crate) fn cmd_backup(output: Option<PathBuf>, db_path: PathBuf) -> Result<()> {
     if !db_path.exists() {
         return Err(anyhow::anyhow!(
             "database not found at {}",
@@ -39,7 +35,7 @@ pub(crate) fn cmd_backup(output: Option<PathBuf>) -> Result<()> {
 /// ─────────────────────────────────────────────────────────────────────────
 /// Restore Database from a Backup
 /// ─────────────────────────────────────────────────────────────────────────
-pub(crate) fn cmd_restore(path: PathBuf) -> Result<()> {
+pub(crate) fn cmd_restore(path: PathBuf, db_path: PathBuf) -> Result<()> {
     if !path.exists() {
         return Err(anyhow::anyhow!(
             "backup file not found at {}",
@@ -59,8 +55,6 @@ pub(crate) fn cmd_restore(path: PathBuf) -> Result<()> {
             }
         })
         .ok_or_else(|| anyhow::anyhow!("backup file is not a valid SQLite database"))?;
-
-    let db_path = default_db_path();
 
     // Ensure parent directory exists
     if let Some(parent) = db_path.parent() {

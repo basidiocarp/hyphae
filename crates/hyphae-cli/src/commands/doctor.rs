@@ -4,9 +4,9 @@ use anyhow::Result;
 use std::path::PathBuf;
 
 use crate::init::{Editor, config_path_for, detect_editors};
-use crate::paths::{default_config_path, default_db_path};
+use crate::paths::default_config_path;
 
-pub fn run(fix: bool) -> Result<()> {
+pub fn run(fix: bool, db_path: PathBuf) -> Result<()> {
     println!();
     println!("\x1b[1mHyphae Doctor\x1b[0m");
     println!("{}", "\u{2500}".repeat(45));
@@ -20,7 +20,6 @@ pub fn run(fix: bool) -> Result<()> {
     // ─────────────────────────────────────────────────────────────────────────
     println!("\x1b[1mDatabase\x1b[0m");
 
-    let db_path = default_db_path();
     if db_path.exists() {
         let size = std::fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
         pass(&format!(
