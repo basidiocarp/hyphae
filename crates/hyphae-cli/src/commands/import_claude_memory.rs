@@ -17,12 +17,16 @@ struct ParsedMemory {
     hash_prefix: String,
 }
 
+fn default_claude_projects_dir() -> Option<PathBuf> {
+    editors::claude_dir().map(|dir| dir.join("projects"))
+}
+
 fn claude_memory_dirs(custom_path: Option<&Path>) -> Vec<PathBuf> {
     if let Some(p) = custom_path {
         return vec![p.to_path_buf()];
     }
 
-    let Some(projects_dir) = editors::claude_dir().map(|dir| dir.join("projects")) else {
+    let Some(projects_dir) = default_claude_projects_dir() else {
         return Vec::new();
     };
     let Ok(entries) = std::fs::read_dir(&projects_dir) else {
@@ -39,6 +43,22 @@ fn claude_memory_dirs(custom_path: Option<&Path>) -> Vec<PathBuf> {
         }
     }
     dirs
+}
+
+fn missing_claude_memory_dirs_message(custom_path: Option<&Path>) -> String {
+    match custom_path {
+        Some(path) => format!(
+            "No Claude Code auto-memory directories found at {}.",
+            path.display()
+        ),
+        None => match default_claude_projects_dir() {
+            Some(projects_dir) => format!(
+                "No Claude Code auto-memory directories found under {}.",
+                projects_dir.display()
+            ),
+            None => "Could not determine the Claude Code settings directory.".to_string(),
+        },
+    }
 }
 
 fn discover_memory_files(dirs: &[PathBuf]) -> Vec<PathBuf> {
@@ -207,7 +227,10 @@ pub(crate) fn run(
 ) -> Result<()> {
     let dirs = claude_memory_dirs(path.as_deref());
     if dirs.is_empty() {
-        println!("No Claude Code memory directories found.");
+        println!("{}", missing_claude_memory_dirs_message(path.as_deref()));
+        println!(
+            "Use `hyphae ingest-sessions` for general Claude Code and Codex transcript import."
+        );
         return Ok(());
     }
 
@@ -278,7 +301,7 @@ pub(crate) fn watch(store: &SqliteStore, path: Option<PathBuf>, force: bool) -> 
 
     let dirs = claude_memory_dirs(path.as_deref());
     if dirs.is_empty() {
-        eprintln!("No Claude Code memory directories to watch.");
+        eprintln!("{}", missing_claude_memory_dirs_message(path.as_deref()));
         return Ok(());
     }
 
@@ -426,5 +449,15 @@ mod tests {
         assert_eq!(map_importance("project"), Importance::Medium);
         assert_eq!(map_importance("reference"), Importance::Low);
         assert_eq!(map_importance("other"), Importance::Medium);
+    }
+
+    #[test]
+    fn test_missing_claude_memory_dirs_message_for_custom_path() {
+        let path = Path::new("/tmp/demo-memory");
+        let message = missing_claude_memory_dirs_message(Some(path));
+        assert_eq!(
+            message,
+            "No Claude Code auto-memory directories found at /tmp/demo-memory."
+        );
     }
 }

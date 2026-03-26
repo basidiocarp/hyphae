@@ -1,4 +1,4 @@
-//! `hyphae ingest-sessions` - import Claude Code and Codex session transcripts.
+//! `hyphae ingest-sessions` - import agent session transcripts.
 
 use anyhow::Result;
 use hyphae_store::SqliteStore;
@@ -145,7 +145,7 @@ fn session_source(
     }
 }
 
-/// Discover session transcript files from Claude Code and Codex directories.
+/// Discover session transcript files from configured Claude Code and Codex roots.
 fn discover_sessions(path: Option<&Path>, since: Option<&str>) -> Vec<PathBuf> {
     let since_ts = since.and_then(|s| {
         chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")

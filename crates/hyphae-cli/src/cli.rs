@@ -203,9 +203,9 @@ pub(crate) enum Commands {
         dry_run: bool,
     },
 
-    /// Import Claude Code auto-memories from ~/.claude/projects/*/memory/
+    /// Import Claude Code auto-memory files into hyphae
     ImportClaudeMemory {
-        /// Path to a specific Claude project memory directory
+        /// Path to a specific Claude Code project memory directory
         #[arg(short, long)]
         path: Option<PathBuf>,
         /// Show what would be imported without storing
@@ -233,9 +233,9 @@ pub(crate) enum Commands {
         notification: String,
     },
 
-    /// Ingest Claude Code or Codex session transcripts into hyphae memory
+    /// Ingest agent session transcripts into hyphae memory
     IngestSessions {
-        /// Path to a specific session directory
+        /// Path to a specific session transcript file or session directory
         #[arg(short, long)]
         path: Option<PathBuf>,
         /// Only ingest sessions newer than this date (YYYY-MM-DD)
