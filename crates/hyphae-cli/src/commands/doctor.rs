@@ -3,6 +3,8 @@
 use anyhow::Result;
 use std::path::PathBuf;
 
+use crate::init::{Editor, config_path_for, detect_editors};
+
 pub fn run(fix: bool) -> Result<()> {
     println!();
     println!("\x1b[1mHyphae Doctor\x1b[0m");
@@ -154,8 +156,76 @@ fn check_mcp(warnings: &mut u32) {
     let version = env!("CARGO_PKG_VERSION");
     pass(&format!("Version: {version}"));
 
-    // Check Claude Code registration
-    if which::which("claude").is_ok() {
+    let detected = detect_editors();
+    if detected.is_empty() {
+        warn("No supported host adapters detected for MCP registration checks");
+        *warnings += 1;
+        return;
+    }
+
+    for editor in detected {
+        check_editor_registration(editor, warnings);
+    }
+}
+
+fn check_editor_registration(editor: Editor, warnings: &mut u32) {
+    let Ok(config_path) = config_path_for(editor) else {
+        warn(&format!("Could not resolve {} config path", editor));
+        *warnings += 1;
+        return;
+    };
+
+    if !config_path.exists() {
+        warn(&format!(
+            "{} config not found at {}",
+            editor,
+            config_path.display()
+        ));
+        *warnings += 1;
+        return;
+    }
+
+    if editor.uses_toml() {
+        match toml_config_has_hyphae(&config_path) {
+            Ok(true) => pass(&format!("Registered in {} config", editor)),
+            Ok(false) => {
+                warn(&format!("Not registered in {} config", editor));
+                *warnings += 1;
+            }
+            Err(error) => {
+                warn(&format!("Could not read {} config: {error}", editor));
+                *warnings += 1;
+            }
+        }
+
+        if matches!(editor, Editor::CodexCli) {
+            match codex_notify_configured(&config_path) {
+                Ok(true) => pass("Codex CLI notify hooks configured"),
+                Ok(false) => {
+                    warn("Codex CLI notify hooks missing `hyphae` / `codex-notify`");
+                    *warnings += 1;
+                }
+                Err(error) => {
+                    warn(&format!("Could not read Codex CLI notify config: {error}"));
+                    *warnings += 1;
+                }
+            }
+        }
+    } else {
+        match json_config_has_hyphae(&config_path, editor.mcp_key()) {
+            Ok(true) => pass(&format!("Registered in {} config", editor)),
+            Ok(false) => {
+                warn(&format!("Not registered in {} config", editor));
+                *warnings += 1;
+            }
+            Err(error) => {
+                warn(&format!("Could not read {} config: {error}", editor));
+                *warnings += 1;
+            }
+        }
+    }
+
+    if matches!(editor, Editor::ClaudeCode) && which::which("claude").is_ok() {
         match std::process::Command::new("claude")
             .args(["mcp", "list"])
             .output()
@@ -163,18 +233,57 @@ fn check_mcp(warnings: &mut u32) {
             Ok(output) => {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 if stdout.contains("hyphae") {
-                    pass("Registered as Claude Code MCP server");
+                    pass("Registered in Claude Code CLI runtime");
                 } else {
-                    warn("Not registered as Claude Code MCP server");
+                    warn("Not registered in Claude Code CLI runtime");
                     *warnings += 1;
                 }
             }
             Err(_) => {
-                warn("Could not check Claude Code MCP registration");
+                warn("Could not check Claude Code CLI runtime registration");
                 *warnings += 1;
             }
         }
     }
+}
+
+fn json_config_has_hyphae(config_path: &std::path::Path, mcp_key: &str) -> Result<bool> {
+    let content = std::fs::read_to_string(config_path)?;
+    if content.trim().is_empty() {
+        return Ok(false);
+    }
+    let value: serde_json::Value = serde_json::from_str(&content)?;
+    Ok(value
+        .get(mcp_key)
+        .and_then(serde_json::Value::as_object)
+        .is_some_and(|servers| servers.contains_key("hyphae")))
+}
+
+fn toml_config_has_hyphae(config_path: &std::path::Path) -> Result<bool> {
+    let content = std::fs::read_to_string(config_path)?;
+    if content.trim().is_empty() {
+        return Ok(false);
+    }
+    let value: toml::Value = toml::from_str(&content)?;
+    Ok(value
+        .get("mcp_servers")
+        .and_then(toml::Value::as_table)
+        .is_some_and(|servers| servers.contains_key("hyphae")))
+}
+
+fn codex_notify_configured(config_path: &std::path::Path) -> Result<bool> {
+    let content = std::fs::read_to_string(config_path)?;
+    if content.trim().is_empty() {
+        return Ok(false);
+    }
+    let value: toml::Value = toml::from_str(&content)?;
+    let Some(notify) = value.get("notify").and_then(toml::Value::as_array) else {
+        return Ok(false);
+    };
+    Ok(notify.iter().any(|entry| entry.as_str() == Some("hyphae"))
+        && notify
+            .iter()
+            .any(|entry| entry.as_str() == Some("codex-notify")))
 }
 
 fn check_config(warnings: &mut u32) {
@@ -310,4 +419,49 @@ fn default_db_path() -> PathBuf {
     directories::ProjectDirs::from("", "", "hyphae")
         .map(|d| d.data_dir().join("hyphae.db"))
         .unwrap_or_else(|| PathBuf::from(".local/share/hyphae/hyphae.db"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_json_config_has_hyphae_detects_server() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(
+            &path,
+            r#"{"mcpServers":{"hyphae":{"command":"hyphae","args":["serve"]}}}"#,
+        )
+        .unwrap();
+
+        assert!(json_config_has_hyphae(&path, "mcpServers").unwrap());
+    }
+
+    #[test]
+    fn test_toml_config_has_hyphae_detects_server() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[mcp_servers.hyphae]
+command = "hyphae"
+args = ["serve"]
+"#,
+        )
+        .unwrap();
+
+        assert!(toml_config_has_hyphae(&path).unwrap());
+    }
+
+    #[test]
+    fn test_codex_notify_configured_requires_both_entries() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, r#"notify = ["hyphae", "codex-notify"]"#).unwrap();
+
+        assert!(codex_notify_configured(&path).unwrap());
+    }
 }

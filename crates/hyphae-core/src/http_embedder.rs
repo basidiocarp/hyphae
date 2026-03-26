@@ -225,9 +225,14 @@ impl Embedder for HttpEmbedder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_from_env_returns_none_when_unset() {
+        let _guard = ENV_LOCK.lock().unwrap();
+
         // SAFETY: test-only, single-threaded env manipulation
         unsafe {
             std::env::remove_var("HYPHAE_EMBEDDING_URL");
@@ -240,6 +245,8 @@ mod tests {
 
     #[test]
     fn test_from_env_error_when_url_set_but_no_model() {
+        let _guard = ENV_LOCK.lock().unwrap();
+
         // SAFETY: test-only, single-threaded env manipulation
         unsafe {
             std::env::set_var("HYPHAE_EMBEDDING_URL", "http://localhost:11434");

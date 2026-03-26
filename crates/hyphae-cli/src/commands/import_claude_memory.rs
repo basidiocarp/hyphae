@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use hyphae_core::{Importance, Memory, MemorySource, MemoryStore};
 use hyphae_store::SqliteStore;
 use sha2::{Digest, Sha256};
+use spore::editors;
 
 struct ParsedMemory {
     name: String,
@@ -21,12 +22,9 @@ fn claude_memory_dirs(custom_path: Option<&Path>) -> Vec<PathBuf> {
         return vec![p.to_path_buf()];
     }
 
-    let home = match directories::BaseDirs::new() {
-        Some(dirs) => dirs.home_dir().to_path_buf(),
-        None => return Vec::new(),
+    let Some(projects_dir) = editors::claude_dir().map(|dir| dir.join("projects")) else {
+        return Vec::new();
     };
-
-    let projects_dir = home.join(".claude").join("projects");
     let Ok(entries) = std::fs::read_dir(&projects_dir) else {
         return Vec::new();
     };

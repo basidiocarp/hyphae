@@ -3,6 +3,7 @@
 use anyhow::Result;
 use hyphae_store::SqliteStore;
 use sha2::{Digest, Sha256};
+use spore::editors::{self, Editor as SharedEditor};
 use std::path::{Path, PathBuf};
 
 pub fn run(
@@ -154,19 +155,9 @@ fn discover_sessions(path: Option<&Path>, since: Option<&str>) -> Vec<PathBuf> {
     if let Some(p) = path {
         collect_jsonl_files(p, &mut sessions);
     } else {
-        let Some(home) = directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf())
-        else {
-            return sessions;
-        };
-
-        let claude_projects = home.join(".claude/projects");
-        collect_jsonl_files(&claude_projects, &mut sessions);
-
-        let codex_history = home.join(".codex/history.jsonl");
-        collect_jsonl_files(&codex_history, &mut sessions);
-
-        let codex_sessions = home.join(".codex/sessions");
-        collect_jsonl_files(&codex_sessions, &mut sessions);
+        for root in default_session_roots() {
+            collect_jsonl_files(&root, &mut sessions);
+        }
     }
 
     sessions.retain(|path| {
@@ -187,6 +178,23 @@ fn discover_sessions(path: Option<&Path>, since: Option<&str>) -> Vec<PathBuf> {
     sessions.sort();
     sessions.dedup();
     sessions
+}
+
+fn default_session_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+
+    if let Some(claude_dir) = editors::claude_dir() {
+        roots.push(claude_dir.join("projects"));
+    }
+
+    if let Ok(codex_config) = editors::config_path(SharedEditor::CodexCli) {
+        if let Some(codex_dir) = codex_config.parent() {
+            roots.push(codex_dir.join("history.jsonl"));
+            roots.push(codex_dir.join("sessions"));
+        }
+    }
+
+    roots
 }
 
 fn collect_jsonl_files(path: &Path, sessions: &mut Vec<PathBuf>) {
