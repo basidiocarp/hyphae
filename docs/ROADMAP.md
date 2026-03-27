@@ -1,103 +1,113 @@
 # Hyphae Roadmap
 
-## High Impact — Core Differentiation
+This page is the Hyphae-specific backlog. The root [ROADMAP.md](../../ROADMAP.md) keeps the cross-system priorities and sequencing.
 
-### Auto-ingestion watcher
-File system watcher (notify crate) that auto-re-ingests changed files. Keeps the knowledge base fresh without manual `hyphae ingest --force`.
+## Recently Shipped
 
-### Memory consolidation via LLM
-Optional LLM-powered consolidation that merges related memories into higher-level summaries. Currently `extract.rs` is rule-based; an LLM pass could produce much richer consolidation.
+- Shared path resolution for config and database locations instead of scattered path handling.
+- More portable transcript, Codex notify, Claude import, and embedding-cache path discovery.
+- Normalized `agent_session` source handling so Claude and Codex session-derived memories land in one shared model.
+- Broader `hyphae init` and `doctor` host/config handling via shared editor registration helpers.
+- Structured feedback-loop foundations:
+  - session-linked recall events
+  - session-linked outcome signals
+  - active-session reuse per project
+  - stronger feedback/session foreign-key integrity
 
-### Cross-memory linking
-Automatically detect and link related memories, memoirs, and document chunks. Surface "you stored something related 3 weeks ago" during recall.
+## Next
 
-### Multi-project support
-Namespace memories by project/workspace. One hyphae instance serving multiple codebases without cross-contamination. `hyphae --project myapp search "auth flow"`.
+These items should stay aligned with the ecosystem roadmap because they affect other tools or change cross-system sequencing.
+
+### Recall effectiveness and outcome ranking
+
+Implement recall effectiveness scoring from [FEEDBACK-LOOP-DESIGN.md](FEEDBACK-LOOP-DESIGN.md) so Hyphae can rank recalled context by observed usefulness instead of similarity alone.
 
 ### Context-aware recall
-Automatically infer what memories are relevant based on the current git diff, open files, or recent errors. MCP tool that takes a "situation" and returns the most useful context without the agent needing to know what to search for.
 
-### Semantic deduplication
-Detect when a new memory is semantically equivalent to an existing one and merge them instead of creating duplicates. Keeps the store clean over time.
+Infer useful memories from current repo state, open files, diffs, and active failures so agents do not need to guess the exact search query before recall becomes helpful.
 
-### Conflict detection
-Flag when a new memory contradicts an existing one. "You stored 'API uses JWT' but also 'API uses session cookies' — which is current?"
+### Multi-project memory quality
 
-Partially shipped: ordinary memories can now be invalidated with a reason and optional replacement memory, and invalidated entries are hidden from default recall while remaining reviewable.
+Deepen project and workspace separation, then add semantic deduplication, conflict detection, and stronger provenance so one Hyphae store can support multiple repos and agents without muddying recall.
 
-## Medium Impact — Developer Experience
+### Auto-ingestion watcher
 
-### `hyphae init` command
-Auto-detect the user's editor (Claude Code, Cursor, Zed, etc.) and write the correct MCP config. Zero-friction onboarding.
+Add a watcher-driven ingest mode so long-lived worktrees stay fresh without repeated manual ingest commands.
 
-Partially shipped: `hyphae init` now supports lifecycle hook installation for Claude Code, including `PostToolUse`, `PreCompact`, and `SessionEnd`.
+### Shared and remote memory
 
-### Git-aware ingestion
-Respect `.gitignore`, auto-ingest on commit hooks, track file hashes to skip unchanged files. `hyphae ingest . --git-aware`.
+Add remote encrypted sync and shared-memory modes for multi-machine and multi-agent setups.
 
-### Export/import
-`hyphae export memories.json` / `hyphae import memories.json` for backup, migration, and sharing knowledge bases between machines.
+### Training and export surfaces
 
-### Structured output modes
-`--format json|table|compact` on all CLI commands for scripting and piping into other tools.
+Build the planned `export-training-data` command and other structured export paths that turn stored recall and outcome data into reusable evaluation input.
 
-### Conversation summarizer
-Ingest an entire agent conversation transcript and extract the key decisions, discoveries, and action items as structured memories. "What did we learn last session?"
+## Later
 
-### Memory provenance
-Track where each memory came from (which conversation, which file, which commit). `hyphae trace <memory-id>` shows the full lineage.
+These are valuable Hyphae capabilities, but they do not need to drive ecosystem order.
 
-Partially shipped: memories now persist project, branch, and worktree metadata. Traceability to commit and richer provenance queries are still open.
+### Memory consolidation via LLM
+
+Add optional LLM-assisted consolidation that merges related memories into higher-level summaries.
+
+### Cross-memory linking
+
+Detect and link related memories, memoirs, and document chunks so recall can surface adjacent knowledge without requiring an exact repeated query.
 
 ### Temporal queries
-"What did I know about auth as of last Tuesday?" Point-in-time snapshots of the knowledge base. Useful for understanding how understanding evolved.
 
-### Memory importance auto-scoring
-Analyze access patterns to auto-promote frequently recalled memories and auto-demote never-accessed ones. Learn what the agent actually finds useful.
+Support point-in-time questions such as “what did I know about auth last week?”
 
-### Retrieval feedback loop
-Track which search results the agent actually used vs ignored. Use this signal to improve ranking over time (learned relevance weights per project).
+### Conversation summarization quality
 
-## Integration & Ecosystem
+Keep improving transcript and notify summarization so session-derived memories become more structured and more useful than raw transcript import.
 
-### Remote sync
-Optional encrypted sync between machines via S3/R2/git. Work on laptop, recall on desktop.
+### Memory provenance tools
 
-### Multi-agent shared memory
-Multiple agents (code review bot, CI bot, planning agent) read/write to the same hyphae instance with agent-scoped namespaces.
+Add `trace`-style lineage views that show which conversation, file, or commit produced a given memory and how it changed over time.
 
-Partially shipped: memories are now branch/worktree-aware, which reduces cross-branch contamination and lays groundwork for agent-scoped memory.
+## Search and Retrieval
 
-### Webhook/event hooks
-Trigger external actions on memory events. "When a critical memory is stored, post to Slack." Extensibility point for workflows.
-
-### IDE sidebar
-VS Code / JetBrains extension that shows relevant memories for the currently open file. Passive knowledge surfacing without explicit search.
-
-## Search & Retrieval
+These are retrieval-quality improvements that mostly live inside Hyphae itself.
 
 ### Query expansion
-Automatically expand search queries with synonyms and related terms from the memoir graph. Searching "auth" also finds "authentication", "login", "JWT".
+
+Expand search queries with related terms and memoir graph context.
 
 ### Faceted search
-Filter by topic + importance + date range + source type in a single query. `hyphae search "error handling" --topic backend --since 2026-01 --importance high`.
+
+Support combined filters such as topic, importance, source type, and date range in one search flow.
 
 ### Reranking pipeline
-After initial retrieval, apply a cross-encoder reranker for higher precision on the top-K results. Pluggable reranker trait like the embedder.
+
+Add a second-stage reranker for top-k retrieval quality.
 
 ### Graph-powered retrieval
-Use memoir concept links to traverse related concepts during search. Finding "payment" also pulls in linked concepts like "Stripe", "refund policy", "PCI compliance".
 
-## Quick Wins
+Traverse memoir relationships during search so linked concepts can influence recall.
+
+## Local UX and Operations
+
+### Export/import
+
+Provide explicit export and import commands for backup, migration, and local sharing.
+
+### Structured output modes
+
+Expose consistent `json`, `table`, and compact formats across CLI commands.
 
 ### Memory tags
-Lightweight tagging (`hyphae store --tags "auth,security"`) orthogonal to topics, enabling cross-cutting queries.
 
-### TTL/expiry on memories
-Explicit expiration dates beyond the decay model. "Remember this for 30 days" for temporary context like sprint goals.
+Add lightweight tagging that cuts across topic boundaries.
 
-### Bulk operations
-`hyphae forget --topic "old-project"`, `hyphae decay --dry-run` to preview what would be pruned.
+### TTL and expiry
 
-### Shell completions
-Generate completions for bash/zsh/fish via clap's built-in support.
+Support explicit expiration dates beyond the existing decay model.
+
+### Bulk cleanup operations
+
+Add batch forget, archive, and cleanup flows for large stores.
+
+### IDE surfaces and hooks
+
+Consider webhook/event hooks and IDE-side memory surfaces once the underlying ranking and provenance models are stronger.
