@@ -95,6 +95,7 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         CREATE TABLE IF NOT EXISTS sessions (
             id TEXT PRIMARY KEY,
             project TEXT NOT NULL,
+            scope TEXT,
             task TEXT,
             started_at TEXT NOT NULL,
             ended_at TEXT,
@@ -137,6 +138,18 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
             ON outcome_signals(session_id);
         CREATE INDEX IF NOT EXISTS idx_outcome_signals_occurred_at
             ON outcome_signals(occurred_at);
+
+        CREATE TABLE IF NOT EXISTS recall_effectiveness (
+            memory_id TEXT NOT NULL,
+            recall_event_id TEXT NOT NULL,
+            effectiveness REAL NOT NULL,
+            signal_count INTEGER NOT NULL,
+            computed_at TEXT NOT NULL,
+            PRIMARY KEY (memory_id, recall_event_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_recall_effectiveness_memory
+            ON recall_effectiveness(memory_id);
 
         -- RAG tables
         CREATE TABLE IF NOT EXISTS documents (
@@ -441,6 +454,23 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
     tx.execute_batch("CREATE INDEX IF NOT EXISTS idx_memories_worktree ON memories(worktree);")
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
+    let has_scope_sessions: bool = tx
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name='scope'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if !has_scope_sessions {
+        tx.execute_batch("ALTER TABLE sessions ADD COLUMN scope TEXT;")
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    }
+    tx.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_project_scope ON sessions(project, scope);",
+    )
+    .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
     // Migration: add project column to documents
     let has_project_documents: bool = tx
         .query_row(
@@ -723,6 +753,7 @@ mod tests {
         assert!(tables.contains(&"chunks".to_string()));
         assert!(tables.contains(&"chunks_fts".to_string()));
         assert!(tables.contains(&"vec_chunks".to_string()));
+        assert!(tables.contains(&"recall_effectiveness".to_string()));
     }
 
     #[test]

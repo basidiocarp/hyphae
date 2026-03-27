@@ -777,6 +777,10 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                 "task": {
                     "type": "string",
                     "description": "Brief description of the task being worked on (optional)"
+                },
+                "scope": {
+                    "type": "string",
+                    "description": "Optional worker or runtime scope. Use this when one project may have multiple active sessions in parallel and they should not share a single active session id."
                 }
             },
             "required": ["project"]

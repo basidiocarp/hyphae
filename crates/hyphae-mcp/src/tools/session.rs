@@ -19,8 +19,9 @@ pub(crate) fn tool_session_start(store: &SqliteStore, args: &Value) -> ToolResul
         Err(e) => return e,
     };
     let task = get_str(args, "task");
+    let scope = get_str(args, "scope");
 
-    match store.session_start(project, task) {
+    match store.session_start_scoped(project, task, scope) {
         Ok((session_id, started_at)) => ToolResult::text(
             json!({
                 "session_id": session_id,
@@ -77,8 +78,8 @@ pub(crate) fn tool_session_end(store: &SqliteStore, args: &Value) -> ToolResult 
 
             ToolResult::text(
                 json!({
-                    "stored": true,
-                    "duration_minutes": duration_minutes,
+                "stored": true,
+                "duration_minutes": duration_minutes,
                 })
                 .to_string(),
             )
@@ -102,6 +103,7 @@ pub(crate) fn tool_session_context(store: &SqliteStore, args: &Value) -> ToolRes
                 .map(|s| {
                     json!({
                         "session_id": s.id,
+                        "scope": s.scope,
                         "task": s.task,
                         "started_at": s.started_at,
                         "ended_at": s.ended_at,
@@ -148,6 +150,23 @@ mod tests {
         let parsed: Value = serde_json::from_str(text).expect("valid JSON");
         assert!(parsed["session_id"].as_str().unwrap().starts_with("ses_"));
         assert!(parsed["started_at"].is_string());
+    }
+
+    #[test]
+    fn test_session_start_with_scope() {
+        let store = test_store();
+        let first = tool_session_start(
+            &store,
+            &json!({"project": "test-project", "task": "worker a", "scope": "worker-a"}),
+        );
+        let second = tool_session_start(
+            &store,
+            &json!({"project": "test-project", "task": "worker b", "scope": "worker-b"}),
+        );
+
+        let first_parsed: Value = serde_json::from_str(&first.content[0].text).unwrap();
+        let second_parsed: Value = serde_json::from_str(&second.content[0].text).unwrap();
+        assert_ne!(first_parsed["session_id"], second_parsed["session_id"]);
     }
 
     #[test]
@@ -213,6 +232,7 @@ mod tests {
             ctx_parsed["sessions"][0]["status"].as_str().unwrap(),
             "completed"
         );
+        assert!(ctx_parsed["sessions"][0]["scope"].is_null());
     }
 
     #[test]

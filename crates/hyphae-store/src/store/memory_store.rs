@@ -493,12 +493,27 @@ impl MemoryStore for SqliteStore {
             all_memories.entry(memory.id.to_string()).or_insert(memory);
         }
 
+        let candidate_ids: Vec<String> = all_memories.keys().cloned().collect();
+        let learned_scores = match self.recall_effectiveness_for_memory_ids(&candidate_ids) {
+            Ok(scores) => scores,
+            Err(e) => {
+                tracing::warn!("recall_effectiveness lookup failed: {e}");
+                HashMap::new()
+            }
+        };
+
         let mut scored: Vec<(String, f32)> = Vec::new();
-        for id in all_memories.keys() {
-            let fts_score = fts_scores.get(id).copied().unwrap_or(0.0);
-            let vec_score = vec_scores.get(id).copied().unwrap_or(0.0);
-            let combined = 0.3 * fts_score + 0.7 * vec_score;
-            scored.push((id.clone(), combined));
+        for id in candidate_ids {
+            let fts_score = fts_scores.get(&id).copied().unwrap_or(0.0);
+            let vec_score = vec_scores.get(&id).copied().unwrap_or(0.0);
+            let learned_score = learned_scores.get(&id).copied().unwrap_or(0.0);
+            let static_weight_bias = all_memories
+                .get(&id)
+                .map(|memory| (memory.weight.value() - 0.5) * 0.05)
+                .unwrap_or(0.0);
+            let combined =
+                0.3 * fts_score + 0.7 * vec_score + static_weight_bias + 0.12 * learned_score;
+            scored.push((id, combined.clamp(0.0, 1.5)));
         }
 
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));

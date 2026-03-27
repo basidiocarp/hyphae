@@ -1806,4 +1806,36 @@ mod tests {
         let count = store.count_sessions_before_date(&past_date).unwrap();
         assert_eq!(count, 0);
     }
+
+    #[test]
+    fn test_search_hybrid_applies_recall_effectiveness_bias() {
+        let store = test_store();
+        let embedding = vec![1.0f32; 384];
+
+        let mut first = make_memory("demo", "same recall candidate");
+        first.embedding = Some(embedding.clone());
+        let first_id = store.store(first).unwrap();
+
+        let mut second = make_memory("demo", "same recall candidate");
+        second.embedding = Some(embedding.clone());
+        let second_id = store.store(second).unwrap();
+
+        store
+            .conn
+            .execute(
+                "INSERT INTO recall_effectiveness (memory_id, recall_event_id, effectiveness, signal_count, computed_at)
+                 VALUES (?1, 'rec_1', 0.8, 3, '2026-03-27T00:00:00Z'),
+                        (?2, 'rec_2', -0.8, 3, '2026-03-27T00:00:00Z')",
+                params![first_id.as_ref(), second_id.as_ref()],
+            )
+            .unwrap();
+
+        let results = store
+            .search_hybrid("same recall candidate", &embedding, 2, 0, None)
+            .unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].0.id, first_id);
+        assert_eq!(results[1].0.id, second_id);
+    }
 }

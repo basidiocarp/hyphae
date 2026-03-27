@@ -1,11 +1,91 @@
 //! Feedback loop persistence for recall events and session outcomes.
 
-use chrono::Utc;
+use std::collections::HashMap;
+
+use chrono::{DateTime, Duration, Utc};
 use rusqlite::{OptionalExtension, params};
 
 use hyphae_core::{HyphaeError, HyphaeResult};
 
 use super::SqliteStore;
+
+const MAX_EFFECTIVENESS_WINDOW_MINUTES: i64 = 60;
+const MIN_SIGNALS_FOR_EFFECTIVENESS: usize = 3;
+const POSITION_DISCOUNT: f32 = 0.3;
+const RECENCY_HALF_LIFE_DAYS: f64 = 14.0;
+const SIGNAL_SESSION_SUCCESS: &str = "session_success";
+const SIGNAL_SESSION_FAILURE: &str = "session_failure";
+const SIGNAL_BUILD_PASSED: &str = "build_passed";
+const SIGNAL_TEST_PASSED: &str = "test_passed";
+const SIGNAL_CORRECTION: &str = "correction";
+const SIGNAL_ERROR_FREE_RUN: &str = "error_free_run";
+const SIGNAL_TOOL_ERROR: &str = "tool_error";
+const SIGNAL_EXPLICIT_BOOST: &str = "explicit_boost";
+
+#[derive(Debug, Clone)]
+struct RecallEventRecord {
+    id: String,
+    recalled_at: String,
+    memory_ids: Vec<String>,
+}
+
+fn parse_rfc3339_utc(value: &str, field: &str) -> HyphaeResult<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value)
+        .map(|dt| dt.with_timezone(&Utc))
+        .map_err(|e| HyphaeError::Database(format!("invalid {field} timestamp '{value}': {e}")))
+}
+
+fn recency_weight(computed_at: &str) -> f32 {
+    let Ok(computed_at) = parse_rfc3339_utc(computed_at, "computed_at") else {
+        return 1.0;
+    };
+    let age_days = (Utc::now() - computed_at).num_seconds() as f64 / 86_400.0;
+    (-0.693_f64 * age_days / RECENCY_HALF_LIFE_DAYS).exp() as f32
+}
+
+fn normalize_signal_type(signal_type: &str) -> Option<&'static str> {
+    match signal_type {
+        SIGNAL_SESSION_SUCCESS => Some(SIGNAL_SESSION_SUCCESS),
+        SIGNAL_SESSION_FAILURE => Some(SIGNAL_SESSION_FAILURE),
+        SIGNAL_BUILD_PASSED => Some(SIGNAL_BUILD_PASSED),
+        SIGNAL_TEST_PASSED | "test_pass" => Some(SIGNAL_TEST_PASSED),
+        SIGNAL_CORRECTION => Some(SIGNAL_CORRECTION),
+        SIGNAL_ERROR_FREE_RUN => Some(SIGNAL_ERROR_FREE_RUN),
+        SIGNAL_TOOL_ERROR => Some(SIGNAL_TOOL_ERROR),
+        SIGNAL_EXPLICIT_BOOST => Some(SIGNAL_EXPLICIT_BOOST),
+        _ => None,
+    }
+}
+
+fn signal_contribution(signal_type: &str, signal_value: i64) -> Option<i64> {
+    let _ = signal_value;
+    match normalize_signal_type(signal_type)? {
+        SIGNAL_SESSION_SUCCESS => Some(4),
+        SIGNAL_SESSION_FAILURE => Some(-4),
+        SIGNAL_BUILD_PASSED | SIGNAL_TEST_PASSED => Some(2),
+        SIGNAL_CORRECTION | SIGNAL_TOOL_ERROR => Some(-1),
+        SIGNAL_ERROR_FREE_RUN => Some(1),
+        SIGNAL_EXPLICIT_BOOST => Some(3),
+        _ => None,
+    }
+}
+
+fn aggregate_effectiveness(rows: &[(f32, String)]) -> f32 {
+    let mut weighted_sum = 0.0_f32;
+    let mut weight_sum = 0.0_f32;
+
+    for (effectiveness, computed_at) in rows {
+        let weight = recency_weight(computed_at);
+        weighted_sum += *effectiveness * weight;
+        weight_sum += weight;
+    }
+
+    if weight_sum > 0.0 {
+        weighted_sum / weight_sum
+    } else {
+        0.0
+    }
+}
 
 impl SqliteStore {
     fn resolve_feedback_project(
@@ -96,8 +176,33 @@ impl SqliteStore {
         project: Option<&str>,
     ) -> HyphaeResult<String> {
         let signal_id = format!("sig_{}", ulid::Ulid::new());
-        let occurred_at = Utc::now().to_rfc3339();
         let resolved_project = self.resolve_feedback_project(session_id, project)?;
+        let stored_signal_type = normalize_signal_type(signal_type).unwrap_or(signal_type);
+        let occurred_at = if let Some(session_id) = session_id {
+            if matches!(
+                stored_signal_type,
+                SIGNAL_SESSION_SUCCESS | SIGNAL_SESSION_FAILURE
+            ) {
+                self.conn
+                    .query_row(
+                        "SELECT ended_at
+                         FROM sessions
+                         WHERE id = ?1 AND status = 'completed'",
+                        params![session_id],
+                        |row| row.get::<_, Option<String>>(0),
+                    )
+                    .optional()
+                    .map_err(|e| {
+                        HyphaeError::Database(format!("failed to query session end time: {e}"))
+                    })?
+                    .flatten()
+                    .unwrap_or_else(|| Utc::now().to_rfc3339())
+            } else {
+                Utc::now().to_rfc3339()
+            }
+        } else {
+            Utc::now().to_rfc3339()
+        };
 
         self.conn
             .execute(
@@ -107,7 +212,7 @@ impl SqliteStore {
                 params![
                     signal_id,
                     session_id,
-                    signal_type,
+                    stored_signal_type,
                     signal_value,
                     occurred_at,
                     source,
@@ -115,6 +220,26 @@ impl SqliteStore {
                 ],
             )
             .map_err(|e| HyphaeError::Database(format!("failed to log outcome signal: {e}")))?;
+
+        if let Some(session_id) = session_id {
+            let session_status: Option<String> = self
+                .conn
+                .query_row(
+                    "SELECT status FROM sessions WHERE id = ?1",
+                    params![session_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|e| {
+                    HyphaeError::Database(format!("failed to check session status: {e}"))
+                })?;
+
+            if matches!(session_status.as_deref(), Some("completed")) {
+                if let Err(e) = self.compute_session_effectiveness(session_id) {
+                    tracing::warn!("compute_session_effectiveness failed: {e}");
+                }
+            }
+        }
 
         Ok(signal_id)
     }
@@ -125,6 +250,7 @@ impl SqliteStore {
         signal_type: Option<&str>,
         signal_value: Option<i64>,
     ) -> HyphaeResult<i64> {
+        let signal_type = signal_type.map(|value| normalize_signal_type(value).unwrap_or(value));
         let mut stmt = self
             .conn
             .prepare(
@@ -164,11 +290,234 @@ impl SqliteStore {
         stmt.query_row(params![session_id, project, memory_count], |row| row.get(0))
             .map_err(|e| HyphaeError::Database(format!("failed to count recall events: {e}")))
     }
+
+    pub(crate) fn compute_session_effectiveness(&self, session_id: &str) -> HyphaeResult<usize> {
+        let session_ended_at: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT ended_at
+                 FROM sessions
+                 WHERE id = ?1",
+                params![session_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| HyphaeError::Database(format!("failed to query session end time: {e}")))?;
+
+        let Some(session_ended_at) = session_ended_at else {
+            return Ok(0);
+        };
+
+        let session_end = parse_rfc3339_utc(&session_ended_at, "ended_at")?;
+        let recalls: Vec<RecallEventRecord> = {
+            let mut stmt = self
+                .conn
+                .prepare(
+                    "SELECT id, recalled_at, memory_ids
+                     FROM recall_events
+                     WHERE session_id = ?1
+                     ORDER BY recalled_at ASC",
+                )
+                .map_err(|e| {
+                    HyphaeError::Database(format!("failed to prepare recall lookup: {e}"))
+                })?;
+
+            let rows = stmt
+                .query_map(params![session_id], |row| {
+                    let memory_ids_json: String = row.get(2)?;
+                    let memory_ids = serde_json::from_str(&memory_ids_json).map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            2,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?;
+                    Ok(RecallEventRecord {
+                        id: row.get(0)?,
+                        recalled_at: row.get(1)?,
+                        memory_ids,
+                    })
+                })
+                .map_err(|e| {
+                    HyphaeError::Database(format!("failed to query recall events: {e}"))
+                })?;
+
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| HyphaeError::Database(format!("failed to read recall events: {e}")))?
+        };
+
+        if recalls.is_empty() {
+            return Ok(0);
+        }
+
+        let tx = self.conn.unchecked_transaction().map_err(|e| {
+            HyphaeError::Database(format!("failed to start scoring transaction: {e}"))
+        })?;
+        let computed_at = Utc::now().to_rfc3339();
+        let mut written = 0usize;
+
+        for recall in recalls {
+            if recall.memory_ids.is_empty() {
+                continue;
+            }
+
+            let recalled_at = parse_rfc3339_utc(&recall.recalled_at, "recalled_at")?;
+            let window_end = std::cmp::min(
+                session_end,
+                recalled_at + Duration::minutes(MAX_EFFECTIVENESS_WINDOW_MINUTES),
+            );
+
+            if window_end <= recalled_at {
+                continue;
+            }
+
+            let signal_values: Vec<i64> = {
+                let mut stmt = tx
+                    .prepare(
+                        "SELECT signal_type, signal_value
+                         FROM outcome_signals
+                         WHERE session_id = ?1
+                           AND occurred_at >= ?2
+                           AND occurred_at <= ?3
+                         ORDER BY occurred_at ASC",
+                    )
+                    .map_err(|e| {
+                        HyphaeError::Database(format!("failed to prepare signal lookup: {e}"))
+                    })?;
+
+                let rows = stmt
+                    .query_map(
+                        params![session_id, &recall.recalled_at, window_end.to_rfc3339()],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+                    )
+                    .map_err(|e| {
+                        HyphaeError::Database(format!("failed to query outcome signals: {e}"))
+                    })?;
+
+                rows.collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| {
+                        HyphaeError::Database(format!("failed to read outcome signals: {e}"))
+                    })?
+                    .into_iter()
+                    .filter_map(|(signal_type, signal_value)| {
+                        signal_contribution(&signal_type, signal_value)
+                    })
+                    .collect()
+            };
+
+            if signal_values.len() < MIN_SIGNALS_FOR_EFFECTIVENESS {
+                continue;
+            }
+
+            let positive_sum: i64 = signal_values
+                .iter()
+                .copied()
+                .filter(|value| *value > 0)
+                .sum();
+            let negative_sum: i64 = signal_values
+                .iter()
+                .copied()
+                .filter(|value| *value < 0)
+                .sum();
+            let total = positive_sum + negative_sum;
+            let magnitude = (positive_sum.abs() + negative_sum.abs()).max(1);
+            let raw_score = total as f32 / magnitude as f32;
+
+            for (index, memory_id) in recall.memory_ids.iter().enumerate() {
+                let position_factor = 1.0 / (1.0 + POSITION_DISCOUNT * index as f32);
+                let effectiveness = raw_score * position_factor;
+
+                tx.execute(
+                    "INSERT INTO recall_effectiveness
+                        (memory_id, recall_event_id, effectiveness, signal_count, computed_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)
+                     ON CONFLICT(memory_id, recall_event_id) DO UPDATE SET
+                        effectiveness = excluded.effectiveness,
+                        signal_count = excluded.signal_count,
+                        computed_at = excluded.computed_at",
+                    params![
+                        memory_id,
+                        &recall.id,
+                        effectiveness,
+                        signal_values.len() as i64,
+                        &computed_at,
+                    ],
+                )
+                .map_err(|e| {
+                    HyphaeError::Database(format!("failed to upsert recall effectiveness: {e}"))
+                })?;
+                written += 1;
+            }
+        }
+
+        tx.commit().map_err(|e| {
+            HyphaeError::Database(format!("failed to commit scoring transaction: {e}"))
+        })?;
+        Ok(written)
+    }
+
+    pub(crate) fn recall_effectiveness_for_memory_ids(
+        &self,
+        memory_ids: &[String],
+    ) -> HyphaeResult<HashMap<String, f32>> {
+        if memory_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let placeholders: Vec<String> = (1..=memory_ids.len()).map(|i| format!("?{i}")).collect();
+        let sql = format!(
+            "SELECT memory_id, effectiveness, computed_at
+             FROM recall_effectiveness
+             WHERE memory_id IN ({})
+             ORDER BY computed_at DESC",
+            placeholders.join(",")
+        );
+
+        let mut stmt = self.conn.prepare_cached(&sql).map_err(|e| {
+            HyphaeError::Database(format!("failed to prepare effectiveness query: {e}"))
+        })?;
+
+        let param_values: Vec<Box<dyn rusqlite::types::ToSql>> = memory_ids
+            .iter()
+            .map(|id| Box::new(id.clone()) as Box<dyn rusqlite::types::ToSql>)
+            .collect();
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            param_values.iter().map(|value| value.as_ref()).collect();
+
+        let mut grouped: HashMap<String, Vec<(f32, String)>> = HashMap::new();
+        let rows = stmt
+            .query_map(params_ref.as_slice(), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, f32>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|e| {
+                HyphaeError::Database(format!("failed to query effectiveness rows: {e}"))
+            })?;
+
+        for row in rows {
+            let (memory_id, effectiveness, computed_at) = row.map_err(|e| {
+                HyphaeError::Database(format!("failed to read effectiveness rows: {e}"))
+            })?;
+            grouped
+                .entry(memory_id)
+                .or_default()
+                .push((effectiveness, computed_at));
+        }
+
+        Ok(grouped
+            .into_iter()
+            .map(|(memory_id, rows)| (memory_id, aggregate_effectiveness(&rows)))
+            .collect())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hyphae_core::{Importance, Memory, MemoryStore};
 
     #[derive(Debug, Clone)]
     struct RecallEventRow {
@@ -342,5 +691,141 @@ mod tests {
             .count_outcome_signals(Some(&session_id), Some("session_success"), Some(2))
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_log_outcome_signal_normalizes_legacy_test_pass_alias() {
+        let store = test_store();
+        let (session_id, _) = store.session_start("demo", Some("feedback")).unwrap();
+
+        store
+            .log_outcome_signal(
+                Some(&session_id),
+                "test_pass",
+                2,
+                Some("manual"),
+                Some("demo"),
+            )
+            .unwrap();
+
+        let legacy_count = store
+            .count_outcome_signals(Some(&session_id), Some("test_pass"), Some(2))
+            .unwrap();
+        let canonical_count = store
+            .count_outcome_signals(Some(&session_id), Some("test_passed"), Some(2))
+            .unwrap();
+
+        assert_eq!(legacy_count, 1);
+        assert_eq!(canonical_count, 1);
+    }
+
+    #[test]
+    fn test_log_outcome_signal_computes_recall_effectiveness_after_session_end() {
+        let store = test_store();
+        let (session_id, _) = store.session_start("demo", Some("feedback")).unwrap();
+
+        let first = store
+            .store(Memory::new(
+                "demo".into(),
+                "first recalled memory".into(),
+                Importance::Medium,
+            ))
+            .unwrap();
+        let second = store
+            .store(Memory::new(
+                "demo".into(),
+                "second recalled memory".into(),
+                Importance::Medium,
+            ))
+            .unwrap();
+
+        let recall_event_id = store
+            .log_recall_event(
+                Some(&session_id),
+                "recall query",
+                &[first.as_ref().to_string(), second.as_ref().to_string()],
+                Some("demo"),
+            )
+            .unwrap();
+
+        store
+            .log_outcome_signal(
+                Some(&session_id),
+                "test_pass",
+                2,
+                Some("manual"),
+                Some("demo"),
+            )
+            .unwrap();
+        store
+            .log_outcome_signal(
+                Some(&session_id),
+                "test_pass",
+                2,
+                Some("manual"),
+                Some("demo"),
+            )
+            .unwrap();
+        store
+            .log_outcome_signal(
+                Some(&session_id),
+                "test_pass",
+                2,
+                Some("manual"),
+                Some("demo"),
+            )
+            .unwrap();
+
+        let (_project, _, _, _, _) = store
+            .session_end(&session_id, Some("done"), None, Some("0"))
+            .unwrap();
+
+        let rows_before: Vec<(String, String, f32, i64)> = store
+            .conn
+            .prepare(
+                "SELECT memory_id, recall_event_id, effectiveness, signal_count
+                 FROM recall_effectiveness
+                 WHERE recall_event_id = ?1
+                 ORDER BY memory_id",
+            )
+            .unwrap()
+            .query_map(params![recall_event_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        store
+            .log_outcome_signal(
+                Some(&session_id),
+                "correction",
+                -1,
+                Some("manual"),
+                Some("demo"),
+            )
+            .unwrap();
+
+        let rows_after: Vec<(String, String, f32, i64)> = store
+            .conn
+            .prepare(
+                "SELECT memory_id, recall_event_id, effectiveness, signal_count
+                 FROM recall_effectiveness
+                 WHERE recall_event_id = ?1
+                 ORDER BY memory_id",
+            )
+            .unwrap()
+            .query_map(params![recall_event_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(rows_before.len(), 2);
+        assert_eq!(rows_before[0].1, recall_event_id);
+        assert_eq!(rows_before[0].3, 4);
+        assert!(rows_before[0].2 > rows_before[1].2);
+        assert_eq!(rows_before, rows_after);
     }
 }

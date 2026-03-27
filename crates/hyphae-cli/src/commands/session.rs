@@ -20,6 +20,9 @@ pub(crate) enum SessionCommand {
         /// Optional task description
         #[arg(short, long)]
         task: Option<String>,
+        /// Optional worker or runtime scope for parallel sessions
+        #[arg(long)]
+        scope: Option<String>,
     },
 
     /// End an active coding session
@@ -51,7 +54,11 @@ pub(crate) enum SessionCommand {
 
 pub(crate) fn dispatch(store: &SqliteStore, args: SessionArgs) -> Result<()> {
     match args.command {
-        SessionCommand::Start { project, task } => cmd_start(store, &project, task.as_deref()),
+        SessionCommand::Start {
+            project,
+            task,
+            scope,
+        } => cmd_start(store, &project, task.as_deref(), scope.as_deref()),
         SessionCommand::End {
             id,
             summary,
@@ -62,8 +69,13 @@ pub(crate) fn dispatch(store: &SqliteStore, args: SessionArgs) -> Result<()> {
     }
 }
 
-fn cmd_start(store: &SqliteStore, project: &str, task: Option<&str>) -> Result<()> {
-    let (session_id, _started_at) = store.session_start(project, task)?;
+fn cmd_start(
+    store: &SqliteStore,
+    project: &str,
+    task: Option<&str>,
+    scope: Option<&str>,
+) -> Result<()> {
+    let (session_id, _started_at) = store.session_start_scoped(project, task, scope)?;
     println!("{session_id}");
     Ok(())
 }
@@ -85,21 +97,6 @@ fn cmd_end(
         summary,
         files_modified.as_deref(),
         errors_string.as_deref(),
-    )?;
-
-    let error_count = errors.unwrap_or(0);
-    let signal_type = if error_count > 0 {
-        "session_failure"
-    } else {
-        "session_success"
-    };
-    let signal_value = if error_count > 0 { -2 } else { 2 };
-    store.log_outcome_signal(
-        Some(session_id),
-        signal_type,
-        signal_value,
-        Some("hyphae.session_end"),
-        Some(&project),
     )?;
 
     if let Some(summary_text) = summary {
@@ -133,10 +130,16 @@ fn cmd_context(store: &SqliteStore, project: &str, limit: i64) -> Result<()> {
         let task = session.task.as_deref().unwrap_or("(no task)");
         let status = &session.status;
         let summary = session.summary.as_deref().unwrap_or("(no summary)");
+        let scope = session
+            .scope
+            .as_deref()
+            .map(|value| format!(" scope={value}"))
+            .unwrap_or_default();
         println!(
-            "{} [{}] {} -> {}",
+            "{} [{}]{} {} -> {}",
             session.id,
             status,
+            scope,
             task,
             crate::display::truncate(summary, 100)
         );
@@ -157,12 +160,29 @@ mod tests {
     fn test_session_start_and_context() {
         let store = test_store();
 
-        cmd_start(&store, "demo-project", Some("implement feedback loop")).unwrap();
+        cmd_start(
+            &store,
+            "demo-project",
+            Some("implement feedback loop"),
+            None,
+        )
+        .unwrap();
         let sessions = store.session_context("demo-project", 5).unwrap();
 
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].status, "active");
         assert_eq!(sessions[0].task.as_deref(), Some("implement feedback loop"));
+    }
+
+    #[test]
+    fn test_session_start_with_scope_keeps_parallel_sessions_distinct() {
+        let store = test_store();
+
+        cmd_start(&store, "demo-project", Some("worker one"), Some("worker-a")).unwrap();
+        cmd_start(&store, "demo-project", Some("worker two"), Some("worker-b")).unwrap();
+        let sessions = store.session_context("demo-project", 5).unwrap();
+
+        assert_eq!(sessions.len(), 2);
     }
 
     #[test]

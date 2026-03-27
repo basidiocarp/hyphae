@@ -12,6 +12,7 @@ use super::SqliteStore;
 pub struct Session {
     pub id: String,
     pub project: String,
+    pub scope: Option<String>,
     pub task: Option<String>,
     pub started_at: String,
     pub ended_at: Option<String>,
@@ -28,15 +29,25 @@ impl SqliteStore {
         project: &str,
         task: Option<&str>,
     ) -> HyphaeResult<(String, String)> {
+        self.session_start_scoped(project, task, None)
+    }
+
+    /// Start a new session scoped to a specific worker or runtime. Returns (session_id, started_at).
+    pub fn session_start_scoped(
+        &self,
+        project: &str,
+        task: Option<&str>,
+        scope: Option<&str>,
+    ) -> HyphaeResult<(String, String)> {
         if let Some(existing) = self
             .conn
             .query_row(
                 "SELECT id, started_at
                  FROM sessions
-                 WHERE project = ?1 AND status = 'active'
+                 WHERE project = ?1 AND scope IS ?2 AND status = 'active'
                  ORDER BY started_at DESC
                  LIMIT 1",
-                params![project],
+                params![project, scope],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
@@ -50,8 +61,8 @@ impl SqliteStore {
 
         self.conn
             .execute(
-                "INSERT INTO sessions (id, project, task, started_at, status) VALUES (?1, ?2, ?3, ?4, 'active')",
-                params![session_id, project, task, started_at],
+                "INSERT INTO sessions (id, project, scope, task, started_at, status) VALUES (?1, ?2, ?3, ?4, ?5, 'active')",
+                params![session_id, project, scope, task, started_at],
             )
             .map_err(|e| HyphaeError::Database(format!("failed to insert session: {e}")))?;
 
@@ -97,6 +108,25 @@ impl SqliteStore {
             )
             .map_err(|e| HyphaeError::Database(format!("failed to update session: {e}")))?;
 
+        let error_count = errors
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(0);
+        let signal_type = if error_count > 0 {
+            "session_failure"
+        } else {
+            "session_success"
+        };
+        let signal_value = if error_count > 0 { -2 } else { 2 };
+        if let Err(e) = self.log_outcome_signal(
+            Some(session_id),
+            signal_type,
+            signal_value,
+            Some("hyphae.session_end"),
+            Some(&project),
+        ) {
+            tracing::warn!("failed to record session outcome signal: {e}");
+        }
+
         Ok((project, started_at, task, ended_at, duration_minutes))
     }
 
@@ -105,7 +135,7 @@ impl SqliteStore {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, project, task, started_at, ended_at, summary, files_modified, errors, status
+                "SELECT id, project, scope, task, started_at, ended_at, summary, files_modified, errors, status
                  FROM sessions
                  WHERE project = ?1
                  ORDER BY started_at DESC
@@ -118,13 +148,14 @@ impl SqliteStore {
                 Ok(Session {
                     id: row.get(0)?,
                     project: row.get(1)?,
-                    task: row.get(2)?,
-                    started_at: row.get(3)?,
-                    ended_at: row.get(4)?,
-                    summary: row.get(5)?,
-                    files_modified: row.get(6)?,
-                    errors: row.get(7)?,
-                    status: row.get(8)?,
+                    scope: row.get(2)?,
+                    task: row.get(3)?,
+                    started_at: row.get(4)?,
+                    ended_at: row.get(5)?,
+                    summary: row.get(6)?,
+                    files_modified: row.get(7)?,
+                    errors: row.get(8)?,
+                    status: row.get(9)?,
                 })
             })
             .map_err(|e| HyphaeError::Database(format!("failed to query sessions: {e}")))?;
@@ -157,6 +188,7 @@ mod tests {
         let sessions = store.session_context("test-project", 10).unwrap();
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].status, "active");
+        assert_eq!(sessions[0].scope, None);
 
         // End
         let (project, _, task, _, duration) = store
@@ -197,5 +229,27 @@ mod tests {
         let sessions = store.session_context("demo", 10).unwrap();
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].status, "active");
+    }
+
+    #[test]
+    fn test_session_start_scoped_separates_parallel_workers() {
+        let store = test_store();
+        let (worker_a, _) = store
+            .session_start_scoped("demo", Some("first"), Some("worker-a"))
+            .unwrap();
+        let (worker_b, _) = store
+            .session_start_scoped("demo", Some("second"), Some("worker-b"))
+            .unwrap();
+        let (worker_a_again, _) = store
+            .session_start_scoped("demo", Some("first-again"), Some("worker-a"))
+            .unwrap();
+
+        assert_ne!(worker_a, worker_b);
+        assert_eq!(worker_a, worker_a_again);
+
+        let sessions = store.session_context("demo", 10).unwrap();
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions[0].status, "active");
+        assert_eq!(sessions[1].status, "active");
     }
 }

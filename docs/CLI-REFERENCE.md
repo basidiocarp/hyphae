@@ -600,7 +600,7 @@ hyphae search-all "auth" --limit 5
 ### `hyphae session` -- Session lifecycle tracking
 
 ```
-hyphae session start --project <project> [--task <task>]
+hyphae session start --project <project> [--task <task>] [--scope <scope>]
 hyphae session end --id <session-id> [--summary <text>] [--file <path> ...] [--errors <count>]
 hyphae session context --project <project> [--limit <n>]
 ```
@@ -608,13 +608,18 @@ hyphae session context --project <project> [--limit <n>]
 Use these commands when you want structured session records instead of only
 free-form memory entries. This is the session lifecycle surface Cortina can use
 to start a work session on the first meaningful event and close it on session
-stop with files changed and errors encountered.
+stop with files changed and errors encountered. Use `--scope` when one project
+can have multiple active workers or host runtimes at the same time and they
+should not share a single active session.
 
 **Examples:**
 
 ```bash
 # Start a session
 hyphae session start --project api --task "fix flaky auth tests"
+
+# Start a parallel worker-scoped session
+hyphae session start --project api --scope worker-a --task "parallel validation shard"
 
 # End it with outcome metadata
 hyphae session end \

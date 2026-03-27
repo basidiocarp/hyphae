@@ -130,6 +130,9 @@ hyphae session start --project demo --task "refactor auth flow"
 hyphae session end --id ses_... --summary "completed refactor" --file src/auth.rs --errors 0
 hyphae session context --project demo
 hyphae feedback signal --session-id ses_... --type correction --value -1 --source cortina.post_tool_use
+
+# Parallel runtimes can opt into separate active sessions per project.
+hyphae session start --project demo --scope worker-a --task "run validation"
 ```
 
 This is the bridge Cortina now uses when it turns hook activity into session
