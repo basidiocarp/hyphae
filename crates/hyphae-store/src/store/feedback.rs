@@ -18,6 +18,7 @@ const SIGNAL_SESSION_FAILURE: &str = "session_failure";
 const SIGNAL_BUILD_PASSED: &str = "build_passed";
 const SIGNAL_TEST_PASSED: &str = "test_passed";
 const SIGNAL_CORRECTION: &str = "correction";
+const SIGNAL_ERROR_RESOLVED: &str = "error_resolved";
 const SIGNAL_ERROR_FREE_RUN: &str = "error_free_run";
 const SIGNAL_TOOL_ERROR: &str = "tool_error";
 const SIGNAL_EXPLICIT_BOOST: &str = "explicit_boost";
@@ -50,6 +51,7 @@ fn normalize_signal_type(signal_type: &str) -> Option<&'static str> {
         SIGNAL_BUILD_PASSED => Some(SIGNAL_BUILD_PASSED),
         SIGNAL_TEST_PASSED | "test_pass" => Some(SIGNAL_TEST_PASSED),
         SIGNAL_CORRECTION => Some(SIGNAL_CORRECTION),
+        SIGNAL_ERROR_RESOLVED => Some(SIGNAL_ERROR_RESOLVED),
         SIGNAL_ERROR_FREE_RUN => Some(SIGNAL_ERROR_FREE_RUN),
         SIGNAL_TOOL_ERROR => Some(SIGNAL_TOOL_ERROR),
         SIGNAL_EXPLICIT_BOOST => Some(SIGNAL_EXPLICIT_BOOST),
@@ -63,6 +65,7 @@ fn signal_contribution(signal_type: &str, signal_value: i64) -> Option<i64> {
         SIGNAL_SESSION_SUCCESS => Some(4),
         SIGNAL_SESSION_FAILURE => Some(-4),
         SIGNAL_BUILD_PASSED | SIGNAL_TEST_PASSED => Some(2),
+        SIGNAL_ERROR_RESOLVED => Some(1),
         SIGNAL_CORRECTION | SIGNAL_TOOL_ERROR => Some(-1),
         SIGNAL_ERROR_FREE_RUN => Some(1),
         SIGNAL_EXPLICIT_BOOST => Some(3),
@@ -88,6 +91,51 @@ fn aggregate_effectiveness(rows: &[(f32, String)]) -> f32 {
 }
 
 impl SqliteStore {
+    fn latest_recall_event_id_for_session(
+        &self,
+        session_id: &str,
+        occurred_at: &str,
+    ) -> HyphaeResult<Option<String>> {
+        let occurred_at = parse_rfc3339_utc(occurred_at, "occurred_at")?;
+        let session_ended_at: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT ended_at FROM sessions WHERE id = ?1",
+                params![session_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| {
+                HyphaeError::Database(format!("failed to query session end for attribution: {e}"))
+            })?
+            .flatten();
+
+        if let Some(session_ended_at) = session_ended_at {
+            let session_ended_at = parse_rfc3339_utc(&session_ended_at, "ended_at")?;
+            if occurred_at > session_ended_at {
+                return Ok(None);
+            }
+        }
+
+        let window_start =
+            (occurred_at - Duration::minutes(MAX_EFFECTIVENESS_WINDOW_MINUTES)).to_rfc3339();
+
+        self.conn
+            .query_row(
+                "SELECT id
+                 FROM recall_events
+                 WHERE session_id = ?1
+                   AND recalled_at <= ?2
+                   AND recalled_at >= ?3
+                 ORDER BY recalled_at DESC
+                 LIMIT 1",
+                params![session_id, occurred_at.to_rfc3339(), window_start],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| HyphaeError::Database(format!("failed to query latest recall event: {e}")))
+    }
+
     fn resolve_feedback_project(
         &self,
         session_id: Option<&str>,
@@ -203,15 +251,21 @@ impl SqliteStore {
         } else {
             Utc::now().to_rfc3339()
         };
+        let recall_event_id = if let Some(session_id) = session_id {
+            self.latest_recall_event_id_for_session(session_id, &occurred_at)?
+        } else {
+            None
+        };
 
         self.conn
             .execute(
                 "INSERT INTO outcome_signals
-                    (id, session_id, signal_type, signal_value, occurred_at, source, project)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    (id, session_id, recall_event_id, signal_type, signal_value, occurred_at, source, project)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     signal_id,
                     session_id,
+                    recall_event_id,
                     stored_signal_type,
                     signal_value,
                     occurred_at,
@@ -377,8 +431,14 @@ impl SqliteStore {
                         "SELECT signal_type, signal_value
                          FROM outcome_signals
                          WHERE session_id = ?1
-                           AND occurred_at >= ?2
-                           AND occurred_at <= ?3
+                           AND (
+                                recall_event_id = ?4
+                                OR (
+                                    recall_event_id IS NULL
+                                    AND occurred_at >= ?2
+                                    AND occurred_at <= ?3
+                                )
+                           )
                          ORDER BY occurred_at ASC",
                     )
                     .map_err(|e| {
@@ -387,7 +447,12 @@ impl SqliteStore {
 
                 let rows = stmt
                     .query_map(
-                        params![session_id, &recall.recalled_at, window_end.to_rfc3339()],
+                        params![
+                            session_id,
+                            &recall.recalled_at,
+                            window_end.to_rfc3339(),
+                            &recall.id
+                        ],
                         |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
                     )
                     .map_err(|e| {
@@ -533,6 +598,7 @@ mod tests {
     struct OutcomeSignalRow {
         id: String,
         session_id: Option<String>,
+        recall_event_id: Option<String>,
         signal_type: String,
         signal_value: i64,
         occurred_at: String,
@@ -618,7 +684,7 @@ mod tests {
         let row: OutcomeSignalRow = store
             .conn
             .query_row(
-                "SELECT id, session_id, signal_type, signal_value, occurred_at, source, project
+                "SELECT id, session_id, recall_event_id, signal_type, signal_value, occurred_at, source, project
                  FROM outcome_signals
                  WHERE id = ?1",
                 params![signal_id],
@@ -626,17 +692,19 @@ mod tests {
                     Ok(OutcomeSignalRow {
                         id: row.get(0)?,
                         session_id: row.get(1)?,
-                        signal_type: row.get(2)?,
-                        signal_value: row.get(3)?,
-                        occurred_at: row.get(4)?,
-                        source: row.get(5)?,
-                        project: row.get(6)?,
+                        recall_event_id: row.get(2)?,
+                        signal_type: row.get(3)?,
+                        signal_value: row.get(4)?,
+                        occurred_at: row.get(5)?,
+                        source: row.get(6)?,
+                        project: row.get(7)?,
                     })
                 },
             )
             .unwrap();
 
         assert_eq!(row.session_id.as_deref(), Some(session_id.as_str()));
+        assert_eq!(row.recall_event_id, None);
         assert_eq!(row.signal_type, "session_success");
         assert_eq!(row.signal_value, 2);
         assert_eq!(row.source.as_deref(), Some("hyphae.session_end"));
@@ -717,6 +785,50 @@ mod tests {
 
         assert_eq!(legacy_count, 1);
         assert_eq!(canonical_count, 1);
+    }
+
+    #[test]
+    fn test_log_outcome_signal_attaches_latest_recall_event_within_session_window() {
+        let store = test_store();
+        let (session_id, _) = store.session_start("demo", Some("feedback")).unwrap();
+
+        let memory = Memory::new("demo".into(), "recalled memory".into(), Importance::Medium);
+        let memory_id = store.store(memory).unwrap();
+        let memory_ids = vec![memory_id.to_string()];
+
+        let first_recall = store
+            .log_recall_event(Some(&session_id), "first recall", &memory_ids, Some("demo"))
+            .unwrap();
+        let second_recall = store
+            .log_recall_event(
+                Some(&session_id),
+                "second recall",
+                &memory_ids,
+                Some("demo"),
+            )
+            .unwrap();
+
+        let signal_id = store
+            .log_outcome_signal(
+                Some(&session_id),
+                "test_passed",
+                1,
+                Some("cortina.post_tool_use.test"),
+                Some("demo"),
+            )
+            .unwrap();
+
+        let recall_event_id: Option<String> = store
+            .conn
+            .query_row(
+                "SELECT recall_event_id FROM outcome_signals WHERE id = ?1",
+                params![signal_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(recall_event_id.as_deref(), Some(second_recall.as_str()));
+        assert_ne!(recall_event_id.as_deref(), Some(first_recall.as_str()));
     }
 
     #[test]
@@ -827,5 +939,82 @@ mod tests {
         assert_eq!(rows_before[0].3, 4);
         assert!(rows_before[0].2 > rows_before[1].2);
         assert_eq!(rows_before, rows_after);
+    }
+
+    #[test]
+    fn test_compute_session_effectiveness_prefers_direct_recall_attribution() {
+        let store = test_store();
+        let (session_id, _) = store.session_start("demo", Some("feedback")).unwrap();
+
+        let first = store
+            .store(Memory::new(
+                "demo".into(),
+                "first recalled memory".into(),
+                Importance::Medium,
+            ))
+            .unwrap();
+        let second = store
+            .store(Memory::new(
+                "demo".into(),
+                "second recalled memory".into(),
+                Importance::Medium,
+            ))
+            .unwrap();
+
+        store
+            .log_recall_event(
+                Some(&session_id),
+                "first recall",
+                &[first.as_ref().to_string()],
+                Some("demo"),
+            )
+            .unwrap();
+        let second_recall = store
+            .log_recall_event(
+                Some(&session_id),
+                "second recall",
+                &[second.as_ref().to_string()],
+                Some("demo"),
+            )
+            .unwrap();
+
+        store
+            .log_outcome_signal(
+                Some(&session_id),
+                "test_passed",
+                2,
+                Some("manual"),
+                Some("demo"),
+            )
+            .unwrap();
+        store
+            .log_outcome_signal(
+                Some(&session_id),
+                "build_passed",
+                2,
+                Some("manual"),
+                Some("demo"),
+            )
+            .unwrap();
+        let (_project, _, _, _, _) = store
+            .session_end(&session_id, Some("done"), None, Some("0"))
+            .unwrap();
+
+        let rows: Vec<(String, String)> = store
+            .conn
+            .prepare(
+                "SELECT memory_id, recall_event_id
+                 FROM recall_effectiveness
+                 ORDER BY recall_event_id, memory_id",
+            )
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, second.as_ref().to_string());
+        assert_eq!(rows[0].1, second_recall);
     }
 }
