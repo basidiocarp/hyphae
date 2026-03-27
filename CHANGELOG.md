@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## v0.9.4 - 2026-03-27
+
+### Added
+
+- **Scoped session starts**: `hyphae session start` and `hyphae_session_start` now accept an optional scope so parallel workers in one project can keep distinct active sessions.
+- **Learned recall effectiveness**: structured outcome signals now roll up into `recall_effectiveness`, and hybrid recall ranking uses that learned feedback as a small bias.
+
+### Fixed
+
+- **Parallel session attribution**: scoped sessions stop Cortina and other runtimes from collapsing concurrent work in one project into a single active session.
+- **MCP session contract drift**: the MCP schema and session-context output now advertise session scope so schema-driven clients can use scoped sessions safely.
+
+### Changed
+
+- **Session context visibility**: CLI and MCP session-context output now surface scope when present to make parallel session debugging less opaque.
+
 ## v0.9.3 - 2026-03-27
 
 ### Added
