@@ -1,8 +1,10 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+use crate::commands::feedback::FeedbackArgs;
 use crate::commands::memoir::MemoirArgs;
 use crate::commands::project::ProjectArgs;
+use crate::commands::session::SessionArgs;
 
 #[derive(Parser)]
 #[command(name = "hyphae", version)]
@@ -178,6 +180,12 @@ pub(crate) enum Commands {
 
     /// Cross-project knowledge management
     Project(ProjectArgs),
+
+    /// Session lifecycle tracking
+    Session(SessionArgs),
+
+    /// Structured feedback-loop signals
+    Feedback(FeedbackArgs),
 
     /// Benchmark memory store write and search throughput
     Bench {

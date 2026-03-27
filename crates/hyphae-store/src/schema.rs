@@ -107,6 +107,37 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project);
         CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at);
 
+        -- Feedback loop tracking
+        CREATE TABLE IF NOT EXISTS recall_events (
+            id TEXT PRIMARY KEY,
+            session_id TEXT,
+            query TEXT NOT NULL,
+            recalled_at TEXT NOT NULL,
+            memory_ids TEXT NOT NULL,
+            memory_count INTEGER NOT NULL,
+            project TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_recall_events_session
+            ON recall_events(session_id);
+        CREATE INDEX IF NOT EXISTS idx_recall_events_recalled_at
+            ON recall_events(recalled_at);
+
+        CREATE TABLE IF NOT EXISTS outcome_signals (
+            id TEXT PRIMARY KEY,
+            session_id TEXT,
+            signal_type TEXT NOT NULL,
+            signal_value INTEGER NOT NULL,
+            occurred_at TEXT NOT NULL,
+            source TEXT,
+            project TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_outcome_signals_session
+            ON outcome_signals(session_id);
+        CREATE INDEX IF NOT EXISTS idx_outcome_signals_occurred_at
+            ON outcome_signals(occurred_at);
+
         -- RAG tables
         CREATE TABLE IF NOT EXISTS documents (
             id TEXT PRIMARY KEY,

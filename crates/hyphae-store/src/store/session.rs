@@ -1,7 +1,7 @@
 //! Session lifecycle persistence.
 
 use chrono::Utc;
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 
 use hyphae_core::{HyphaeError, HyphaeResult};
 
@@ -28,6 +28,23 @@ impl SqliteStore {
         project: &str,
         task: Option<&str>,
     ) -> HyphaeResult<(String, String)> {
+        if let Some(existing) = self
+            .conn
+            .query_row(
+                "SELECT id, started_at
+                 FROM sessions
+                 WHERE project = ?1 AND status = 'active'
+                 ORDER BY started_at DESC
+                 LIMIT 1",
+                params![project],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|e| HyphaeError::Database(format!("failed to query active session: {e}")))?
+        {
+            return Ok(existing);
+        }
+
         let session_id = format!("ses_{}", ulid::Ulid::new());
         let started_at = Utc::now().to_rfc3339();
 
@@ -166,5 +183,19 @@ mod tests {
         let store = test_store();
         let sessions = store.session_context("no-such-project", 5).unwrap();
         assert!(sessions.is_empty());
+    }
+
+    #[test]
+    fn test_session_start_reuses_existing_active_session() {
+        let store = test_store();
+        let (first_id, first_started_at) = store.session_start("demo", Some("first")).unwrap();
+        let (second_id, second_started_at) = store.session_start("demo", Some("second")).unwrap();
+
+        assert_eq!(first_id, second_id);
+        assert_eq!(first_started_at, second_started_at);
+
+        let sessions = store.session_context("demo", 10).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].status, "active");
     }
 }

@@ -11,7 +11,7 @@ use super::{SqliteStore, context};
 /// A single result from cross-store search, tagged by origin.
 #[derive(Debug, Clone)]
 pub enum UnifiedSearchResult {
-    Memory { memory: Memory, score: f32 },
+    Memory { memory: Box<Memory>, score: f32 },
     Chunk { chunk: Chunk, score: f32 },
 }
 
@@ -160,7 +160,10 @@ impl SqliteStore {
             .take(limit)
             .filter_map(|(key, score)| {
                 if let Some(mem) = memory_map.remove(&key) {
-                    Some(UnifiedSearchResult::Memory { memory: mem, score })
+                    Some(UnifiedSearchResult::Memory {
+                        memory: Box::new(mem),
+                        score,
+                    })
                 } else {
                     chunk_map
                         .remove(&key)

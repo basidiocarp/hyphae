@@ -422,6 +422,32 @@ mod tests {
     }
 
     #[test]
+    fn test_recall_logs_empty_results_for_active_session() {
+        let store = test_store();
+        let (session_id, _) = store
+            .session_start("demo-project", Some("recall feedback"))
+            .unwrap();
+
+        let result = call_tool(
+            &store,
+            None,
+            "hyphae_memory_recall",
+            &json!({"query": "nothing here"}),
+            false,
+            Some("demo-project"),
+            false,
+        );
+
+        assert!(!result.is_error);
+        assert!(result.content[0].text.contains("No memories found"));
+
+        let recall_count = store
+            .count_recall_events(Some(&session_id), Some("demo-project"), Some(0))
+            .unwrap();
+        assert_eq!(recall_count, 1);
+    }
+
+    #[test]
     fn test_stats_empty() {
         let store = test_store();
         let result = call_tool(

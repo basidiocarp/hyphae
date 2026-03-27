@@ -1,5 +1,6 @@
 mod chunk_store;
 pub mod context;
+mod feedback;
 mod helpers;
 mod memoir_store;
 mod memory_store;
@@ -1775,7 +1776,10 @@ mod tests {
         let store = test_store();
 
         // Create sessions using session_start
-        let (_id1, _started1) = store.session_start("proj_a", Some("task1")).unwrap();
+        let (id1, _started1) = store.session_start("proj_a", Some("task1")).unwrap();
+        store
+            .session_end(&id1, Some("done"), None, Some("0"))
+            .unwrap();
         let (_id2, _started2) = store.session_start("proj_a", Some("task2")).unwrap();
         let (_id3, _started3) = store.session_start("proj_b", Some("task3")).unwrap();
 

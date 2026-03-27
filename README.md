@@ -67,6 +67,8 @@ Next session:  Agent queries the "backend" memoir
 - **Two memory models** — episodic (decay-based) + semantic (knowledge graphs)
 - **RAG pipeline** — ingest files with automatic chunking, hybrid search, auto-context injection on session start
 - **Training data export** — `hyphae export-training-data --format sft|dpo|alpaca` exports memories as training JSONL for fine-tuning
+- **Session lifecycle tracking** — `hyphae session start|end|context` records structured coding sessions for later recall and operator views
+- **Structured feedback signals** — `hyphae feedback signal` records corrections, recoveries, and session outcomes for recall-to-action tuning
 - **Backup & restore** — `hyphae backup` / `hyphae restore` for database persistence and recovery
 - **Secrets scanning** — 8 regex patterns detect API keys, tokens, and passwords during memory storage with non-blocking warnings
 - **Evaluation framework** — `hyphae evaluate --days 14` measures agent improvement over time across 6 metrics
@@ -120,6 +122,20 @@ Lamella hooks capture corrections, errors, test failures, and PR reviews into Hy
 "When working with 'parsing', avoid tokens parse — resolved 3 times"
 "Test failures in 'auth': avoid null check — fixed 2 times"
 ```
+
+Hyphae also exposes a structured session lifecycle:
+
+```bash
+hyphae session start --project demo --task "refactor auth flow"
+hyphae session end --id ses_... --summary "completed refactor" --file src/auth.rs --errors 0
+hyphae session context --project demo
+hyphae feedback signal --session-id ses_... --type correction --value -1 --source cortina.post_tool_use
+```
+
+This is the bridge Cortina now uses when it turns hook activity into session
+records instead of only storing free-form summaries. Hyphae now also records
+recall events and structured outcome signals so those session results can be
+correlated later instead of living only as topic memories.
 
 ## Performance
 

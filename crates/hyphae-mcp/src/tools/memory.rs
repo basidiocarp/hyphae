@@ -45,6 +45,25 @@ fn age_indicator(mem: &Memory) -> Option<String> {
     }
 }
 
+fn log_recall_results(
+    store: &SqliteStore,
+    query: &str,
+    memory_ids: &[String],
+    project: Option<&str>,
+) {
+    let session_id = project.and_then(|name| match store.active_session_id(name) {
+        Ok(session) => session,
+        Err(e) => {
+            tracing::warn!("active_session_id failed: {e}");
+            None
+        }
+    });
+
+    if let Err(e) = store.log_recall_event(session_id.as_deref(), query, memory_ids, project) {
+        tracing::warn!("log_recall_event failed: {e}");
+    }
+}
+
 pub(crate) fn tool_store(
     store: &SqliteStore,
     embedder: Option<&dyn Embedder>,
@@ -333,6 +352,12 @@ pub(crate) fn tool_recall(
                     }
                 }
 
+                let memory_ids: Vec<String> = scored_results
+                    .iter()
+                    .map(|(mem, _)| mem.id.to_string())
+                    .collect();
+                log_recall_results(store, query, &memory_ids, project);
+
                 if scored_results.is_empty() {
                     return ToolResult::text("No memories found.".into());
                 }
@@ -496,6 +521,9 @@ pub(crate) fn tool_recall(
             tracing::warn!("update_access failed: {e}");
         }
     }
+
+    let memory_ids: Vec<String> = results.iter().map(|mem| mem.id.to_string()).collect();
+    log_recall_results(store, query, &memory_ids, project);
 
     if results.is_empty() {
         return ToolResult::text("No memories found.".into());

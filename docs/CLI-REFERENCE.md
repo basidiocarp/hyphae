@@ -33,6 +33,8 @@ All commands accept the global `--db <path>` flag to override the default databa
   - [`hyphae forget-source`](#hyphae-forget-source----remove-an-ingested-source)
   - [`hyphae search-all`](#hyphae-search-all----unified-cross-store-search)
 - [Administration and maintenance](#administration-and-maintenance)
+  - [`hyphae session`](#hyphae-session----session-lifecycle-tracking)
+  - [`hyphae feedback`](#hyphae-feedback----structured-feedback-signals)
   - [`hyphae topics`](#hyphae-topics----list-topics)
   - [`hyphae stats`](#hyphae-stats----global-statistics)
   - [`hyphae decay`](#hyphae-decay----apply-decay-manually)
@@ -594,6 +596,69 @@ hyphae search-all "auth" --limit 5
 ---
 
 ## Administration and maintenance
+
+### `hyphae session` -- Session lifecycle tracking
+
+```
+hyphae session start --project <project> [--task <task>]
+hyphae session end --id <session-id> [--summary <text>] [--file <path> ...] [--errors <count>]
+hyphae session context --project <project> [--limit <n>]
+```
+
+Use these commands when you want structured session records instead of only
+free-form memory entries. This is the session lifecycle surface Cortina can use
+to start a work session on the first meaningful event and close it on session
+stop with files changed and errors encountered.
+
+**Examples:**
+
+```bash
+# Start a session
+hyphae session start --project api --task "fix flaky auth tests"
+
+# End it with outcome metadata
+hyphae session end \
+  --id ses_01ABC... \
+  --summary "fixed auth timing issue and stabilized tests" \
+  --file src/auth.rs \
+  --file tests/auth_test.rs \
+  --errors 0
+
+# Review recent sessions
+hyphae session context --project api --limit 10
+```
+
+### `hyphae feedback` -- Structured feedback signals
+
+```
+hyphae feedback signal --session-id <session-id> --type <signal-type> --value <integer> [--source <name>] [--project <project>]
+```
+
+Use this when a runtime or hook already knows the current session and wants to
+record a structured signal instead of only storing a topic memory. This is the
+CLI surface Cortina now uses for corrections and resolved errors, while
+`hyphae session end` records the final session-success or session-failure
+signal.
+
+**Examples:**
+
+```bash
+# Record a correction
+hyphae feedback signal \
+  --session-id ses_01HY... \
+  --type correction \
+  --value -1 \
+  --source cortina.post_tool_use \
+  --project api
+
+# Record a positive recovery signal
+hyphae feedback signal \
+  --session-id ses_01HY... \
+  --type error_resolved \
+  --value 1 \
+  --source cortina.post_tool_use \
+  --project api
+```
 
 ### `hyphae topics` -- List topics
 

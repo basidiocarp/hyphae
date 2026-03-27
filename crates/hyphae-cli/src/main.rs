@@ -92,7 +92,7 @@ fn main() -> Result<()> {
             return Ok(());
         }
         Commands::Init { editor, mode } => {
-            init::run_init(editor.clone(), *mode)?;
+            init::run_init(*editor, *mode)?;
             return Ok(());
         }
         Commands::SelfUpdate { check } => {
@@ -257,6 +257,14 @@ fn main() -> Result<()> {
 
         Commands::Project(args) => {
             commands::project::dispatch(&store, args)?;
+        }
+
+        Commands::Session(args) => {
+            commands::session::dispatch(&store, args)?;
+        }
+
+        Commands::Feedback(args) => {
+            commands::feedback::dispatch(&store, args)?;
         }
 
         Commands::Bench { count } => {

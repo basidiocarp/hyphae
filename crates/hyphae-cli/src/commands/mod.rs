@@ -7,6 +7,7 @@ pub mod docs;
 pub mod doctor;
 pub mod evaluate;
 pub mod export_training;
+pub mod feedback;
 pub mod import_claude_memory;
 pub mod memoir;
 pub mod memory;
@@ -14,6 +15,7 @@ pub mod project;
 pub mod prune;
 pub mod purge;
 pub mod self_update;
+pub mod session;
 pub mod transcript;
 
 use crate::config::Config;
