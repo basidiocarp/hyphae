@@ -110,7 +110,7 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         -- Feedback loop tracking
         CREATE TABLE IF NOT EXISTS recall_events (
             id TEXT PRIMARY KEY,
-            session_id TEXT,
+            session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
             query TEXT NOT NULL,
             recalled_at TEXT NOT NULL,
             memory_ids TEXT NOT NULL,
@@ -125,7 +125,7 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
 
         CREATE TABLE IF NOT EXISTS outcome_signals (
             id TEXT PRIMARY KEY,
-            session_id TEXT,
+            session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
             signal_type TEXT NOT NULL,
             signal_value INTEGER NOT NULL,
             occurred_at TEXT NOT NULL,
@@ -574,6 +574,108 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
     }
 
+    let recall_events_has_session_fk: bool = tx
+        .query_row(
+            "SELECT COUNT(*) > 0
+             FROM pragma_foreign_key_list('recall_events')
+             WHERE \"table\" = 'sessions' AND \"from\" = 'session_id'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+    if !recall_events_has_session_fk {
+        tx.execute_batch(
+            "
+            ALTER TABLE recall_events RENAME TO recall_events_old;
+
+            CREATE TABLE recall_events (
+                id TEXT PRIMARY KEY,
+                session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+                query TEXT NOT NULL,
+                recalled_at TEXT NOT NULL,
+                memory_ids TEXT NOT NULL,
+                memory_count INTEGER NOT NULL,
+                project TEXT
+            );
+
+            INSERT INTO recall_events (id, session_id, query, recalled_at, memory_ids, memory_count, project)
+            SELECT
+                re.id,
+                CASE
+                    WHEN re.session_id IS NULL THEN NULL
+                    WHEN EXISTS (SELECT 1 FROM sessions s WHERE s.id = re.session_id) THEN re.session_id
+                    ELSE NULL
+                END,
+                re.query,
+                re.recalled_at,
+                re.memory_ids,
+                re.memory_count,
+                re.project
+            FROM recall_events_old re;
+
+            DROP TABLE recall_events_old;
+
+            CREATE INDEX IF NOT EXISTS idx_recall_events_session
+                ON recall_events(session_id);
+            CREATE INDEX IF NOT EXISTS idx_recall_events_recalled_at
+                ON recall_events(recalled_at);
+            ",
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    }
+
+    let outcome_signals_has_session_fk: bool = tx
+        .query_row(
+            "SELECT COUNT(*) > 0
+             FROM pragma_foreign_key_list('outcome_signals')
+             WHERE \"table\" = 'sessions' AND \"from\" = 'session_id'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+    if !outcome_signals_has_session_fk {
+        tx.execute_batch(
+            "
+            ALTER TABLE outcome_signals RENAME TO outcome_signals_old;
+
+            CREATE TABLE outcome_signals (
+                id TEXT PRIMARY KEY,
+                session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+                signal_type TEXT NOT NULL,
+                signal_value INTEGER NOT NULL,
+                occurred_at TEXT NOT NULL,
+                source TEXT,
+                project TEXT
+            );
+
+            INSERT INTO outcome_signals (id, session_id, signal_type, signal_value, occurred_at, source, project)
+            SELECT
+                os.id,
+                CASE
+                    WHEN os.session_id IS NULL THEN NULL
+                    WHEN EXISTS (SELECT 1 FROM sessions s WHERE s.id = os.session_id) THEN os.session_id
+                    ELSE NULL
+                END,
+                os.signal_type,
+                os.signal_value,
+                os.occurred_at,
+                os.source,
+                os.project
+            FROM outcome_signals_old os;
+
+            DROP TABLE outcome_signals_old;
+
+            CREATE INDEX IF NOT EXISTS idx_outcome_signals_session
+                ON outcome_signals(session_id);
+            CREATE INDEX IF NOT EXISTS idx_outcome_signals_occurred_at
+                ON outcome_signals(occurred_at);
+            ",
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    }
+
     tx.commit().map_err(|e| {
         HyphaeError::Database(format!("failed to commit migration transaction: {e}"))
     })?;
@@ -714,5 +816,228 @@ mod tests {
                 > 0;
             assert!(has_column, "memories table should have {column} column");
         }
+    }
+
+    #[test]
+    fn test_feedback_tables_have_session_foreign_keys() {
+        ensure_vec_init();
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        let recall_fk: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0
+                 FROM pragma_foreign_key_list('recall_events')
+                 WHERE \"table\" = 'sessions' AND \"from\" = 'session_id'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            recall_fk,
+            "recall_events.session_id should reference sessions.id"
+        );
+
+        let outcome_fk: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0
+                 FROM pragma_foreign_key_list('outcome_signals')
+                 WHERE \"table\" = 'sessions' AND \"from\" = 'session_id'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            outcome_fk,
+            "outcome_signals.session_id should reference sessions.id"
+        );
+    }
+
+    #[test]
+    fn test_init_db_migrates_feedback_tables_to_add_session_foreign_keys() {
+        ensure_vec_init();
+        let conn = Connection::open_in_memory().unwrap();
+
+        conn.execute_batch(
+            "
+            PRAGMA foreign_keys=ON;
+
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                project TEXT NOT NULL,
+                task TEXT,
+                started_at TEXT NOT NULL,
+                ended_at TEXT,
+                summary TEXT,
+                files_modified TEXT,
+                errors TEXT,
+                status TEXT NOT NULL DEFAULT 'active'
+            );
+
+            CREATE TABLE recall_events (
+                id TEXT PRIMARY KEY,
+                session_id TEXT,
+                query TEXT NOT NULL,
+                recalled_at TEXT NOT NULL,
+                memory_ids TEXT NOT NULL,
+                memory_count INTEGER NOT NULL,
+                project TEXT
+            );
+
+            CREATE TABLE outcome_signals (
+                id TEXT PRIMARY KEY,
+                session_id TEXT,
+                signal_type TEXT NOT NULL,
+                signal_value INTEGER NOT NULL,
+                occurred_at TEXT NOT NULL,
+                source TEXT,
+                project TEXT
+            );
+
+            INSERT INTO sessions (id, project, started_at, status)
+            VALUES ('ses_valid', 'demo', '2026-03-27T00:00:00Z', 'active');
+
+            INSERT INTO recall_events (id, session_id, query, recalled_at, memory_ids, memory_count, project)
+            VALUES
+                ('rec_valid', 'ses_valid', 'query', '2026-03-27T00:00:00Z', '[]', 0, 'demo'),
+                ('rec_invalid', 'ses_missing', 'query', '2026-03-27T00:00:00Z', '[]', 0, 'demo');
+
+            INSERT INTO outcome_signals (id, session_id, signal_type, signal_value, occurred_at, source, project)
+            VALUES
+                ('sig_valid', 'ses_valid', 'session_success', 2, '2026-03-27T00:00:00Z', 'test', 'demo'),
+                ('sig_invalid', 'ses_missing', 'session_failure', -2, '2026-03-27T00:00:00Z', 'test', 'demo');
+            ",
+        )
+        .unwrap();
+
+        init_db(&conn).unwrap();
+
+        let recall_invalid_session: Option<String> = conn
+            .query_row(
+                "SELECT session_id FROM recall_events WHERE id = 'rec_invalid'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(recall_invalid_session.is_none());
+
+        let outcome_invalid_session: Option<String> = conn
+            .query_row(
+                "SELECT session_id FROM outcome_signals WHERE id = 'sig_invalid'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(outcome_invalid_session.is_none());
+
+        let valid_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM recall_events WHERE session_id = 'ses_valid'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(valid_count, 1);
+    }
+
+    #[test]
+    fn test_feedback_foreign_keys_set_null_on_session_delete() {
+        ensure_vec_init();
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        init_db(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO sessions (id, project, started_at, status) VALUES (?1, ?2, ?3, 'active')",
+            ("ses_valid", "demo", "2026-03-27T00:00:00Z"),
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO recall_events (id, session_id, query, recalled_at, memory_ids, memory_count, project)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            (
+                "rec_valid",
+                "ses_valid",
+                "query",
+                "2026-03-27T00:00:00Z",
+                "[]",
+                0,
+                "demo",
+            ),
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO outcome_signals (id, session_id, signal_type, signal_value, occurred_at, source, project)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            (
+                "sig_valid",
+                "ses_valid",
+                "session_success",
+                2,
+                "2026-03-27T00:00:00Z",
+                "test",
+                "demo",
+            ),
+        )
+        .unwrap();
+
+        conn.execute("DELETE FROM sessions WHERE id = 'ses_valid'", [])
+            .unwrap();
+
+        let recall_session_id: Option<String> = conn
+            .query_row(
+                "SELECT session_id FROM recall_events WHERE id = 'rec_valid'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(recall_session_id.is_none());
+
+        let outcome_session_id: Option<String> = conn
+            .query_row(
+                "SELECT session_id FROM outcome_signals WHERE id = 'sig_valid'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(outcome_session_id.is_none());
+    }
+
+    #[test]
+    fn test_feedback_foreign_keys_reject_new_invalid_session_ids() {
+        ensure_vec_init();
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        init_db(&conn).unwrap();
+
+        let recall_result = conn.execute(
+            "INSERT INTO recall_events (id, session_id, query, recalled_at, memory_ids, memory_count, project)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            (
+                "rec_invalid",
+                "ses_missing",
+                "query",
+                "2026-03-27T00:00:00Z",
+                "[]",
+                0,
+                "demo",
+            ),
+        );
+        assert!(recall_result.is_err());
+
+        let outcome_result = conn.execute(
+            "INSERT INTO outcome_signals (id, session_id, signal_type, signal_value, occurred_at, source, project)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            (
+                "sig_invalid",
+                "ses_missing",
+                "session_failure",
+                -2,
+                "2026-03-27T00:00:00Z",
+                "test",
+                "demo",
+            ),
+        );
+        assert!(outcome_result.is_err());
     }
 }
