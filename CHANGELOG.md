@@ -2,9 +2,22 @@
 
 ## Unreleased
 
+## v0.9.3 - 2026-03-27
+
+### Added
+
+- **Feedback loop signals**: `hyphae session end` now records structured success and failure outcome signals, and recall paths can log structured recall events for later evaluation.
+- **Feedback CLI surface**: Added a `hyphae feedback signal` command for writing structured outcome signals against an existing session.
+
+### Fixed
+
+- **Feedback session integrity**: `recall_events` and `outcome_signals` now enforce real session foreign keys, with migration logic that preserves valid rows and nulls orphaned legacy session ids.
+
 ### Changed
 
 - **More platform-neutral setup guidance**: Setup docs and `hyphae init` messaging now describe supported editors and agent runtimes more generally, and clarify that `hyphae init` resolves the correct config path automatically for each integration.
+- **Structured recall tracking**: Active-session recall calls, including empty-result recalls, now emit structured recall events instead of leaving feedback analysis entirely to inferred memory writes.
+- **Active session reuse**: Hyphae now reuses the current active session per project instead of opening competing active sessions that make feedback attribution ambiguous.
 
 ## v0.9.2 - 2026-03-26
 

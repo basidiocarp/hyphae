@@ -1,6 +1,6 @@
 [package]
 name = "hyphae-mcp"
-version = "0.9.1"
+version = "0.9.3"
 edition = "2024"
 rust-version = "1.85"
 description = "MCP server for Hyphae persistent memory"
