@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## v0.9.5 - 2026-03-27
+
+### Added
+
+- **Explicit recall session identity**: `hyphae_memory_recall` now accepts `session_id` so scoped recall attribution can stay attached to the right parallel session.
+- **Structured session status**: `hyphae session status --id ...` now returns machine-readable session metadata for runtime integrations.
+
+### Fixed
+
+- **Scoped recall attribution**: explicit session-backed recall logging now validates session ownership, derives the correct project when needed, and avoids collapsing back to project-wide active-session inference.
+- **Parallel session context filtering**: CLI and MCP session context can now filter by scope so worker-specific session inspection does not bleed across active sessions.
+
 ## v0.9.4 - 2026-03-27
 
 ### Added
