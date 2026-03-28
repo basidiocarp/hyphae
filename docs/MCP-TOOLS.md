@@ -93,6 +93,7 @@ ok:01HWXYZ123456789ABCDEF
 | `topic` | string | no | -- | Filter by topic |
 | `limit` | integer | no | `5` | Max results (1-20) |
 | `keyword` | string | no | -- | Filter by exact keyword |
+| `session_id` | string | no | -- | Explicit session id from `hyphae_session_start`; use this for scoped attribution when one project has parallel sessions |
 
 **Automatic behaviors:**
 - **Auto-decay**: applies decay if >24h since last run
@@ -103,7 +104,8 @@ ok:01HWXYZ123456789ABCDEF
 {
   "query": "database choice",
   "topic": "decisions-api",
-  "limit": 3
+  "limit": 3,
+  "session_id": "ses_01ABC..."
 }
 ```
 

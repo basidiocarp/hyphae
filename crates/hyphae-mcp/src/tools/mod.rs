@@ -448,6 +448,172 @@ mod tests {
     }
 
     #[test]
+    fn test_recall_logs_to_explicit_scoped_session() {
+        let store = test_store();
+        let (worker_a, _) = store
+            .session_start_scoped("demo-project", Some("worker a"), Some("worker-a"))
+            .unwrap();
+        let (worker_b, _) = store
+            .session_start_scoped("demo-project", Some("worker b"), Some("worker-b"))
+            .unwrap();
+
+        call_tool(
+            &store,
+            None,
+            "hyphae_memory_store",
+            &json!({"topic": "demo", "content": "scoped recall target"}),
+            false,
+            Some("demo-project"),
+            false,
+        );
+
+        let result = call_tool(
+            &store,
+            None,
+            "hyphae_memory_recall",
+            &json!({"query": "scoped recall", "session_id": worker_a}),
+            false,
+            Some("demo-project"),
+            false,
+        );
+
+        assert!(!result.is_error);
+
+        let worker_a_count = store
+            .count_recall_events(Some(&worker_a), Some("demo-project"), Some(1))
+            .unwrap();
+        let worker_b_count = store
+            .count_recall_events(Some(&worker_b), Some("demo-project"), Some(1))
+            .unwrap();
+
+        assert_eq!(worker_a_count, 1);
+        assert_eq!(worker_b_count, 0);
+    }
+
+    #[test]
+    fn test_recall_prefers_explicit_session_over_project_fallback() {
+        let store = test_store();
+        let (older_session, _) = store
+            .session_start_scoped("demo-project", Some("worker a"), Some("worker-a"))
+            .unwrap();
+        let (newer_session, _) = store
+            .session_start_scoped("demo-project", Some("worker b"), Some("worker-b"))
+            .unwrap();
+
+        call_tool(
+            &store,
+            None,
+            "hyphae_memory_store",
+            &json!({"topic": "demo", "content": "prefer explicit session"}),
+            false,
+            Some("demo-project"),
+            false,
+        );
+
+        let result = call_tool(
+            &store,
+            None,
+            "hyphae_memory_recall",
+            &json!({"query": "prefer explicit", "session_id": older_session}),
+            false,
+            Some("demo-project"),
+            false,
+        );
+
+        assert!(!result.is_error);
+
+        let older_count = store
+            .count_recall_events(Some(&older_session), Some("demo-project"), Some(1))
+            .unwrap();
+        let newer_count = store
+            .count_recall_events(Some(&newer_session), Some("demo-project"), Some(1))
+            .unwrap();
+
+        assert_eq!(older_count, 1);
+        assert_eq!(newer_count, 0);
+    }
+
+    #[test]
+    fn test_recall_rejects_unknown_explicit_session() {
+        let store = test_store();
+
+        let result = call_tool(
+            &store,
+            None,
+            "hyphae_memory_recall",
+            &json!({"query": "missing session", "session_id": "ses_missing"}),
+            false,
+            Some("demo-project"),
+            false,
+        );
+
+        assert!(result.is_error);
+        assert!(result.content[0].text.contains("invalid session_id"));
+    }
+
+    #[test]
+    fn test_recall_rejects_cross_project_explicit_session() {
+        let store = test_store();
+        let (session_id, _) = store
+            .session_start_scoped("demo-project", Some("worker a"), Some("worker-a"))
+            .unwrap();
+
+        let result = call_tool(
+            &store,
+            None,
+            "hyphae_memory_recall",
+            &json!({"query": "wrong project", "session_id": session_id}),
+            false,
+            Some("other-project"),
+            false,
+        );
+
+        assert!(result.is_error);
+        assert!(result.content[0].text.contains("invalid session_id"));
+    }
+
+    #[test]
+    fn test_recall_uses_explicit_session_project_when_context_is_missing() {
+        let store = test_store();
+        let (session_id, _) = store
+            .session_start_scoped("demo-project", Some("worker a"), Some("worker-a"))
+            .unwrap();
+
+        call_tool(
+            &store,
+            None,
+            "hyphae_memory_store",
+            &json!({"topic": "demo", "content": "session scoped result"}),
+            false,
+            Some("demo-project"),
+            false,
+        );
+        call_tool(
+            &store,
+            None,
+            "hyphae_memory_store",
+            &json!({"topic": "demo", "content": "other project result"}),
+            false,
+            Some("other-project"),
+            false,
+        );
+
+        let result = call_tool(
+            &store,
+            None,
+            "hyphae_memory_recall",
+            &json!({"query": "result", "session_id": session_id}),
+            false,
+            None,
+            false,
+        );
+
+        assert!(!result.is_error);
+        assert!(result.content[0].text.contains("session scoped result"));
+        assert!(!result.content[0].text.contains("other project result"));
+    }
+
+    #[test]
     fn test_stats_empty() {
         let store = test_store();
         let result = call_tool(

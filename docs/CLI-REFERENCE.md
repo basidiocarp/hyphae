@@ -602,7 +602,8 @@ hyphae search-all "auth" --limit 5
 ```
 hyphae session start --project <project> [--task <task>] [--scope <scope>]
 hyphae session end --id <session-id> [--summary <text>] [--file <path> ...] [--errors <count>]
-hyphae session context --project <project> [--limit <n>]
+hyphae session context --project <project> [--scope <scope>] [--limit <n>]
+hyphae session status --id <session-id>
 ```
 
 Use these commands when you want structured session records instead of only
@@ -631,6 +632,12 @@ hyphae session end \
 
 # Review recent sessions
 hyphae session context --project api --limit 10
+
+# Review only one worker/runtime lane
+hyphae session context --project api --scope worker-a --limit 10
+
+# Read one session as structured JSON
+hyphae session status --id ses_01ABC...
 ```
 
 ### `hyphae feedback` -- Structured feedback signals

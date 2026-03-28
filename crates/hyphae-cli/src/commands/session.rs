@@ -46,9 +46,19 @@ pub(crate) enum SessionCommand {
         /// Project name to query
         #[arg(short, long)]
         project: String,
+        /// Optional worker or runtime scope filter
+        #[arg(long)]
+        scope: Option<String>,
         /// Maximum number of sessions to show
         #[arg(short, long, default_value = "5")]
         limit: i64,
+    },
+
+    /// Show structured status for one session id
+    Status {
+        /// Session ID returned by `hyphae session start`
+        #[arg(short = 'i', long)]
+        id: String,
     },
 }
 
@@ -65,7 +75,12 @@ pub(crate) fn dispatch(store: &SqliteStore, args: SessionArgs) -> Result<()> {
             file,
             errors,
         } => cmd_end(store, &id, summary.as_deref(), &file, errors),
-        SessionCommand::Context { project, limit } => cmd_context(store, &project, limit),
+        SessionCommand::Context {
+            project,
+            scope,
+            limit,
+        } => cmd_context(store, &project, scope.as_deref(), limit),
+        SessionCommand::Status { id } => cmd_status(store, &id),
     }
 }
 
@@ -118,11 +133,15 @@ fn cmd_end(
     Ok(())
 }
 
-fn cmd_context(store: &SqliteStore, project: &str, limit: i64) -> Result<()> {
-    let sessions = store.session_context(project, limit)?;
+fn cmd_context(store: &SqliteStore, project: &str, scope: Option<&str>, limit: i64) -> Result<()> {
+    let sessions = store.session_context_scoped(project, scope, limit)?;
 
     if sessions.is_empty() {
-        println!("No sessions found for project {project}.");
+        if let Some(scope) = scope {
+            println!("No sessions found for project {project} with scope {scope}.");
+        } else {
+            println!("No sessions found for project {project}.");
+        }
         return Ok(());
     }
 
@@ -145,6 +164,30 @@ fn cmd_context(store: &SqliteStore, project: &str, limit: i64) -> Result<()> {
         );
     }
 
+    Ok(())
+}
+
+fn cmd_status(store: &SqliteStore, session_id: &str) -> Result<()> {
+    let Some(session) = store.session_status(session_id)? else {
+        anyhow::bail!("no session with id '{session_id}'");
+    };
+
+    println!(
+        "{}",
+        serde_json::json!({
+            "session_id": session.id,
+            "project": session.project,
+            "scope": session.scope,
+            "task": session.task,
+            "started_at": session.started_at,
+            "ended_at": session.ended_at,
+            "summary": session.summary,
+            "files_modified": session.files_modified,
+            "errors": session.errors,
+            "status": session.status,
+            "active": session.status == "active",
+        })
+    );
     Ok(())
 }
 
@@ -236,5 +279,56 @@ mod tests {
             .count_outcome_signals(Some(&session_id), Some("session_failure"), Some(-2))
             .unwrap();
         assert_eq!(signal_count, 1);
+    }
+
+    #[test]
+    fn test_session_context_scope_filters_parallel_sessions() {
+        let store = test_store();
+
+        cmd_start(&store, "demo-project", Some("worker one"), Some("worker-a")).unwrap();
+        cmd_start(&store, "demo-project", Some("worker two"), Some("worker-b")).unwrap();
+
+        let sessions = store
+            .session_context_scoped("demo-project", Some("worker-a"), 5)
+            .unwrap();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].scope.as_deref(), Some("worker-a"));
+    }
+
+    #[test]
+    fn test_dispatch_context_with_scope_succeeds() {
+        let store = test_store();
+
+        cmd_start(&store, "demo-project", Some("worker one"), Some("worker-a")).unwrap();
+
+        let args = SessionArgs {
+            command: SessionCommand::Context {
+                project: "demo-project".to_string(),
+                scope: Some("worker-a".to_string()),
+                limit: 5,
+            },
+        };
+
+        let result = dispatch(&store, args);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_cmd_status_succeeds_for_known_session() {
+        let store = test_store();
+        let (session_id, _) = store
+            .session_start_scoped("demo-project", Some("worker one"), Some("worker-a"))
+            .unwrap();
+
+        let result = cmd_status(&store, &session_id);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_cmd_status_fails_for_unknown_session() {
+        let store = test_store();
+        let result = cmd_status(&store, "ses_missing");
+        assert!(result.is_err());
     }
 }

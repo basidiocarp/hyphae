@@ -132,19 +132,30 @@ impl SqliteStore {
 
     /// Get recent sessions for a project.
     pub fn session_context(&self, project: &str, limit: i64) -> HyphaeResult<Vec<Session>> {
+        self.session_context_scoped(project, None, limit)
+    }
+
+    /// Get recent sessions for a project, optionally filtered to a worker/runtime scope.
+    pub fn session_context_scoped(
+        &self,
+        project: &str,
+        scope: Option<&str>,
+        limit: i64,
+    ) -> HyphaeResult<Vec<Session>> {
         let mut stmt = self
             .conn
             .prepare(
                 "SELECT id, project, scope, task, started_at, ended_at, summary, files_modified, errors, status
                  FROM sessions
                  WHERE project = ?1
+                   AND (?2 IS NULL OR scope = ?2)
                  ORDER BY started_at DESC
-                 LIMIT ?2",
+                 LIMIT ?3",
             )
             .map_err(|e| HyphaeError::Database(format!("failed to prepare query: {e}")))?;
 
         let rows = stmt
-            .query_map(params![project, limit], |row| {
+            .query_map(params![project, scope, limit], |row| {
                 Ok(Session {
                     id: row.get(0)?,
                     project: row.get(1)?,
@@ -162,6 +173,33 @@ impl SqliteStore {
 
         let sessions: Vec<Session> = rows.filter_map(Result::ok).collect();
         Ok(sessions)
+    }
+
+    /// Look up one session by id.
+    pub fn session_status(&self, session_id: &str) -> HyphaeResult<Option<Session>> {
+        self.conn
+            .query_row(
+                "SELECT id, project, scope, task, started_at, ended_at, summary, files_modified, errors, status
+                 FROM sessions
+                 WHERE id = ?1",
+                params![session_id],
+                |row| {
+                    Ok(Session {
+                        id: row.get(0)?,
+                        project: row.get(1)?,
+                        scope: row.get(2)?,
+                        task: row.get(3)?,
+                        started_at: row.get(4)?,
+                        ended_at: row.get(5)?,
+                        summary: row.get(6)?,
+                        files_modified: row.get(7)?,
+                        errors: row.get(8)?,
+                        status: row.get(9)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(|e| HyphaeError::Database(format!("failed to query session status: {e}")))
     }
 }
 
@@ -251,5 +289,65 @@ mod tests {
         assert_eq!(sessions.len(), 2);
         assert_eq!(sessions[0].status, "active");
         assert_eq!(sessions[1].status, "active");
+    }
+
+    #[test]
+    fn test_session_context_scoped_filters_parallel_workers() {
+        let store = test_store();
+        let (worker_a, _) = store
+            .session_start_scoped("demo", Some("first"), Some("worker-a"))
+            .unwrap();
+        let (worker_b, _) = store
+            .session_start_scoped("demo", Some("second"), Some("worker-b"))
+            .unwrap();
+
+        let worker_a_sessions = store
+            .session_context_scoped("demo", Some("worker-a"), 10)
+            .unwrap();
+        let worker_b_sessions = store
+            .session_context_scoped("demo", Some("worker-b"), 10)
+            .unwrap();
+
+        assert_eq!(worker_a_sessions.len(), 1);
+        assert_eq!(worker_b_sessions.len(), 1);
+        assert_eq!(worker_a_sessions[0].id, worker_a);
+        assert_eq!(worker_b_sessions[0].id, worker_b);
+    }
+
+    #[test]
+    fn test_session_status_returns_one_session() {
+        let store = test_store();
+        let (session_id, _) = store
+            .session_start_scoped("demo", Some("first"), Some("worker-a"))
+            .unwrap();
+
+        let session = store.session_status(&session_id).unwrap().unwrap();
+        assert_eq!(session.id, session_id);
+        assert_eq!(session.project, "demo");
+        assert_eq!(session.scope.as_deref(), Some("worker-a"));
+        assert_eq!(session.status, "active");
+    }
+
+    #[test]
+    fn test_session_status_returns_completed_session() {
+        let store = test_store();
+        let (session_id, _) = store
+            .session_start_scoped("demo", Some("first"), Some("worker-a"))
+            .unwrap();
+        store
+            .session_end(&session_id, Some("done"), None, Some("0"))
+            .unwrap();
+
+        let session = store.session_status(&session_id).unwrap().unwrap();
+        assert_eq!(session.id, session_id);
+        assert_eq!(session.status, "completed");
+        assert!(session.ended_at.is_some());
+    }
+
+    #[test]
+    fn test_session_status_returns_none_for_unknown_session() {
+        let store = test_store();
+        let session = store.session_status("ses_missing").unwrap();
+        assert!(session.is_none());
     }
 }

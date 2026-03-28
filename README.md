@@ -129,16 +129,22 @@ Hyphae also exposes a structured session lifecycle:
 hyphae session start --project demo --task "refactor auth flow"
 hyphae session end --id ses_... --summary "completed refactor" --file src/auth.rs --errors 0
 hyphae session context --project demo
+hyphae session status --id ses_...
 hyphae feedback signal --session-id ses_... --type correction --value -1 --source cortina.post_tool_use
 
 # Parallel runtimes can opt into separate active sessions per project.
 hyphae session start --project demo --scope worker-a --task "run validation"
+hyphae session context --project demo --scope worker-a
 ```
 
 This is the bridge Cortina now uses when it turns hook activity into session
 records instead of only storing free-form summaries. Hyphae now also records
 recall events and structured outcome signals so those session results can be
-correlated later instead of living only as topic memories.
+correlated later instead of living only as topic memories. MCP callers can also
+pass an explicit `session_id` to `hyphae_memory_recall` so recall attribution
+stays attached to the right scoped session. Cortina now validates cached session
+state with the structured `hyphae session status` surface instead of scraping
+human-readable `session context` output.
 
 ## Performance
 

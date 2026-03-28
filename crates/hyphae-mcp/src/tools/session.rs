@@ -94,9 +94,10 @@ pub(crate) fn tool_session_context(store: &SqliteStore, args: &Value) -> ToolRes
         Ok(p) => p,
         Err(e) => return e,
     };
+    let scope = get_str(args, "scope");
     let limit = get_bounded_i64(args, "limit", 5, 1, 50);
 
-    match store.session_context(project, limit) {
+    match store.session_context_scoped(project, scope, limit) {
         Ok(sessions) => {
             let session_values: Vec<Value> = sessions
                 .iter()
@@ -119,6 +120,7 @@ pub(crate) fn tool_session_context(store: &SqliteStore, args: &Value) -> ToolRes
             ToolResult::text(
                 json!({
                     "project": project,
+                    "scope": scope,
                     "sessions": session_values,
                     "count": count,
                 })
@@ -233,6 +235,32 @@ mod tests {
             "completed"
         );
         assert!(ctx_parsed["sessions"][0]["scope"].is_null());
+    }
+
+    #[test]
+    fn test_session_context_with_scope_filter() {
+        let store = test_store();
+
+        let worker_a = tool_session_start(
+            &store,
+            &json!({"project": "ctx-proj", "task": "worker a", "scope": "worker-a"}),
+        );
+        let worker_b = tool_session_start(
+            &store,
+            &json!({"project": "ctx-proj", "task": "worker b", "scope": "worker-b"}),
+        );
+        assert!(!worker_a.is_error);
+        assert!(!worker_b.is_error);
+
+        let ctx =
+            tool_session_context(&store, &json!({"project": "ctx-proj", "scope": "worker-a"}));
+        assert!(!ctx.is_error);
+        let ctx_parsed: Value = serde_json::from_str(&ctx.content[0].text).unwrap();
+        assert_eq!(ctx_parsed["count"].as_u64().unwrap(), 1);
+        assert_eq!(
+            ctx_parsed["sessions"][0]["scope"].as_str().unwrap(),
+            "worker-a"
+        );
     }
 
     #[test]

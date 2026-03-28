@@ -49,14 +49,17 @@ fn log_recall_results(
     store: &SqliteStore,
     query: &str,
     memory_ids: &[String],
+    explicit_session_id: Option<&str>,
     project: Option<&str>,
 ) {
-    let session_id = project.and_then(|name| match store.active_session_id(name) {
-        Ok(session) => session,
-        Err(e) => {
-            tracing::warn!("active_session_id failed: {e}");
-            None
-        }
+    let session_id = explicit_session_id.map(ToOwned::to_owned).or_else(|| {
+        project.and_then(|name| match store.active_session_id(name) {
+            Ok(session) => session,
+            Err(e) => {
+                tracing::warn!("active_session_id failed: {e}");
+                None
+            }
+        })
     });
 
     if let Err(e) = store.log_recall_event(session_id.as_deref(), query, memory_ids, project) {
@@ -282,10 +285,21 @@ pub(crate) fn tool_recall(
     let offset = get_bounded_i64(args, "offset", 0, 0, 10000) as usize;
     let topic = get_str(args, "topic");
     let keyword = get_str(args, "keyword");
+    let session_id = get_str(args, "session_id");
     let code_context = args
         .get("code_context")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+
+    let session_project = if let Some(session_id) = session_id {
+        match store.feedback_session_project(session_id, project) {
+            Ok(project_name) => Some(project_name),
+            Err(e) => return ToolResult::error(format!("invalid session_id: {e}")),
+        }
+    } else {
+        None
+    };
+    let project = session_project.as_deref().or(project);
 
     // ─────────────────────────────────────────────────────────────────────────────
     // Compute auto-consolidation hint (if topic filter is used)
@@ -356,7 +370,7 @@ pub(crate) fn tool_recall(
                     .iter()
                     .map(|(mem, _)| mem.id.to_string())
                     .collect();
-                log_recall_results(store, query, &memory_ids, project);
+                log_recall_results(store, query, &memory_ids, session_id, project);
 
                 if scored_results.is_empty() {
                     return ToolResult::text("No memories found.".into());
@@ -523,7 +537,7 @@ pub(crate) fn tool_recall(
     }
 
     let memory_ids: Vec<String> = results.iter().map(|mem| mem.id.to_string()).collect();
-    log_recall_results(store, query, &memory_ids, project);
+    log_recall_results(store, query, &memory_ids, session_id, project);
 
     if results.is_empty() {
         return ToolResult::text("No memories found.".into());

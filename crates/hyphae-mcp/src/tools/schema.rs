@@ -79,6 +79,10 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                         "minimum": 0,
                         "description": "Number of results to skip (for pagination)"
                     },
+                    "session_id": {
+                        "type": "string",
+                        "description": "Optional explicit session ID from hyphae_session_start. Prefer this when multiple scoped sessions may be active for one project."
+                    },
                     "code_context": {
                         "type": "boolean",
                         "default": false,
@@ -825,6 +829,10 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                 "project": {
                     "type": "string",
                     "description": "Project identifier to query sessions for"
+                },
+                "scope": {
+                    "type": "string",
+                    "description": "Optional worker or runtime scope filter for parallel sessions in the same project"
                 },
                 "limit": {
                     "type": "integer",

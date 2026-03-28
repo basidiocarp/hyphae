@@ -182,6 +182,15 @@ impl SqliteStore {
             .map_err(|e| HyphaeError::Database(format!("failed to query active session: {e}")))
     }
 
+    pub fn feedback_session_project(
+        &self,
+        session_id: &str,
+        project: Option<&str>,
+    ) -> HyphaeResult<String> {
+        self.resolve_feedback_project(Some(session_id), project)?
+            .ok_or_else(|| HyphaeError::NotFound(format!("session '{session_id}'")))
+    }
+
     pub fn log_recall_event(
         &self,
         session_id: Option<&str>,
@@ -664,6 +673,22 @@ mod tests {
         assert_eq!(row.project.as_deref(), Some("demo"));
         assert!(!row.id.is_empty());
         assert!(!row.recalled_at.is_empty());
+    }
+
+    #[test]
+    fn test_feedback_session_project_rejects_unknown_session() {
+        let store = test_store();
+        let result = store.feedback_session_project("ses_missing", None);
+        assert!(matches!(result, Err(HyphaeError::NotFound(_))));
+    }
+
+    #[test]
+    fn test_feedback_session_project_rejects_project_mismatch() {
+        let store = test_store();
+        let (session_id, _) = store.session_start("demo", Some("feedback")).unwrap();
+
+        let result = store.feedback_session_project(&session_id, Some("other-project"));
+        assert!(matches!(result, Err(HyphaeError::Validation(_))));
     }
 
     #[test]
