@@ -108,7 +108,7 @@ Training pair:
 
 Topic: `corrections`
 
-Every time the agent writes code then immediately edits it, that's a (rejected, chosen) pair. The `capture-corrections.js` hook records both versions.
+Every time the agent writes code then immediately edits it, that's a (rejected, chosen) pair. In the current stack, Cortina records the structured correction signal and Hyphae stores the correction memory used for DPO export.
 
 ```mermaid
 flowchart LR
@@ -145,9 +145,9 @@ After N agent sessions:
 
 You need roughly 1,000 SFT pairs for a useful fine-tune and 500 DPO pairs for preference learning. That's about 200-500 active coding sessions.
 
-## Export Format (Planned)
+## Export Format
 
-The `hyphae export-training-data` command (not yet built) would produce:
+The `hyphae export-training` command produces:
 
 **SFT format (JSONL):**
 ```jsonl
@@ -164,7 +164,7 @@ The `hyphae export-training-data` command (not yet built) would produce:
 {"instruction": "...", "input": "", "output": "..."}
 ```
 
-Until the export tool exists, you can query the database directly:
+If you need bespoke exports beyond `hyphae export-training`, you can query the database directly:
 
 ```sql
 -- SFT pairs from decisions

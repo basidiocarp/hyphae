@@ -53,33 +53,36 @@ struct ToolCallCtx<'a> {
 fn initial_context(store: &SqliteStore, project: Option<&str>) -> String {
     use hyphae_core::MemoryStore;
 
-    let proj = project.unwrap_or("default");
-
     // ─────────────────────────────────────────────────────────────────────────────
-    // Session Context (query memories table with session/{project} topic first,
-    // then fallback to sessions table if no memories found)
+    // Session Context (query the structured sessions table first, then fallback
+    // to compatibility session/{project} memories if needed)
     // ─────────────────────────────────────────────────────────────────────────────
     let mut session_summaries = Vec::new();
 
-    // Primary: query session/{project} topic in memories table
-    let session_topic = format!("session/{proj}");
-    if let Ok(session_memories) = store.get_by_topic(&session_topic, project) {
-        for m in session_memories.iter().take(3) {
-            session_summaries.push(m.summary.clone());
-        }
-    }
-
-    // Fallback: query sessions table if no memories found
-    if session_summaries.is_empty() {
-        let session_ctx = store.session_context(proj, 3).unwrap_or_default();
-        if !session_ctx.is_empty() {
-            for s in &session_ctx {
-                if let Some(summary) = &s.summary {
-                    session_summaries.push(summary.clone());
-                }
+    let session_ctx = match project {
+        Some(proj) => store.session_context(proj, 3).unwrap_or_default(),
+        None => store.session_context_all(3).unwrap_or_default(),
+    };
+    if !session_ctx.is_empty() {
+        for s in &session_ctx {
+            if let Some(summary) = &s.summary {
+                session_summaries.push(summary.clone());
             }
         }
     }
+
+    if session_summaries.is_empty()
+        && let Some(proj) = project
+    {
+        let session_topic = format!("session/{proj}");
+        if let Ok(session_memories) = store.get_by_topic(&session_topic, project) {
+            for m in session_memories.iter().take(3) {
+                session_summaries.push(m.summary.clone());
+            }
+        }
+    }
+
+    let proj = project.unwrap_or("default");
 
     // Get top memories for the project context topic
     let project_topic = format!("context/{proj}");
@@ -412,6 +415,18 @@ mod tests {
         assert_eq!(result["serverInfo"]["name"], SERVER_NAME);
         assert!(result["capabilities"]["tools"].is_object());
         assert!(result["instructions"].as_str().unwrap().contains("Hyphae"));
+    }
+
+    #[test]
+    fn test_initial_context_without_project_uses_structured_sessions() {
+        let store = SqliteStore::in_memory().unwrap();
+        let (session_id, _) = store.session_start("proj-a", Some("login flow")).unwrap();
+        store
+            .session_end(&session_id, Some("Implemented login flow"), None, Some("0"))
+            .unwrap();
+
+        let ctx = initial_context(&store, None);
+        assert!(ctx.contains("Implemented login flow"));
     }
 
     #[test]

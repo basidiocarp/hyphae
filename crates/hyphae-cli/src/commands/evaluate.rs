@@ -1,65 +1,5 @@
 use anyhow::Result;
-use chrono::Utc;
-use hyphae_core::MemoryStore;
-use hyphae_store::SqliteStore;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Evaluation Metrics Structure
-// ─────────────────────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone)]
-struct EvaluationWindow {
-    error_count: usize,
-    correction_count: usize,
-    resolved_count: usize,
-    failed_test_count: usize,
-    resolved_test_count: usize,
-    #[allow(dead_code)]
-    total_session_length: usize,
-    session_count: usize,
-    recalled_memory_count: usize,
-}
-
-impl EvaluationWindow {
-    fn error_rate(&self) -> f64 {
-        if self.session_count == 0 {
-            return 0.0;
-        }
-        self.error_count as f64 / self.session_count as f64
-    }
-
-    fn correction_rate(&self) -> f64 {
-        if self.session_count == 0 {
-            return 0.0;
-        }
-        self.correction_count as f64 / self.session_count as f64
-    }
-
-    fn resolution_rate(&self) -> f64 {
-        let total = self.error_count + self.resolved_count;
-        if total == 0 {
-            return 0.0;
-        }
-        self.resolved_count as f64 / total as f64
-    }
-
-    fn test_fix_rate(&self) -> f64 {
-        let total = self.failed_test_count + self.resolved_test_count;
-        if total == 0 {
-            return 0.0;
-        }
-        self.resolved_test_count as f64 / total as f64
-    }
-
-    fn memory_utilization(&self) -> f64 {
-        // For evaluation purposes, we approximate memory utilization
-        // as the ratio of memories that were accessed (inferred from count)
-        if self.session_count == 0 {
-            return 0.0;
-        }
-        (self.recalled_memory_count as f64 / (self.recalled_memory_count + 5) as f64) * 100.0
-    }
-}
+use hyphae_store::{EvaluationWindow, SqliteStore, collect_evaluation_window};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Trend Detection
@@ -105,114 +45,18 @@ fn calculate_trend(previous: f64, recent: f64, lower_is_better: bool) -> (Trend,
     (trend, delta.abs())
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Data Collection
-// ─────────────────────────────────────────────────────────────────────────────
-
-fn get_memories_in_window(
-    store: &SqliteStore,
-    topic_pattern: &str,
-    days_ago_start: i64,
-    days_ago_end: i64,
-    project: Option<&str>,
-) -> Result<Vec<hyphae_core::Memory>> {
-    // Get all memories in the topic and filter by created_at
-    let all_memories = store.get_by_topic(topic_pattern, project)?;
-
-    let cutoff_start = Utc::now()
-        .checked_sub_signed(chrono::Duration::days(days_ago_start))
-        .unwrap_or(Utc::now());
-    let cutoff_end = Utc::now()
-        .checked_sub_signed(chrono::Duration::days(days_ago_end))
-        .unwrap_or(Utc::now());
-
-    let filtered = all_memories
-        .into_iter()
-        .filter(|m| m.created_at >= cutoff_end && m.created_at <= cutoff_start)
-        .collect();
-
-    Ok(filtered)
-}
-
 fn collect_window_data(
     store: &SqliteStore,
     days_ago_start: i64,
     days_ago_end: i64,
     project: Option<&str>,
 ) -> Result<EvaluationWindow> {
-    // Count errors in the window
-    let errors = get_memories_in_window(
+    Ok(collect_evaluation_window(
         store,
-        "errors/active",
         days_ago_start,
         days_ago_end,
         project,
-    )?;
-    let error_count = errors.len();
-
-    // Count corrections
-    let corrections =
-        get_memories_in_window(store, "corrections", days_ago_start, days_ago_end, project)?;
-    let correction_count = corrections.len();
-
-    // Count resolved errors
-    let resolved = get_memories_in_window(
-        store,
-        "errors/resolved",
-        days_ago_start,
-        days_ago_end,
-        project,
-    )?;
-    let resolved_count = resolved.len();
-
-    // Count failed tests
-    let failed_tests =
-        get_memories_in_window(store, "tests/failed", days_ago_start, days_ago_end, project)?;
-    let failed_test_count = failed_tests.len();
-
-    // Count resolved tests
-    let resolved_tests = get_memories_in_window(
-        store,
-        "tests/resolved",
-        days_ago_start,
-        days_ago_end,
-        project,
-    )?;
-    let resolved_test_count = resolved_tests.len();
-
-    // Count sessions in the window
-    let proj_name = project.unwrap_or("default");
-    let session_topic = format!("session/{}", proj_name);
-    let sessions =
-        get_memories_in_window(store, &session_topic, days_ago_start, days_ago_end, project)?;
-    let session_count = sessions.len();
-
-    // Calculate total session length (proxy for complexity)
-    let total_session_length: usize = sessions.iter().map(|s| s.summary.len()).sum();
-
-    // Count memories with access_count > 0 (recalled)
-    let all_memories: Vec<hyphae_core::Memory> = {
-        let topics = store.list_topics(project)?;
-        let mut all = Vec::new();
-        for (t, _) in &topics {
-            let mems = store.get_by_topic(t, project)?;
-            all.extend(mems);
-        }
-        all
-    };
-
-    let recalled_memory_count = all_memories.iter().filter(|m| m.access_count > 0).count();
-
-    Ok(EvaluationWindow {
-        error_count,
-        correction_count,
-        resolved_count,
-        failed_test_count,
-        resolved_test_count,
-        total_session_length,
-        session_count,
-        recalled_memory_count,
-    })
+    )?)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -227,6 +71,7 @@ pub(crate) fn cmd_evaluate(store: &SqliteStore, days: i64, project: Option<Strin
     }
 
     let midpoint = days / 2;
+    let previous_window_days = days - midpoint;
 
     // Collect data for both windows
     let recent_window = collect_window_data(store, 0, midpoint, project_ref)?;
@@ -236,7 +81,7 @@ pub(crate) fn cmd_evaluate(store: &SqliteStore, days: i64, project: Option<Strin
     if recent_window.session_count < 1 && previous_window.session_count < 1 {
         println!("Insufficient data: no sessions found in the evaluation window");
         println!(
-            "Metrics require at least 1 session per window. Try extending --days or checking that session memories exist."
+            "Metrics require at least 1 session per window. Try extending --days or checking that structured sessions are being recorded."
         );
         return Ok(());
     }
@@ -269,7 +114,7 @@ pub(crate) fn cmd_evaluate(store: &SqliteStore, days: i64, project: Option<Strin
     );
 
     // Print report header
-    let proj_name = project_ref.unwrap_or("default");
+    let proj_name = project_ref.unwrap_or("all projects");
     println!("\nAgent Evaluation Report (last {days} days)");
     println!("Project: {}", proj_name);
     println!();
@@ -277,12 +122,14 @@ pub(crate) fn cmd_evaluate(store: &SqliteStore, days: i64, project: Option<Strin
     // Print metrics table
     println!(
         "{:<25} {:>14} {:>14} Trend",
-        "Metric", "Previous {}", "Recent {}"
+        "Metric",
+        format!("Previous {}d", previous_window_days),
+        format!("Recent {}d", midpoint)
     );
     println!(
         "{:<25} {:>14} {:>14} {}",
         "-".repeat(25),
-        format!("{}-d", midpoint),
+        format!("{}-d", previous_window_days),
         format!("{}-d", midpoint),
         "-".repeat(30)
     );
@@ -381,5 +228,142 @@ fn format_trend_with_pct(trend: Trend, pct: f64, lower_is_better: bool) -> Strin
             }
         }
         Trend::Stable => "→ stable".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hyphae_core::MemoryStore;
+
+    fn test_store() -> SqliteStore {
+        SqliteStore::in_memory().expect("in-memory store")
+    }
+
+    #[test]
+    fn test_collect_window_data_prefers_structured_sessions_and_signals() {
+        let store = test_store();
+        let (session_id, _) = store
+            .session_start("demo-project", Some("evaluate structured path"))
+            .unwrap();
+
+        let memory = hyphae_core::Memory::builder(
+            "context/demo-project".to_string(),
+            "recalled memory".to_string(),
+            hyphae_core::Importance::Medium,
+        )
+        .project("demo-project".to_string())
+        .build();
+        let memory_id = store.store(memory).unwrap();
+
+        store
+            .log_recall_event(
+                Some(&session_id),
+                "structured recall",
+                &[memory_id.to_string()],
+                Some("demo-project"),
+            )
+            .unwrap();
+        store
+            .log_outcome_signal(
+                Some(&session_id),
+                "correction",
+                -1,
+                Some("cortina.post_tool_use"),
+                Some("demo-project"),
+            )
+            .unwrap();
+        store
+            .log_outcome_signal(
+                Some(&session_id),
+                "test_passed",
+                2,
+                Some("cortina.post_tool_use"),
+                Some("demo-project"),
+            )
+            .unwrap();
+        store
+            .session_end(&session_id, Some("done"), None, Some("0"))
+            .unwrap();
+
+        let window = collect_window_data(&store, 0, 1, Some("demo-project")).unwrap();
+
+        assert_eq!(window.session_count, 1);
+        assert_eq!(window.correction_count, 1);
+        assert_eq!(window.resolved_test_count, 1);
+        assert_eq!(window.recalled_memory_count, 1);
+    }
+
+    #[test]
+    fn test_collect_window_data_falls_back_to_legacy_session_memories() {
+        let store = test_store();
+        let session_memory = hyphae_core::Memory::builder(
+            "session/demo-project".to_string(),
+            "Session completed. legacy summary".to_string(),
+            hyphae_core::Importance::Medium,
+        )
+        .project("demo-project".to_string())
+        .build();
+        store.store(session_memory).unwrap();
+
+        let window = collect_window_data(&store, 0, 1, Some("demo-project")).unwrap();
+
+        assert_eq!(window.session_count, 1);
+        assert!(window.total_session_length > 0);
+    }
+
+    #[test]
+    fn test_collect_window_data_without_project_uses_all_structured_sessions() {
+        let store = test_store();
+
+        let (first_session, _) = store.session_start("project-a", Some("session a")).unwrap();
+        store
+            .session_end(&first_session, Some("done a"), None, Some("0"))
+            .unwrap();
+
+        let (second_session, _) = store.session_start("project-b", Some("session b")).unwrap();
+        store
+            .log_outcome_signal(
+                Some(&second_session),
+                "correction",
+                -1,
+                Some("cortina.post_tool_use"),
+                Some("project-b"),
+            )
+            .unwrap();
+        store
+            .session_end(&second_session, Some("done b"), None, Some("0"))
+            .unwrap();
+
+        let window = collect_window_data(&store, 0, 1, None).unwrap();
+
+        assert_eq!(window.session_count, 2);
+        assert_eq!(window.correction_count, 1);
+    }
+
+    #[test]
+    fn test_collect_window_data_preserves_legacy_counts_in_mixed_mode() {
+        let store = test_store();
+
+        let (session_id, _) = store
+            .session_start("demo-project", Some("structured session"))
+            .unwrap();
+        store
+            .session_end(&session_id, Some("done"), None, Some("0"))
+            .unwrap();
+
+        let legacy_session = hyphae_core::Memory::builder(
+            "session/demo-project".to_string(),
+            "Session completed. legacy summary".to_string(),
+            hyphae_core::Importance::Medium,
+        )
+        .project("demo-project".to_string())
+        .build();
+        store.store(legacy_session).unwrap();
+
+        let window = collect_window_data(&store, 0, 1, Some("demo-project")).unwrap();
+
+        assert_eq!(window.session_count, 2);
+        assert!(window.total_session_length > 0);
     }
 }

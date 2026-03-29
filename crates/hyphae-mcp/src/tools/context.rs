@@ -68,15 +68,14 @@ pub(crate) fn tool_gather_context(
         }
     }
 
-    // ── Errors (topic: errors/resolved) ──────────────────────────────────
+    // ── Errors (topic: errors/*) ─────────────────────────────────────────
     if include.errors {
         sources_queried.push("errors");
-        // Search within the errors/resolved topic
         let error_query = task;
         if let Ok(all_errors) = store.search_fts(error_query, MAX_PER_SOURCE * 2, 0, project_arg) {
             let error_mems: Vec<_> = all_errors
                 .iter()
-                .filter(|m| m.topic.starts_with("errors") || m.topic.starts_with("resolved"))
+                .filter(|m| m.topic.starts_with("errors/"))
                 .take(MAX_PER_SOURCE)
                 .collect();
             for (idx, mem) in error_mems.iter().enumerate() {
@@ -94,7 +93,46 @@ pub(crate) fn tool_gather_context(
     // ── Sessions (topic: session/*) ──────────────────────────────────────
     if include.sessions {
         sources_queried.push("sessions");
-        if let Ok(session_hits) = store.search_fts(task, MAX_PER_SOURCE * 2, 0, project_arg) {
+        let mut pushed_structured = false;
+        let structured_rows = if let Some(proj) = project_arg {
+            store.session_context(proj, 10_000)
+        } else {
+            store.session_context_all(10_000)
+        };
+        if let Ok(session_rows) = structured_rows {
+            let mut structured_hits: Vec<(f64, String, String)> = session_rows
+                .into_iter()
+                .filter_map(|session| {
+                    let relevance = session_query_score(
+                        session.task.as_deref(),
+                        session.summary.as_deref(),
+                        task,
+                    )?;
+                    let content =
+                        session_content(session.task.as_deref(), session.summary.as_deref())?;
+                    Some((relevance, session.project, content))
+                })
+                .collect();
+
+            structured_hits
+                .sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+            for (idx, (relevance, session_project, content)) in
+                structured_hits.into_iter().take(MAX_PER_SOURCE).enumerate()
+            {
+                pushed_structured = true;
+                results.push(ContextItem {
+                    source: "session",
+                    topic: Some(format!("session/{session_project}")),
+                    symbol: None,
+                    content,
+                    relevance: relevance.max(relevance_score(idx)),
+                });
+            }
+        }
+        if !pushed_structured
+            && let Ok(session_hits) = store.search_fts(task, MAX_PER_SOURCE * 4, 0, project_arg)
+        {
             let session_mems: Vec<_> = session_hits
                 .iter()
                 .filter(|m| m.topic.starts_with("session/"))
@@ -231,6 +269,45 @@ fn relevance_score(position: usize) -> f64 {
     (0.95 - (position as f64 * 0.1)).max(0.1)
 }
 
+fn session_content(task: Option<&str>, summary: Option<&str>) -> Option<String> {
+    match (task, summary) {
+        (Some(task), Some(summary)) => Some(format!("{task}\n{summary}")),
+        (Some(task), None) => Some(task.to_string()),
+        (None, Some(summary)) => Some(summary.to_string()),
+        (None, None) => None,
+    }
+}
+
+fn session_query_score(task: Option<&str>, summary: Option<&str>, query: &str) -> Option<f64> {
+    let haystack = format!(
+        "{} {}",
+        task.unwrap_or_default().to_lowercase(),
+        summary.unwrap_or_default().to_lowercase()
+    );
+    if haystack.trim().is_empty() {
+        return None;
+    }
+
+    let query_terms: Vec<&str> = query
+        .split_whitespace()
+        .map(str::trim)
+        .filter(|term| !term.is_empty())
+        .collect();
+    if query_terms.is_empty() {
+        return Some(0.5);
+    }
+
+    let matches = query_terms
+        .iter()
+        .filter(|term| haystack.contains(&term.to_lowercase()))
+        .count();
+    if matches == 0 {
+        return None;
+    }
+
+    Some((matches as f64 / query_terms.len() as f64).clamp(0.1, 1.0))
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
@@ -311,7 +388,7 @@ mod tests {
         let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
         // First item is always included; second may be truncated by budget
         let ctx = parsed["context"].as_array().unwrap();
-        assert!(ctx.len() >= 1);
+        assert!(!ctx.is_empty());
         // Verify tokens_used is reported
         assert!(parsed["tokens_used"].as_u64().is_some());
     }
@@ -325,6 +402,34 @@ mod tests {
 
     #[test]
     fn test_gather_context_with_project() {
+        let store = test_store();
+        let (session_id, _) = store.session_start("myapp", Some("login flow")).unwrap();
+        store
+            .session_end(&session_id, Some("Implemented login flow"), None, Some("0"))
+            .unwrap();
+
+        let result = tool_gather_context(
+            &store,
+            &json!({
+                "task": "login",
+                "project": "myapp",
+                "include": ["sessions"]
+            }),
+            None,
+        );
+        assert!(!result.is_error);
+        let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
+        assert!(
+            parsed["sources_queried"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("sessions"))
+        );
+        assert_eq!(parsed["context"][0]["source"], "session");
+    }
+
+    #[test]
+    fn test_gather_context_with_project_falls_back_to_legacy_session_memories() {
         let store = test_store();
 
         let mem = Memory::builder(
@@ -345,14 +450,35 @@ mod tests {
             }),
             None,
         );
+
         assert!(!result.is_error);
         let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
-        assert!(
-            parsed["sources_queried"]
-                .as_array()
-                .unwrap()
-                .contains(&json!("sessions"))
+        assert_eq!(parsed["context"][0]["topic"], "session/myapp");
+    }
+
+    #[test]
+    fn test_gather_context_without_project_uses_structured_sessions() {
+        let store = test_store();
+        let (session_id, _) = store
+            .session_start("shared-app", Some("login flow"))
+            .unwrap();
+        store
+            .session_end(&session_id, Some("Implemented login flow"), None, Some("0"))
+            .unwrap();
+
+        let result = tool_gather_context(
+            &store,
+            &json!({
+                "task": "login",
+                "include": ["sessions"]
+            }),
+            None,
         );
+
+        assert!(!result.is_error);
+        let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
+        assert_eq!(parsed["context"][0]["source"], "session");
+        assert_eq!(parsed["context"][0]["topic"], "session/shared-app");
     }
 
     #[test]

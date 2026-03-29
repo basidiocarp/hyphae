@@ -33,7 +33,7 @@ pub(crate) fn tool_session_start(store: &SqliteStore, args: &Value) -> ToolResul
     }
 }
 
-/// `hyphae_session_end` — end a coding session and store summary as memory.
+/// `hyphae_session_end` — end a coding session and best-effort store a summary memory.
 pub(crate) fn tool_session_end(store: &SqliteStore, args: &Value) -> ToolResult {
     let session_id = match validate_required_string(args, "session_id") {
         Ok(s) => s,
@@ -56,7 +56,8 @@ pub(crate) fn tool_session_end(store: &SqliteStore, args: &Value) -> ToolResult 
         errors_encountered.as_deref(),
     ) {
         Ok((project, _started_at, task, _ended_at, duration_minutes)) => {
-            // Store summary as a Memory for future recall
+            let mut summary_memory_stored = summary.is_none();
+            // Store a compatibility summary memory for future recall.
             if let Some(summary_text) = summary {
                 let topic = format!("session/{project}");
                 let content = if let Some(task_desc) = &task {
@@ -67,19 +68,24 @@ pub(crate) fn tool_session_end(store: &SqliteStore, args: &Value) -> ToolResult 
 
                 let memory = Memory::builder(topic, content, Importance::Medium)
                     .keywords(vec!["session".to_string(), project.clone()])
+                    .project(project.clone())
                     .build();
 
                 if let Err(e) = store.store(memory) {
-                    return ToolResult::error(format!(
-                        "session ended but failed to store summary as memory: {e}"
-                    ));
+                    tracing::warn!(
+                        "session {session_id} ended but failed to store compatibility session memory: {e}"
+                    );
+                    summary_memory_stored = false;
+                } else {
+                    summary_memory_stored = true;
                 }
             }
 
             ToolResult::text(
                 json!({
-                "stored": true,
-                "duration_minutes": duration_minutes,
+                    "stored": true,
+                    "summary_memory_stored": summary_memory_stored,
+                    "duration_minutes": duration_minutes,
                 })
                 .to_string(),
             )
@@ -205,6 +211,12 @@ mod tests {
         );
         let end_parsed: Value = serde_json::from_str(&end_result.content[0].text).unwrap();
         assert!(end_parsed["stored"].as_bool().unwrap());
+        assert!(end_parsed["summary_memory_stored"].as_bool().unwrap());
+
+        let session_memories = store
+            .get_by_topic("session/test-proj", Some("test-proj"))
+            .unwrap();
+        assert_eq!(session_memories.len(), 1);
     }
 
     #[test]

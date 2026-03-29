@@ -1,5 +1,6 @@
 mod chunk_store;
 pub mod context;
+pub mod evaluation;
 mod feedback;
 mod helpers;
 mod memoir_store;

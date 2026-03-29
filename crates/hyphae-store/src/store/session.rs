@@ -135,6 +135,39 @@ impl SqliteStore {
         self.session_context_scoped(project, None, limit)
     }
 
+    /// Get recent sessions across all projects.
+    pub fn session_context_all(&self, limit: i64) -> HyphaeResult<Vec<Session>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, project, scope, task, started_at, ended_at, summary, files_modified, errors, status
+                 FROM sessions
+                 ORDER BY COALESCE(ended_at, started_at) DESC
+                 LIMIT ?1",
+            )
+            .map_err(|e| HyphaeError::Database(format!("failed to prepare query: {e}")))?;
+
+        let rows = stmt
+            .query_map(params![limit], |row| {
+                Ok(Session {
+                    id: row.get(0)?,
+                    project: row.get(1)?,
+                    scope: row.get(2)?,
+                    task: row.get(3)?,
+                    started_at: row.get(4)?,
+                    ended_at: row.get(5)?,
+                    summary: row.get(6)?,
+                    files_modified: row.get(7)?,
+                    errors: row.get(8)?,
+                    status: row.get(9)?,
+                })
+            })
+            .map_err(|e| HyphaeError::Database(format!("failed to query sessions: {e}")))?;
+
+        let sessions: Vec<Session> = rows.filter_map(Result::ok).collect();
+        Ok(sessions)
+    }
+
     /// Get recent sessions for a project, optionally filtered to a worker/runtime scope.
     pub fn session_context_scoped(
         &self,
@@ -169,6 +202,53 @@ impl SqliteStore {
                     status: row.get(9)?,
                 })
             })
+            .map_err(|e| HyphaeError::Database(format!("failed to query sessions: {e}")))?;
+
+        let sessions: Vec<Session> = rows.filter_map(Result::ok).collect();
+        Ok(sessions)
+    }
+
+    /// Get sessions for a project within a time window, optionally filtered to a scope.
+    pub fn session_context_between(
+        &self,
+        project: Option<&str>,
+        scope: Option<&str>,
+        occurred_after: &str,
+        occurred_before: &str,
+        limit: i64,
+    ) -> HyphaeResult<Vec<Session>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, project, scope, task, started_at, ended_at, summary, files_modified, errors, status
+                 FROM sessions
+                 WHERE (?1 IS NULL OR project = ?1)
+                   AND (?2 IS NULL OR scope = ?2)
+                   AND COALESCE(ended_at, started_at) >= ?3
+                   AND COALESCE(ended_at, started_at) <= ?4
+                 ORDER BY COALESCE(ended_at, started_at) DESC
+                 LIMIT ?5",
+            )
+            .map_err(|e| HyphaeError::Database(format!("failed to prepare query: {e}")))?;
+
+        let rows = stmt
+            .query_map(
+                params![project, scope, occurred_after, occurred_before, limit],
+                |row| {
+                    Ok(Session {
+                        id: row.get(0)?,
+                        project: row.get(1)?,
+                        scope: row.get(2)?,
+                        task: row.get(3)?,
+                        started_at: row.get(4)?,
+                        ended_at: row.get(5)?,
+                        summary: row.get(6)?,
+                        files_modified: row.get(7)?,
+                        errors: row.get(8)?,
+                        status: row.get(9)?,
+                    })
+                },
+            )
             .map_err(|e| HyphaeError::Database(format!("failed to query sessions: {e}")))?;
 
         let sessions: Vec<Session> = rows.filter_map(Result::ok).collect();
@@ -253,6 +333,87 @@ mod tests {
         let store = test_store();
         let sessions = store.session_context("no-such-project", 5).unwrap();
         assert!(sessions.is_empty());
+    }
+
+    #[test]
+    fn test_session_context_between_filters_by_started_at_window() {
+        let store = test_store();
+        let started_before = Utc::now().to_rfc3339();
+
+        let (session_id, _) = store
+            .session_start("window-project", Some("capture window"))
+            .unwrap();
+        let started_after = Utc::now().to_rfc3339();
+
+        let sessions = store
+            .session_context_between(
+                Some("window-project"),
+                None,
+                &started_before,
+                &started_after,
+                10,
+            )
+            .unwrap();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id, session_id);
+    }
+
+    #[test]
+    fn test_session_context_between_uses_session_end_when_present() {
+        let store = test_store();
+        let old_started_at = (Utc::now() - chrono::Duration::days(2)).to_rfc3339();
+        let recent_ended_at = Utc::now().to_rfc3339();
+        let window_start = (Utc::now() - chrono::Duration::days(1)).to_rfc3339();
+
+        store
+            .conn
+            .execute(
+                "INSERT INTO sessions (id, project, scope, task, started_at, ended_at, summary, files_modified, errors, status)
+                 VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, NULL, ?7, 'completed')",
+                params![
+                    "ses_windowed",
+                    "window-project",
+                    "carry over work",
+                    old_started_at,
+                    recent_ended_at,
+                    "finished inside the window",
+                    "0",
+                ],
+            )
+            .unwrap();
+
+        let sessions = store
+            .session_context_between(
+                Some("window-project"),
+                None,
+                &window_start,
+                "9999-12-31T23:59:59Z",
+                10,
+            )
+            .unwrap();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id, "ses_windowed");
+    }
+
+    #[test]
+    fn test_session_context_all_includes_recent_sessions_across_projects() {
+        let store = test_store();
+        let (session_a, _) = store.session_start("proj-a", Some("task a")).unwrap();
+        store
+            .session_end(&session_a, Some("summary a"), None, Some("0"))
+            .unwrap();
+
+        let (session_b, _) = store.session_start("proj-b", Some("task b")).unwrap();
+        store
+            .session_end(&session_b, Some("summary b"), None, Some("0"))
+            .unwrap();
+
+        let sessions = store.session_context_all(10).unwrap();
+        assert_eq!(sessions.len(), 2);
+        assert!(sessions.iter().any(|session| session.project == "proj-a"));
+        assert!(sessions.iter().any(|session| session.project == "proj-b"));
     }
 
     #[test]

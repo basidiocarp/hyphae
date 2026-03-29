@@ -214,7 +214,7 @@ This means a memory that keeps being useful will resist decay. A memory that get
 | `MIN_WEIGHT` | 0.05 | Keeps memories discoverable even with negative effectiveness |
 | `RECENCY_HALF_LIFE_DAYS` | 14 | Old recall events fade; a 30-day-old event has ~25% influence |
 | `POSITION_DISCOUNT` | 0.3 | Result at position 3 gets 63% credit vs position 0 |
-| `MIN_SIGNALS_FOR_BOOST` | 3 | Require at least 3 signals before applying any boost (noise reduction) |
+| `MIN_SIGNALS_FOR_BOOST` | 2 | Require at least 2 signals before applying any boost (noise reduction) |
 
 ## 4. MCP Integration
 
@@ -268,27 +268,34 @@ fn handle_tool_result(&self, tool_name: &str, result: &ToolResult, session_id: &
 
 ### 4.3 Session end signals
 
-In `tool_session_end` (crates/hyphae-mcp/src/tools/session.rs), after the session is ended:
+`store.session_end()` now records `session_success` or `session_failure` directly when the structured session row is completed. `tool_session_end` and `hyphae session end` only add the compatibility `session/{project}` memory afterward, on a best-effort basis.
 
 ```rust
-let signal_type = if errors.unwrap_or("0") == "0" {
-    "session_success"
-} else {
+let error_count = errors
+    .and_then(|value| value.parse::<i64>().ok())
+    .unwrap_or(0);
+let signal_type = if error_count > 0 {
     "session_failure"
+} else {
+    "session_success"
 };
-let signal_value = if signal_type == "session_success" { 2 } else { -2 };
+let signal_value = if error_count > 0 { -2 } else { 2 };
 let _ = store.log_outcome_signal(
-    session_id, signal_type, signal_value, "session_end", project,
+    Some(session_id),
+    signal_type,
+    signal_value,
+    Some("hyphae.session_end"),
+    Some(&project),
 );
 ```
 
 ### 4.4 Cortina hook signals
 
-Cortina's PostToolUse hooks already capture errors and corrections. These can write to `outcome_signals` via the same SQLite database:
+Cortina's PostToolUse hooks already capture errors and corrections. These write to `outcome_signals` via Hyphae's structured surfaces:
 
-- `capture-errors` hook: on error, insert `signal_type = "tool_error"`, `signal_value = -1`
-- `capture-corrections` hook: on correction, insert `signal_type = "correction"`, `signal_value = -1`
-- `capture-test-results` hook: on test pass, insert `signal_type = "test_pass"`, `signal_value = 2`
+- tool error: `signal_type = "tool_error"`, `signal_value = -1`
+- correction: `signal_type = "correction"`, `signal_value = -1`
+- test pass: `signal_type = "test_passed"`, `signal_value = 2`
 
 Cortina writes to the same hyphae SQLite DB (path from `HYPHAE_DB` env var or config).
 
@@ -301,7 +308,7 @@ Cortina writes to the same hyphae SQLite DB (path from `HYPHAE_DB` env var or co
 ```rust
 // On recall, after logging the event:
 if let Ok(true) = store.should_compute_feedback(session_id) {
-    // Only compute if there are >=3 signals for at least one recall event
+    // Only compute if there are >=2 signals for at least one recall event
     let _ = store.compute_session_effectiveness(session_id);
 }
 ```
@@ -314,7 +321,7 @@ if let Ok(true) = store.should_compute_feedback(session_id) {
 
 **Mitigations**:
 - **Position discount**: Memories lower in the result list get less credit. If the agent recalled 5 memories and only used one, the others are naturally discounted.
-- **MIN_SIGNALS_FOR_BOOST = 3**: Requires multiple signals, not just one session success.
+- **MIN_SIGNALS_FOR_BOOST = 2**: Requires multiple signals, not just one session success.
 - **Recency half-life = 14 days**: A single false-positive event fades to 25% influence within a month.
 - **Aggregate across events**: One false positive among many true negatives averages out.
 - **Phase 2 analysis**: Before enabling online boosting, inspect the data manually via `hyphae feedback inspect` to validate correlation quality.
@@ -336,7 +343,7 @@ if let Ok(true) = store.should_compute_feedback(session_id) {
 **Mitigations**:
 - **No penalty for no data**: `mean_effectiveness = 0.0` when there are no recall events. This means the memory's weight is unmodified by the feedback system.
 - **Importance as prior**: New memories start with `weight = 1.0` (the maximum). The feedback loop only adjusts weight downward (via decay) or slows the decay (via positive effectiveness). New memories start at full strength.
-- **MIN_SIGNALS_FOR_BOOST = 3**: The system does not penalize memories that have been recalled fewer than 3 times. They keep their natural weight.
+- **MIN_SIGNALS_FOR_BOOST = 2**: The system does not penalize memories that have been recalled fewer than 2 times. They keep their natural weight.
 
 ### 5.4 Stale correlations persist
 

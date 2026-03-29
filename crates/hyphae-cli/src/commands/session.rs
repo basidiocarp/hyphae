@@ -126,7 +126,11 @@ fn cmd_end(
             .keywords(vec!["session".to_string(), project.clone()])
             .project(project.clone())
             .build();
-        store.store(memory)?;
+        if let Err(e) = store.store(memory) {
+            tracing::warn!(
+                "session {session_id} ended but failed to store compatibility session memory: {e}"
+            );
+        }
     }
 
     println!("Ended session {session_id} for {project} ({duration_minutes} min)");

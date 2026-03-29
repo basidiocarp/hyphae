@@ -10,7 +10,7 @@ use hyphae_core::{HyphaeError, HyphaeResult};
 use super::SqliteStore;
 
 const MAX_EFFECTIVENESS_WINDOW_MINUTES: i64 = 60;
-const MIN_SIGNALS_FOR_EFFECTIVENESS: usize = 3;
+const MIN_SIGNALS_FOR_EFFECTIVENESS: usize = 2;
 const POSITION_DISCOUNT: f32 = 0.3;
 const RECENCY_HALF_LIFE_DAYS: f64 = 14.0;
 const SIGNAL_SESSION_SUCCESS: &str = "session_success";
@@ -24,10 +24,17 @@ const SIGNAL_TOOL_ERROR: &str = "tool_error";
 const SIGNAL_EXPLICIT_BOOST: &str = "explicit_boost";
 
 #[derive(Debug, Clone)]
-struct RecallEventRecord {
-    id: String,
-    recalled_at: String,
-    memory_ids: Vec<String>,
+pub(crate) struct RecallEventRecord {
+    pub(crate) id: String,
+    pub(crate) recalled_at: String,
+    pub(crate) memory_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct OutcomeSignalRecord {
+    pub(crate) signal_type: String,
+    pub(crate) occurred_at: String,
+    pub(crate) project: Option<String>,
 }
 
 fn parse_rfc3339_utc(value: &str, field: &str) -> HyphaeResult<DateTime<Utc>> {
@@ -352,6 +359,150 @@ impl SqliteStore {
 
         stmt.query_row(params![session_id, project, memory_count], |row| row.get(0))
             .map_err(|e| HyphaeError::Database(format!("failed to count recall events: {e}")))
+    }
+
+    pub fn count_outcome_signals_in_window(
+        &self,
+        project: Option<&str>,
+        signal_type: &str,
+        occurred_after: &str,
+        occurred_before: &str,
+    ) -> HyphaeResult<i64> {
+        let signal_type = normalize_signal_type(signal_type).unwrap_or(signal_type);
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT COUNT(*) FROM outcome_signals
+                 WHERE (?1 IS NULL OR project = ?1)
+                   AND signal_type = ?2
+                   AND occurred_at >= ?3
+                   AND occurred_at <= ?4",
+            )
+            .map_err(|e| {
+                HyphaeError::Database(format!(
+                    "failed to prepare windowed outcome signal count: {e}"
+                ))
+            })?;
+
+        stmt.query_row(
+            params![project, signal_type, occurred_after, occurred_before],
+            |row| row.get(0),
+        )
+        .map_err(|e| {
+            HyphaeError::Database(format!("failed to count windowed outcome signals: {e}"))
+        })
+    }
+
+    pub fn count_recall_events_in_window(
+        &self,
+        project: Option<&str>,
+        recalled_after: &str,
+        recalled_before: &str,
+    ) -> HyphaeResult<i64> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT COUNT(*) FROM recall_events
+                 WHERE (?1 IS NULL OR project = ?1)
+                   AND recalled_at >= ?2
+                   AND recalled_at <= ?3",
+            )
+            .map_err(|e| {
+                HyphaeError::Database(format!(
+                    "failed to prepare windowed recall event count: {e}"
+                ))
+            })?;
+
+        stmt.query_row(params![project, recalled_after, recalled_before], |row| {
+            row.get(0)
+        })
+        .map_err(|e| HyphaeError::Database(format!("failed to count windowed recall events: {e}")))
+    }
+
+    pub(crate) fn outcome_signals_in_window(
+        &self,
+        project: Option<&str>,
+        signal_type: &str,
+        occurred_after: &str,
+        occurred_before: &str,
+    ) -> HyphaeResult<Vec<OutcomeSignalRecord>> {
+        let signal_type = normalize_signal_type(signal_type).unwrap_or(signal_type);
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT signal_type, occurred_at, project
+                 FROM outcome_signals
+                 WHERE (?1 IS NULL OR project = ?1)
+                   AND signal_type = ?2
+                   AND occurred_at >= ?3
+                   AND occurred_at <= ?4
+                 ORDER BY occurred_at ASC",
+            )
+            .map_err(|e| {
+                HyphaeError::Database(format!(
+                    "failed to prepare windowed outcome signal query: {e}"
+                ))
+            })?;
+
+        let rows = stmt
+            .query_map(
+                params![project, signal_type, occurred_after, occurred_before],
+                |row| {
+                    Ok(OutcomeSignalRecord {
+                        signal_type: row.get(0)?,
+                        occurred_at: row.get(1)?,
+                        project: row.get(2)?,
+                    })
+                },
+            )
+            .map_err(|e| {
+                HyphaeError::Database(format!("failed to query windowed outcome signals: {e}"))
+            })?;
+
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| {
+            HyphaeError::Database(format!("failed to collect windowed outcome signals: {e}"))
+        })
+    }
+
+    pub(crate) fn recall_events_in_window(
+        &self,
+        project: Option<&str>,
+        recalled_after: &str,
+        recalled_before: &str,
+    ) -> HyphaeResult<Vec<RecallEventRecord>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, recalled_at, memory_ids
+                 FROM recall_events
+                 WHERE (?1 IS NULL OR project = ?1)
+                   AND recalled_at >= ?2
+                   AND recalled_at <= ?3
+                 ORDER BY recalled_at ASC",
+            )
+            .map_err(|e| {
+                HyphaeError::Database(format!(
+                    "failed to prepare windowed recall event query: {e}"
+                ))
+            })?;
+
+        let rows = stmt
+            .query_map(params![project, recalled_after, recalled_before], |row| {
+                let memory_ids_json: String = row.get(2)?;
+                let memory_ids = serde_json::from_str(&memory_ids_json).unwrap_or_default();
+                Ok(RecallEventRecord {
+                    id: row.get(0)?,
+                    recalled_at: row.get(1)?,
+                    memory_ids,
+                })
+            })
+            .map_err(|e| {
+                HyphaeError::Database(format!("failed to query windowed recall events: {e}"))
+            })?;
+
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| {
+            HyphaeError::Database(format!("failed to collect windowed recall events: {e}"))
+        })
     }
 
     pub(crate) fn compute_session_effectiveness(&self, session_id: &str) -> HyphaeResult<usize> {
@@ -1041,5 +1192,107 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].0, second.as_ref().to_string());
         assert_eq!(rows[0].1, second_recall);
+    }
+
+    #[test]
+    fn test_compute_session_effectiveness_accepts_two_signals() {
+        let store = test_store();
+        let (session_id, _) = store.session_start("demo", Some("feedback")).unwrap();
+
+        let memory = store
+            .store(Memory::new(
+                "demo".into(),
+                "recalled memory".into(),
+                Importance::Medium,
+            ))
+            .unwrap();
+
+        let recall_event_id = store
+            .log_recall_event(
+                Some(&session_id),
+                "recall query",
+                &[memory.as_ref().to_string()],
+                Some("demo"),
+            )
+            .unwrap();
+
+        store
+            .log_outcome_signal(
+                Some(&session_id),
+                "test_passed",
+                2,
+                Some("manual"),
+                Some("demo"),
+            )
+            .unwrap();
+        let (_project, _, _, _, _) = store
+            .session_end(&session_id, Some("done"), None, Some("0"))
+            .unwrap();
+
+        let rows: Vec<(String, String, i64)> = store
+            .conn
+            .prepare(
+                "SELECT memory_id, recall_event_id, signal_count
+                 FROM recall_effectiveness
+                 WHERE recall_event_id = ?1",
+            )
+            .unwrap()
+            .query_map(params![recall_event_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].2, 2);
+    }
+
+    #[test]
+    fn test_count_outcome_signals_and_recalls_in_window() {
+        let store = test_store();
+        let (session_id, _) = store.session_start("demo", Some("feedback")).unwrap();
+        let memory = store
+            .store(Memory::new(
+                "demo".into(),
+                "recalled memory".into(),
+                Importance::Medium,
+            ))
+            .unwrap();
+
+        let started_before = Utc::now().to_rfc3339();
+        store
+            .log_recall_event(
+                Some(&session_id),
+                "recall query",
+                &[memory.as_ref().to_string()],
+                Some("demo"),
+            )
+            .unwrap();
+        store
+            .log_outcome_signal(
+                Some(&session_id),
+                "test_passed",
+                2,
+                Some("manual"),
+                Some("demo"),
+            )
+            .unwrap();
+        let started_after = Utc::now().to_rfc3339();
+
+        let recalls = store
+            .count_recall_events_in_window(Some("demo"), &started_before, &started_after)
+            .unwrap();
+        let tests = store
+            .count_outcome_signals_in_window(
+                Some("demo"),
+                "test_pass",
+                &started_before,
+                &started_after,
+            )
+            .unwrap();
+
+        assert_eq!(recalls, 1);
+        assert_eq!(tests, 1);
     }
 }
