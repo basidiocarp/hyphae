@@ -113,8 +113,9 @@ cp ~/.local/share/hyphae/hyphae.db ~/.local/share/hyphae/hyphae.db.backup
 export HYPHAE_EMBEDDING_URL=http://localhost:11434
 export HYPHAE_EMBEDDING_MODEL=nomic-embed-code
 
-# 3. Clear vector data and re-ingest (using hyphae CLI)
-hyphae doctor --reindex-embeddings
+# 3. Clear vector data and re-ingest
+hyphae doctor          # verify the current embedding setup
+hyphae embed-all       # regenerate missing embeddings after reconfiguration
 
 # Or manually (SQL):
 # sqlite> DELETE FROM embedding_vectors;

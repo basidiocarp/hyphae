@@ -229,7 +229,7 @@ pub(crate) enum Commands {
 
     /// Diagnose common issues with the hyphae installation
     Doctor {
-        /// Attempt to fix detected issues (e.g. rebuild FTS index)
+        /// Attempt limited automatic repairs (currently FTS index rebuild only)
         #[arg(long)]
         fix: bool,
     },
@@ -255,7 +255,8 @@ pub(crate) enum Commands {
     },
 
     /// Export memories as training data
-    ExportTrainingData {
+    #[command(name = "export-training", alias = "export-training-data")]
+    ExportTraining {
         /// Output format: sft, dpo, or alpaca
         #[arg(short, long)]
         format: String,
@@ -265,6 +266,9 @@ pub(crate) enum Commands {
         /// Only export memories with weight above this threshold
         #[arg(long)]
         min_weight: Option<f32>,
+        /// Write output to a file instead of stdout
+        #[arg(short, long)]
+        output: Option<PathBuf>,
     },
 
     /// Evaluate agent improvement over time
@@ -322,4 +326,28 @@ pub(crate) enum Commands {
         #[arg(long)]
         since: Option<String>,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_export_training_primary_name_parses() {
+        let cli = Cli::try_parse_from(["hyphae", "export-training", "--format", "sft"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::ExportTraining { format, .. } if format == "sft"
+        ));
+    }
+
+    #[test]
+    fn test_export_training_legacy_alias_parses() {
+        let cli =
+            Cli::try_parse_from(["hyphae", "export-training-data", "--format", "alpaca"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::ExportTraining { format, .. } if format == "alpaca"
+        ));
+    }
 }

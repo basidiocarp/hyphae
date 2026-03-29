@@ -30,11 +30,8 @@ claude mcp add hyphae -- hyphae serve
 }
 ```
 
-**Slash commands (optional):**
-```bash
-hyphae init --mode skill
-```
-Installs `/recall` and `/remember` in `~/.claude/commands/`.
+**Project-local instructions (optional):**
+Add recall/store guidance through Lamella or your own `CLAUDE.md` workflow if you want reminder prompts alongside the MCP setup.
 
 **PostToolUse hook (optional):**
 ```bash
@@ -51,11 +48,8 @@ Installs the recommended Claude Code lifecycle hooks:
 compact = true
 ```
 
-**CLAUDE.md instructions (optional):**
-```bash
-hyphae init --mode cli
-```
-Adds Hyphae instructions to the `CLAUDE.md` of the current project.
+**Project-local instructions (optional):**
+Use Lamella or maintain your own `CLAUDE.md` guidance if you want reminder instructions in addition to the MCP setup.
 
 ---
 
@@ -78,11 +72,8 @@ hyphae init  # Automatically configures ~/.cursor/mcp.json
 }
 ```
 
-**Cursor rule (optional):**
-```bash
-hyphae init --mode skill
-```
-Creates `~/.cursor/rules/hyphae.mdc` with an `alwaysApply: true` rule that reminds the agent to use Hyphae.
+**Cursor rules (optional):**
+Manage `.cursor/rules` through Lamella or your own editor policy if you want reminder rules alongside the MCP setup.
 
 **After configuration:** Restart Cursor. The Hyphae tools appear in the MCP palette.
 
@@ -166,11 +157,8 @@ Zed uses a different format with `context_servers`:
 hyphae init  # Automatically configures ~/.config/amp/settings.json
 ```
 
-**Slash commands (optional):**
-```bash
-hyphae init --mode skill
-```
-Installs `/hyphae-recall` and `/hyphae-remember` in `~/.config/amp/skills/`.
+**Amp commands (optional):**
+Manage custom Amp command files separately if you want reminder prompts in addition to the MCP setup.
 
 ---
 
@@ -222,18 +210,9 @@ hyphae init  # Automatically configures
 
 ---
 
-## Other tools (Gemini, Amazon Q, Cline, Roo Code, Kilo Code, OpenCode)
+## Other tools
 
-All are automatically configured by `hyphae init`. The format is always the same:
-
-```json
-{
-  "command": "/path/to/hyphae",
-  "args": ["serve"]
-}
-```
-
-The only difference is the config file and the JSON key. `hyphae init` handles all these variations.
+Hyphae does not currently auto-configure Gemini, Amazon Q, Cline, Roo Code, Kilo Code, or OpenCode from `hyphae init`. If you need those integrations today, register the MCP server manually or manage the packaging through Lamella.
 
 ---
 

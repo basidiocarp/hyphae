@@ -40,7 +40,7 @@ Add remote encrypted sync and shared-memory modes for multi-machine and multi-ag
 
 ### Training and export surfaces
 
-Build the planned `export-training-data` command and other structured export paths that turn stored recall and outcome data into reusable evaluation input.
+Keep refining `export-training` and other structured export paths so stored recall and outcome data can be turned into reusable evaluation input.
 
 ## Later
 

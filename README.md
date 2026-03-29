@@ -66,7 +66,7 @@ Next session:  Agent queries the "backend" memoir
 
 - **Two memory models** — episodic (decay-based) + semantic (knowledge graphs)
 - **RAG pipeline** — ingest files with automatic chunking, hybrid search, auto-context injection on session start
-- **Training data export** — `hyphae export-training-data --format sft|dpo|alpaca` exports memories as training JSONL for fine-tuning
+- **Training data export** — `hyphae export-training --format sft|dpo|alpaca` exports memories as training JSONL for fine-tuning
 - **Session lifecycle tracking** — `hyphae session start|end|context` records structured coding sessions for later recall and operator views
 - **Structured feedback signals** — `hyphae feedback signal` records corrections, recoveries, and session outcomes for recall-to-action tuning
 - **Backup & restore** — `hyphae backup` / `hyphae restore` for database persistence and recovery

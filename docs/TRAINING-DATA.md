@@ -147,7 +147,7 @@ You need roughly 1,000 SFT pairs for a useful fine-tune and 500 DPO pairs for pr
 
 ## Export Format
 
-The `hyphae export-training` command produces:
+The `hyphae export-training` command produces. `hyphae export-training-data` remains available as a compatibility alias:
 
 **SFT format (JSONL):**
 ```jsonl

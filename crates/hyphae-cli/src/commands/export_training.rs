@@ -2,6 +2,7 @@ use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
 use hyphae_core::MemoryStore;
 use hyphae_store::{Session, SqliteStore};
+use std::path::PathBuf;
 
 const SESSION_MIRROR_TOLERANCE_MINUTES: i64 = 5;
 
@@ -247,16 +248,18 @@ pub(crate) fn cmd_export_training(
     format: TrainingFormat,
     topic: Option<String>,
     min_weight: Option<f32>,
+    output: Option<PathBuf>,
     project: Option<String>,
 ) -> Result<()> {
     let min_weight = min_weight.unwrap_or(0.0);
     let project_ref = project.as_deref();
     let examples = collect_training_examples(store, topic, project_ref)?;
-
-    let stdout = std::io::stdout();
-    let mut handle = stdout.lock();
-
     use std::io::Write;
+    let mut handle: Box<dyn Write> = if let Some(path) = output {
+        Box::new(std::fs::File::create(path)?)
+    } else {
+        Box::new(std::io::stdout().lock())
+    };
 
     for example in examples {
         if example.weight < min_weight {
@@ -339,6 +342,7 @@ fn parse_correction(text: &str) -> Option<(String, String)> {
 mod tests {
     use super::*;
     use hyphae_core::{Importance, Memory};
+    use tempfile::TempDir;
 
     fn test_store() -> SqliteStore {
         SqliteStore::in_memory().expect("in-memory store")
@@ -518,5 +522,35 @@ mod tests {
                 .iter()
                 .any(|example| example.topic == "session/project-b")
         );
+    }
+
+    #[test]
+    fn test_cmd_export_training_writes_to_file() {
+        let store = test_store();
+        let dir = TempDir::new().unwrap();
+        let output = dir.path().join("training.jsonl");
+
+        let decision = Memory::builder(
+            "decisions/myapp".to_string(),
+            "Use gRPC for internal services".to_string(),
+            Importance::High,
+        )
+        .project("myapp".to_string())
+        .build();
+        store.store(decision).unwrap();
+
+        cmd_export_training(
+            &store,
+            TrainingFormat::Sft,
+            None,
+            None,
+            Some(output.clone()),
+            Some("myapp".to_string()),
+        )
+        .unwrap();
+
+        let content = std::fs::read_to_string(output).unwrap();
+        assert!(content.contains("\"instruction\""));
+        assert!(content.contains("Use gRPC for internal services"));
     }
 }

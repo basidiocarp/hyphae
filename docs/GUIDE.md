@@ -25,7 +25,7 @@ cargo install --path crates/hyphae-cli
 hyphae init
 ```
 
-This auto-detects your supported editors and agent runtimes and configures the MCP server. Supports 14 tools: Claude Code, Claude Desktop, Cursor, Windsurf, VS Code, Gemini, Zed, Amp, Amazon Q, Cline, Roo Code, Kilo Code, Codex CLI, OpenCode. Codex CLI also gets `notify = ["hyphae", "codex-notify"]` so turn-complete events and normalized lifecycle notes can feed Hyphae automatically.
+This auto-detects the currently supported editors and agent runtimes and configures the MCP server. Today that means Claude Code, Claude Desktop, Cursor, Windsurf, VS Code, Zed, Amp, and Codex CLI. Codex CLI also gets `notify = ["hyphae", "codex-notify"]` so turn-complete events and normalized lifecycle notes can feed Hyphae automatically.
 
 ### 3. Use
 
@@ -395,18 +395,11 @@ hyphae embed --force
 
 ```bash
 hyphae init                  # Auto-detect and configure MCP for all found tools
-hyphae init --mode skill     # Install slash commands and rules
 hyphae init --mode hook      # Install Claude Code PostToolUse, PreCompact, and SessionEnd hooks
-hyphae init --mode cli       # Show manual CLI setup instructions
+hyphae init --mode all       # Configure MCP plus Claude Code lifecycle hooks
 ```
 
-### Skills
-
-`hyphae init --mode skill` installs:
-- **Claude Code**: `/recall` and `/remember` slash commands
-- **Cursor**: `.cursor/rules/hyphae.mdc` rule file
-- **Roo Code**: `.roo/rules/hyphae.md` rule file
-- **Amp**: `/hyphae-recall` and `/hyphae-remember` commands
+For project-local reminder instructions or command packaging, use Lamella or maintain those files manually alongside the MCP setup.
 
 ## Compact Mode
 

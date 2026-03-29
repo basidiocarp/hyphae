@@ -65,17 +65,13 @@ fn main() -> Result<()> {
     spore::logging::init(tracing::Level::WARN);
 
     let cli = Cli::parse();
-    let cfg = config::load_config()?;
-    let resolved_db_path = paths::resolve_db_path(cli.db.clone(), cfg.store.path.as_deref());
 
-    let resolved_project: Option<String> = cli
-        .project
-        .clone()
-        .or_else(|| cfg.store.default_project.clone())
-        .or_else(project::detect_project);
-
-    // Early-return commands (no store/embedder needed)
+    // Early-return commands that must remain available even if config parsing fails.
     match &cli.command {
+        Commands::Doctor { fix } => {
+            commands::doctor::run(*fix, cli.db.clone())?;
+            return Ok(());
+        }
         Commands::Completions { shell } => {
             use clap::CommandFactory;
             use clap_complete::generate;
@@ -87,10 +83,6 @@ fn main() -> Result<()> {
             );
             return Ok(());
         }
-        Commands::Config => {
-            commands::cmd_config(&cfg);
-            return Ok(());
-        }
         Commands::Init { editor, mode } => {
             init::run_init(*editor, *mode)?;
             return Ok(());
@@ -99,19 +91,35 @@ fn main() -> Result<()> {
             commands::self_update::run(*check)?;
             return Ok(());
         }
-        Commands::Doctor { fix } => {
-            commands::doctor::run(*fix, resolved_db_path.clone())?;
-            return Ok(());
-        }
         Commands::Backup { output } => {
+            let cfg = config::load_config()?;
+            let resolved_db_path =
+                paths::resolve_db_path(cli.db.clone(), cfg.store.path.as_deref());
             commands::backup::cmd_backup(output.clone(), resolved_db_path.clone())?;
             return Ok(());
         }
         Commands::Restore { path } => {
+            let cfg = config::load_config()?;
+            let resolved_db_path =
+                paths::resolve_db_path(cli.db.clone(), cfg.store.path.as_deref());
             commands::backup::cmd_restore(path.clone(), resolved_db_path.clone())?;
             return Ok(());
         }
         _ => {}
+    }
+
+    let cfg = config::load_config()?;
+    let resolved_db_path = paths::resolve_db_path(cli.db.clone(), cfg.store.path.as_deref());
+
+    let resolved_project: Option<String> = cli
+        .project
+        .clone()
+        .or_else(|| cfg.store.default_project.clone())
+        .or_else(project::detect_project);
+
+    if matches!(cli.command, Commands::Config) {
+        commands::cmd_config(&cfg);
+        return Ok(());
     }
 
     let embedder = init_embedder(&cfg.embeddings.model);
@@ -300,10 +308,11 @@ fn main() -> Result<()> {
             commands::codex_notify::run(&store, notification.clone(), resolved_project.as_deref())?;
         }
 
-        Commands::ExportTrainingData {
+        Commands::ExportTraining {
             format,
             topic,
             min_weight,
+            output,
         } => {
             let fmt = format
                 .parse::<commands::export_training::TrainingFormat>()
@@ -313,6 +322,7 @@ fn main() -> Result<()> {
                 fmt,
                 topic.clone(),
                 min_weight,
+                output.clone(),
                 resolved_project,
             )?;
         }

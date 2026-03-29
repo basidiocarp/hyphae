@@ -41,7 +41,7 @@ All commands accept the global `--db <path>` flag to override the default databa
   - [`hyphae prune`](#hyphae-prune----delete-low-weight-memories)
   - [`hyphae consolidate`](#hyphae-consolidate----consolidate-a-topic)
   - [`hyphae embed`](#hyphae-embed----generate-embeddings)
-  - [`hyphae export-training-data`](#hyphae-export-training-data----export-memories-as-training-jsonl)
+  - [`hyphae export-training`](#hyphae-export-training----export-memories-as-training-jsonl)
   - [`hyphae backup`](#hyphae-backup----backup-the-database)
   - [`hyphae restore`](#hyphae-restore----restore-from-backup)
   - [`hyphae evaluate`](#hyphae-evaluate----measure-agent-improvement)
@@ -801,10 +801,10 @@ hyphae embed --topic "decisions-api"
 
 ---
 
-### `hyphae export-training-data` -- Export memories as training JSONL
+### `hyphae export-training` -- Export memories as training JSONL
 
 ```
-hyphae export-training-data --format <sft|dpo|alpaca> [-t <topic>] [-o <output>]
+hyphae export-training --format <sft|dpo|alpaca> [-t <topic>] [-o <output>]
 ```
 
 | Option | Short | Required | Default | Description |
@@ -813,7 +813,7 @@ hyphae export-training-data --format <sft|dpo|alpaca> [-t <topic>] [-o <output>]
 | `--topic` | `-t` | no | -- | Limit export to a topic |
 | `--output` | `-o` | no | stdout | Write to file instead of stdout |
 
-Exports memories as training JSONL for supervised fine-tuning (SFT), direct preference optimization (DPO), or Alpaca format.
+Exports memories as training JSONL for supervised fine-tuning (SFT), direct preference optimization (DPO), or Alpaca format. `hyphae export-training-data` is kept as a compatibility alias.
 
 **Format details:**
 
@@ -823,13 +823,13 @@ Exports memories as training JSONL for supervised fine-tuning (SFT), direct pref
 
 ```bash
 # Export decisions as SFT pairs
-hyphae export-training-data --format sft --topic "decisions-api" -o sft_decisions.jsonl
+hyphae export-training --format sft --topic "decisions-api" -o sft_decisions.jsonl
 
 # Export all corrections as DPO pairs (for preference training)
-hyphae export-training-data --format dpo --topic "corrections" -o dpo_pairs.jsonl
+hyphae export-training --format dpo --topic "corrections" -o dpo_pairs.jsonl
 
 # Export everything as Alpaca format
-hyphae export-training-data --format alpaca -o full_training.jsonl
+hyphae export-training --format alpaca -o full_training.jsonl
 ```
 
 ---
@@ -922,19 +922,17 @@ hyphae init [-m <mode>]
 
 | Option | Short | Required | Default | Description |
 |--------|-------|----------|---------|-------------|
-| `--mode` | `-m` | no | `mcp` | Mode: `mcp`, `cli`, `skill`, `hook`, `all` |
+| `--mode` | `-m` | no | `mcp` | Mode: `mcp`, `hook`, `all` |
 
 **Modes:**
 
 | Mode | Action | Description                                                       |
 |------|--------|-------------------------------------------------------------------|
-| `mcp` | Configure the MCP server | Auto-detects and configures 14 AI tools                           |
-| `cli` | Inject into CLAUDE.md | Adds `hyphae store`/`hyphae recall` instructions                  |
-| `skill` | Install slash commands | `/recall`, `/remember` for Claude Code, `.mdc` for Cursor, etc.   |
+| `mcp` | Configure the MCP server | Auto-detects and configures supported editor MCP settings |
 | `hook` | Install Claude Code lifecycle hooks | Installs `PostToolUse`, `PreCompact`, and `SessionEnd` capture hooks |
-| `all` | All of the above | Configure MCP + CLI + Skills + Hook                               |
+| `all` | All of the above | Configure MCP plus Claude Code lifecycle hooks |
 
-**14 supported tools (MCP mode):**
+**Supported MCP targets:**
 
 | Tool | Config file |
 |------|-------------|
@@ -942,16 +940,10 @@ hyphae init [-m <mode>]
 | Claude Desktop | `~/Library/.../claude_desktop_config.json` |
 | Cursor | `~/.cursor/mcp.json` |
 | Windsurf | `~/.codeium/windsurf/mcp_config.json` |
-| VS Code / Copilot | `~/Library/.../Code/User/mcp.json` |
-| Gemini Code Assist | `~/.gemini/settings.json` |
+| VS Code | `~/Library/.../Code/User/mcp.json` |
 | Zed | `~/.zed/settings.json` |
 | Amp | `~/.config/amp/settings.json` |
-| Amazon Q | `~/.aws/amazonq/mcp.json` |
-| Cline | VS Code globalStorage |
-| Roo Code | VS Code globalStorage |
-| Kilo Code | VS Code globalStorage |
 | OpenAI Codex CLI | `~/.codex/config.toml` |
-| OpenCode | `~/.config/opencode/opencode.json` |
 
 For OpenAI Codex CLI, `hyphae init` also writes:
 
@@ -970,8 +962,8 @@ hyphae init
 # Install everything
 hyphae init --mode all
 
-# Just slash commands
-hyphae init --mode skill
+# Just Claude Code lifecycle hooks
+hyphae init --mode hook
 ```
 
 ---

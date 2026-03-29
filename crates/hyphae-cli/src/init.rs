@@ -108,11 +108,11 @@ fn claude_dir() -> Result<PathBuf> {
     editors::claude_dir().context("could not determine home directory for Claude Code settings")
 }
 
-fn claude_hooks_dir() -> Result<PathBuf> {
+pub(crate) fn claude_hooks_dir() -> Result<PathBuf> {
     Ok(claude_dir()?.join("hooks"))
 }
 
-fn claude_settings_path() -> Result<PathBuf> {
+pub(crate) fn claude_settings_path() -> Result<PathBuf> {
     Ok(claude_dir()?.join("settings.json"))
 }
 
@@ -160,6 +160,12 @@ impl HookSpec {
         serde_json::Value::Object(entry)
     }
 }
+
+pub(crate) const CLAUDE_HOOK_EVENTS: [(&str, &str); 3] = [
+    ("PostToolUse", "hyphae-post-tool.sh"),
+    ("PreCompact", "hyphae-precompact.sh"),
+    ("SessionEnd", "hyphae-session-end.sh"),
+];
 
 const CLAUDE_HOOK_SPECS: [HookSpec; 3] = [
     HookSpec {
