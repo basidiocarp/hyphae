@@ -6,7 +6,11 @@ pub use store::SHARED_PROJECT;
 pub use store::SqliteStore;
 pub use store::UnifiedSearchResult;
 pub use store::evaluation::{EvaluationWindow, collect_evaluation_window};
-pub use store::session::Session;
+pub use store::insights::{
+    HyphaeActivitySnapshot, HyphaeAnalytics, LessonCategory, LessonRecord, RecentMemoryActivity,
+};
+pub use store::session::{Session, SessionTimelineEvent, SessionTimelineRecord};
+pub use store::{SearchOrder, TopicMemoryOrder};
 pub mod context {
     pub use crate::store::context::*;
 }

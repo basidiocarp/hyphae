@@ -261,17 +261,18 @@ hyphae memoir create -n "backend-arch" -d "Backend architecture decisions"
 ### `hyphae memoir list` -- List memoirs
 
 ```
-hyphae memoir list
+hyphae memoir list [--json]
 ```
 
 No arguments. Displays all memoirs with their concept counts.
+Use `--json` for a structured payload shaped for programmatic consumers.
 
 ---
 
 ### `hyphae memoir show` -- Show a memoir
 
 ```
-hyphae memoir show <name>
+hyphae memoir show <name> [--query <query>] [--limit <n>] [--offset <n>] [--json]
 ```
 
 | Argument | Required | Description |
@@ -280,9 +281,10 @@ hyphae memoir show <name>
 
 ```bash
 hyphae memoir show backend-arch
+hyphae memoir show backend-arch --query "auth" --limit 5 --offset 10
 ```
 
-Displays stats, labels used, and all concepts in the memoir.
+Displays stats, labels used, and concepts in the memoir. Use `--json` for a structured payload.
 
 ---
 
@@ -353,7 +355,7 @@ hyphae memoir refine -m "backend-arch" -n "user-service" \
 ### `hyphae memoir search` -- Search within a memoir
 
 ```
-hyphae memoir search -m <memoir> <query> [-L <label>] [-l <limit>]
+hyphae memoir search -m <memoir> <query> [-L <label>] [-l <limit>] [--offset <n>] [--json]
 ```
 
 | Option | Short | Required | Default | Description |
@@ -368,12 +370,14 @@ hyphae memoir search -m "backend-arch" "authentication"
 hyphae memoir search -m "backend-arch" "service" --label "domain:auth"
 ```
 
+Use `--json` to emit a structured search payload.
+
 ---
 
 ### `hyphae memoir search-all` -- Search across all memoirs
 
 ```
-hyphae memoir search-all <query> [-l <limit>]
+hyphae memoir search-all <query> [-l <limit>] [--offset <n>] [--json]
 ```
 
 | Option | Short | Required | Default | Description |
@@ -384,6 +388,8 @@ hyphae memoir search-all <query> [-l <limit>]
 ```bash
 hyphae memoir search-all "database"
 ```
+
+The JSON payload includes the memoir for each hit so callers do not need to join tables themselves.
 
 ---
 
@@ -426,7 +432,7 @@ hyphae memoir link -m "backend-arch" --from "user-service" --to "redis" -r depen
 ### `hyphae memoir inspect` -- Inspect a concept and its neighborhood
 
 ```
-hyphae memoir inspect -m <memoir> <name> [-D <depth>]
+hyphae memoir inspect -m <memoir> <name> [-D <depth>] [--json]
 ```
 
 | Option | Short | Required | Default | Description |
@@ -442,6 +448,8 @@ hyphae memoir inspect -m "backend-arch" "user-service"
 # 2-hop neighborhood
 hyphae memoir inspect -m "backend-arch" "user-service" -D 2
 ```
+
+Use `--json` to emit the concept and neighborhood graph as structured data.
 
 ---
 

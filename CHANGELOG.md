@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## v0.10.0 - 2026-03-31
+
+### Added
+
+- **Owned read surfaces**: Added explicit CLI surfaces for session list, session timeline, activity, and context gathering so downstream tools no longer need private store reads.
+- **Runtime session document metadata**: Command-output ingestion now persists `runtime_session_id` and returns it from chunk retrieval.
+
+### Changed
+
+- **Identity v1 enforcement**: Session, context, and command-output flows now require the structured project identity contract instead of silently falling back to project-scoped legacy behavior.
+- **Versioned payloads**: Cap-facing CLI and MCP payloads now emit and validate explicit `schema_version` fields for session, memoir, memory, and command-output boundaries.
+
+### Fixed
+
+- **Worktree-safe recall and context**: Identity-aware context gathering and session lookup no longer bleed through legacy `session/*` fallback memories.
+- **Cross-tool contract drift**: Hyphae import, command-output, and dashboard read paths now validate the real contract shapes instead of optimistic ad hoc parsing.
+
 ## v0.9.5 - 2026-03-27
 
 ### Added

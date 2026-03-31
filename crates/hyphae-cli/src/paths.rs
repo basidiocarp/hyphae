@@ -7,30 +7,14 @@ pub(crate) fn resolve_db_path(cli_db: Option<PathBuf>, configured_db: Option<&st
 }
 
 pub(crate) fn default_db_path() -> PathBuf {
-    directories::ProjectDirs::from("", "", "hyphae")
-        .map(|d| d.data_dir().join("hyphae.db"))
-        .unwrap_or_else(|| {
-            directories::BaseDirs::new()
-                .map(|d| d.data_local_dir().join("hyphae").join("hyphae.db"))
-                .unwrap_or_else(|| PathBuf::from(".local/share/hyphae/hyphae.db"))
-        })
+    spore::paths::data_dir("hyphae").join("hyphae.db")
 }
 
 pub(crate) fn default_config_path() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("HYPHAE_CONFIG") {
-        return Some(PathBuf::from(path));
-    }
-
-    directories::ProjectDirs::from("", "", "hyphae")
-        .map(|d| d.config_dir().join("config.toml"))
-        .or_else(|| {
-            directories::BaseDirs::new().map(|d| {
-                d.home_dir()
-                    .join(".config")
-                    .join("hyphae")
-                    .join("config.toml")
-            })
-        })
+    Some(spore::paths::config_path_with_env(
+        "hyphae",
+        "HYPHAE_CONFIG",
+    ))
 }
 
 #[cfg(test)]

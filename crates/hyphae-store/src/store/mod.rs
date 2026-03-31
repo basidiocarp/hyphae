@@ -3,6 +3,7 @@ pub mod context;
 pub mod evaluation;
 mod feedback;
 mod helpers;
+pub mod insights;
 mod memoir_store;
 mod memory_store;
 mod project;
@@ -10,6 +11,7 @@ mod purge;
 mod search;
 pub mod session;
 
+pub use memory_store::{SearchOrder, TopicMemoryOrder};
 pub use project::SHARED_PROJECT;
 pub use search::UnifiedSearchResult;
 
@@ -169,8 +171,8 @@ pub(crate) mod test_helpers {
 mod tests {
     use super::*;
     use hyphae_core::{
-        Concept, ConceptLink, Importance, Memoir, MemoirId, MemoirStore, Memory, MemoryId,
-        Relation, Weight,
+        Concept, ConceptLink, Confidence, Importance, Memoir, MemoirId, MemoirStore, Memory,
+        MemoryId, Relation, Weight,
     };
 
     fn test_store() -> SqliteStore {
@@ -701,6 +703,32 @@ mod tests {
     }
 
     #[test]
+    fn test_search_concepts_fts_orders_by_text_relevance_before_confidence() {
+        let store = test_store();
+        let memoir = make_memoir("Relevance");
+        let memoir_id = memoir.id.clone();
+        store.create_memoir(memoir).unwrap();
+
+        let mut most_relevant = make_concept(
+            &memoir_id,
+            "MostRelevant",
+            "router context handles router context payloads",
+        );
+        most_relevant.confidence = Confidence::new_clamped(0.2);
+        store.add_concept(most_relevant).unwrap();
+
+        let mut less_relevant = make_concept(&memoir_id, "LessRelevant", "router only");
+        less_relevant.confidence = Confidence::new_clamped(0.95);
+        store.add_concept(less_relevant).unwrap();
+
+        let results = store
+            .search_concepts_fts(&memoir_id, "router context", 10)
+            .unwrap();
+
+        assert_eq!(results[0].name, "MostRelevant");
+    }
+
+    #[test]
     fn test_search_all_concepts_fts() {
         let store = test_store();
         let m1 = make_memoir("Memoir 1");
@@ -720,6 +748,33 @@ mod tests {
 
         let results = store.search_all_concepts_fts("ownership", 10).unwrap();
         assert!(results.len() >= 2);
+    }
+
+    #[test]
+    fn test_search_all_concepts_fts_orders_by_text_relevance_before_confidence() {
+        let store = test_store();
+        let alpha = make_memoir("Alpha");
+        let alpha_id = alpha.id.clone();
+        store.create_memoir(alpha).unwrap();
+
+        let beta = make_memoir("Beta");
+        let beta_id = beta.id.clone();
+        store.create_memoir(beta).unwrap();
+
+        let mut most_relevant = make_concept(
+            &alpha_id,
+            "MostRelevant",
+            "router context handles router context payloads",
+        );
+        most_relevant.confidence = Confidence::new_clamped(0.2);
+        store.add_concept(most_relevant).unwrap();
+
+        let mut less_relevant = make_concept(&beta_id, "LessRelevant", "router only");
+        less_relevant.confidence = Confidence::new_clamped(0.95);
+        store.add_concept(less_relevant).unwrap();
+
+        let results = store.search_all_concepts_fts("router context", 10).unwrap();
+        assert_eq!(results[0].name, "MostRelevant");
     }
 
     #[test]

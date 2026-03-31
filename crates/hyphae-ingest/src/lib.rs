@@ -60,6 +60,7 @@ pub fn ingest_file(
         created_at: now,
         updated_at: now,
         project: None,
+        runtime_session_id: None,
     };
 
     Ok((document, chunks))

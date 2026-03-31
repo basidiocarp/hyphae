@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use clap::ValueEnum;
 use spore::editors::{self, Editor as SharedEditor};
+use spore::{Tool, discover};
 use std::path::{Path, PathBuf};
 
 const HYPHAE_BIN_PLACEHOLDER: &str = "__HYPHAE_BIN__";
@@ -93,7 +94,9 @@ pub fn resolve_hyphae_binary() -> Result<PathBuf> {
             return Ok(canonical);
         }
     }
-    which::which("hyphae").context("could not locate hyphae binary in PATH")
+    discover(Tool::Hyphae)
+        .map(|info| info.binary_path)
+        .context("could not locate hyphae binary via spore discovery")
 }
 
 pub(crate) fn config_path_for(editor: Editor) -> Result<PathBuf> {

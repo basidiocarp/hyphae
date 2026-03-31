@@ -246,10 +246,13 @@ impl MemoirStore for SqliteStore {
         }
 
         let sql = format!(
-            "SELECT {CONCEPT_COLS} FROM concepts
-             WHERE memoir_id = ?1
-               AND id IN (SELECT id FROM concepts_fts WHERE concepts_fts MATCH ?2)
-             ORDER BY confidence DESC
+            "SELECT c.id, c.memoir_id, c.name, c.definition, c.labels, c.confidence,
+                    c.revision, c.created_at, c.updated_at, c.source_memory_ids
+             FROM concepts c
+             JOIN concepts_fts fts ON c.rowid = fts.rowid
+             WHERE c.memoir_id = ?1
+               AND concepts_fts MATCH ?2
+             ORDER BY fts.rank, c.name ASC
              LIMIT ?3"
         );
 
@@ -279,9 +282,12 @@ impl MemoirStore for SqliteStore {
         }
 
         let sql = format!(
-            "SELECT {CONCEPT_COLS} FROM concepts
-             WHERE id IN (SELECT id FROM concepts_fts WHERE concepts_fts MATCH ?1)
-             ORDER BY confidence DESC
+            "SELECT c.id, c.memoir_id, c.name, c.definition, c.labels, c.confidence,
+                    c.revision, c.created_at, c.updated_at, c.source_memory_ids
+             FROM concepts c
+             JOIN concepts_fts fts ON c.rowid = fts.rowid
+             WHERE concepts_fts MATCH ?1
+             ORDER BY fts.rank, c.name ASC
              LIMIT ?2"
         );
 

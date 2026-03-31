@@ -20,7 +20,7 @@ impl ChunkStore for SqliteStore {
         self.conn
             .prepare_cached(&format!(
                 "INSERT OR REPLACE INTO documents ({DOCUMENT_COLS}) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
             ))
             .map_err(|e| HyphaeError::Database(e.to_string()))?
             .execute(params![
@@ -31,6 +31,7 @@ impl ChunkStore for SqliteStore {
                 doc.created_at.to_rfc3339(),
                 doc.updated_at.to_rfc3339(),
                 doc.project.as_deref(),
+                doc.runtime_session_id.as_deref(),
             ])
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
         Ok(id)
@@ -446,6 +447,7 @@ pub(crate) mod test_helpers {
             created_at: now,
             updated_at: now,
             project: None,
+            runtime_session_id: None,
         }
     }
 

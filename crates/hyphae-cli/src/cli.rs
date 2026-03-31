@@ -1,8 +1,10 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+use crate::commands::context::GatherContextArgs;
 use crate::commands::feedback::FeedbackArgs;
 use crate::commands::memoir::MemoirArgs;
+use crate::commands::memory::{MemoryArgs, SearchOrder};
 use crate::commands::project::ProjectArgs;
 use crate::commands::session::SessionArgs;
 
@@ -17,6 +19,10 @@ pub(crate) struct Cli {
     /// Project namespace for memory isolation
     #[arg(short = 'P', long, global = true)]
     pub(crate) project: Option<String>,
+
+    /// Disable project auto-detection and query across all projects
+    #[arg(long, global = true, conflicts_with = "project")]
+    pub(crate) all_projects: bool,
 
     #[command(subcommand)]
     pub(crate) command: Commands,
@@ -42,9 +48,21 @@ pub(crate) enum Commands {
         /// Query text
         #[arg(short, long)]
         query: String,
+        /// Restrict search results to a specific topic
+        #[arg(short, long)]
+        topic: Option<String>,
         /// Maximum results
         #[arg(short, long, default_value = "10")]
         limit: usize,
+        /// Include invalidated memories in read-only search results
+        #[arg(long)]
+        include_invalidated: bool,
+        /// Result ordering
+        #[arg(long, value_enum, default_value_t = SearchOrder::Weight)]
+        order: SearchOrder,
+        /// Emit structured JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
     },
 
     /// Invalidate a memory without deleting it
@@ -77,8 +95,44 @@ pub(crate) enum Commands {
         project: String,
     },
 
+    /// Gather relevant context as JSON
+    GatherContext(GatherContextArgs),
+
     /// Get system statistics
-    Stats,
+    Stats {
+        /// Include invalidated memories in read-only aggregates
+        #[arg(long)]
+        include_invalidated: bool,
+        /// Emit structured JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// List memory topics
+    Topics {
+        /// Include invalidated memories in read-only aggregates
+        #[arg(long)]
+        include_invalidated: bool,
+        /// Emit structured JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Audit topic health
+    Health {
+        /// Specific topic to audit
+        #[arg(short, long)]
+        topic: Option<String>,
+        /// Include invalidated memories in read-only aggregates
+        #[arg(long)]
+        include_invalidated: bool,
+        /// Emit structured JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Read stored memories by id or topic
+    Memory(MemoryArgs),
 
     /// Show config
     Config,
@@ -122,7 +176,11 @@ pub(crate) enum Commands {
     },
 
     /// List all ingested document sources
-    ListSources,
+    ListSources {
+        /// Emit structured JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
 
     /// Remove an ingested document source
     ForgetSource {
@@ -193,6 +251,19 @@ pub(crate) enum Commands {
         #[arg(long, default_value = "100")]
         count: usize,
     },
+
+    /// Show extracted lessons as JSON
+    Lessons {
+        /// Maximum source memories to consider per lesson topic
+        #[arg(short, long, default_value = "50")]
+        limit: usize,
+    },
+
+    /// Show Hyphae activity and count snapshot as JSON
+    Activity,
+
+    /// Show Hyphae analytics as JSON
+    Analytics,
 
     /// Check for and install updates
     SelfUpdate {
@@ -349,5 +420,23 @@ mod tests {
             cli.command,
             Commands::ExportTraining { format, .. } if format == "alpaca"
         ));
+    }
+
+    #[test]
+    fn test_lessons_command_parses() {
+        let cli = Cli::try_parse_from(["hyphae", "lessons", "--limit", "25"]).unwrap();
+        assert!(matches!(cli.command, Commands::Lessons { limit } if limit == 25));
+    }
+
+    #[test]
+    fn test_analytics_command_parses() {
+        let cli = Cli::try_parse_from(["hyphae", "analytics"]).unwrap();
+        assert!(matches!(cli.command, Commands::Analytics));
+    }
+
+    #[test]
+    fn test_activity_command_parses() {
+        let cli = Cli::try_parse_from(["hyphae", "activity"]).unwrap();
+        assert!(matches!(cli.command, Commands::Activity));
     }
 }

@@ -38,6 +38,16 @@ pub(super) fn get_str<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
     args.get(key).and_then(|v| v.as_str())
 }
 
+pub(super) fn normalize_identity<'a>(
+    project_root: Option<&'a str>,
+    worktree_id: Option<&'a str>,
+) -> (Option<&'a str>, Option<&'a str>) {
+    match (project_root, worktree_id) {
+        (Some(project_root), Some(worktree_id)) => (Some(project_root), Some(worktree_id)),
+        _ => (None, None),
+    }
+}
+
 pub(super) fn get_bounded_i64(args: &Value, key: &str, default: i64, min: i64, max: i64) -> i64 {
     args.get(key)
         .and_then(|v| v.as_i64())

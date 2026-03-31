@@ -14,6 +14,7 @@ pub struct Document {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub project: Option<String>,
+    pub runtime_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]

@@ -20,6 +20,7 @@ use super::{
 // ─────────────────────────────────────────────────────────────────────────────
 
 const MEMOIR_STALE_DAYS: i64 = 7;
+const CODE_GRAPH_SCHEMA_VERSION: &str = "1.0";
 
 pub(crate) fn tool_memoir_create(store: &SqliteStore, args: &Value) -> ToolResult {
     let name = match validate_required_string(args, "name") {
@@ -463,6 +464,18 @@ pub(crate) fn tool_import_code_graph(
     compact: bool,
     _project: Option<&str>,
 ) -> ToolResult {
+    match args.get("schema_version").and_then(|value| value.as_str()) {
+        Some(CODE_GRAPH_SCHEMA_VERSION) => {}
+        Some(version) => {
+            return ToolResult::error(format!(
+                "unsupported code graph schema_version: {version} (expected {CODE_GRAPH_SCHEMA_VERSION})"
+            ));
+        }
+        None => {
+            return ToolResult::error("missing required field: schema_version".to_string());
+        }
+    }
+
     let project = match validate_required_string(args, "project") {
         Ok(p) => p,
         Err(e) => return e,
@@ -1016,6 +1029,7 @@ mod tests {
     fn test_import_code_graph_creates_memoir_and_concepts() {
         let store = test_store();
         let args = json!({
+            "schema_version": "1.0",
             "project": "mycelium",
             "nodes": [
                 { "name": "dispatch", "labels": ["function", "public"], "description": "pub fn dispatch(...)" },
@@ -1078,6 +1092,7 @@ mod tests {
     fn test_import_code_graph_edge_validation_fails_for_unknown_source() {
         let store = test_store();
         let args = json!({
+            "schema_version": "1.0",
             "project": "test",
             "nodes": [
                 { "name": "a", "labels": [], "description": "node a" }
@@ -1096,6 +1111,7 @@ mod tests {
     fn test_import_code_graph_compact_mode() {
         let store = test_store();
         let args = json!({
+            "schema_version": "1.0",
             "project": "compact_test",
             "nodes": [
                 { "name": "foo", "labels": ["function"], "description": "fn foo()" }
@@ -1116,6 +1132,7 @@ mod tests {
     fn test_code_query_symbols() {
         let store = test_store();
         let import_args = json!({
+            "schema_version": "1.0",
             "project": "test_project",
             "nodes": [
                 { "name": "foo", "labels": ["function", "public"], "description": "fn foo()" },
@@ -1157,6 +1174,7 @@ mod tests {
     fn test_code_query_callers() {
         let store = test_store();
         let import_args = json!({
+            "schema_version": "1.0",
             "project": "caller_test",
             "nodes": [
                 { "name": "main", "labels": ["function"], "description": "fn main()" },
@@ -1192,6 +1210,7 @@ mod tests {
     fn test_code_query_callees() {
         let store = test_store();
         let import_args = json!({
+            "schema_version": "1.0",
             "project": "callee_test",
             "nodes": [
                 { "name": "main", "labels": ["function"], "description": "fn main()" },
@@ -1229,6 +1248,7 @@ mod tests {
     fn test_code_query_structure() {
         let store = test_store();
         let import_args = json!({
+            "schema_version": "1.0",
             "project": "structure_test",
             "nodes": [
                 { "name": "a", "labels": ["function"], "description": "fn a()" },
@@ -1277,6 +1297,7 @@ mod tests {
     fn test_code_query_nonexistent_symbol() {
         let store = test_store();
         let import_args = json!({
+            "schema_version": "1.0",
             "project": "sym_test",
             "nodes": [
                 { "name": "exists", "labels": ["function"], "description": "fn exists()" }
@@ -1295,5 +1316,44 @@ mod tests {
         let result = tool_code_query(&store, &query_args, false, None);
         assert!(result.is_error);
         assert!(result.content[0].text.contains("not found"));
+    }
+
+    #[test]
+    fn test_import_code_graph_rejects_missing_schema_version() {
+        let store = test_store();
+        let args = json!({
+            "project": "missing_version",
+            "nodes": [
+                { "name": "foo", "labels": ["function"], "description": "fn foo()" }
+            ],
+            "edges": []
+        });
+
+        let result = tool_import_code_graph(&store, &args, false, None);
+        assert!(result.is_error);
+        assert_eq!(
+            result.content[0].text,
+            "missing required field: schema_version"
+        );
+    }
+
+    #[test]
+    fn test_import_code_graph_rejects_unknown_schema_version() {
+        let store = test_store();
+        let args = json!({
+            "schema_version": "2.0",
+            "project": "wrong_version",
+            "nodes": [
+                { "name": "foo", "labels": ["function"], "description": "fn foo()" }
+            ],
+            "edges": []
+        });
+
+        let result = tool_import_code_graph(&store, &args, false, None);
+        assert!(result.is_error);
+        assert_eq!(
+            result.content[0].text,
+            "unsupported code graph schema_version: 2.0 (expected 1.0)"
+        );
     }
 }

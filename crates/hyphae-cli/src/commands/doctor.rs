@@ -1,6 +1,7 @@
 //! `hyphae doctor` — diagnose common issues with the hyphae installation.
 
 use anyhow::Result;
+use spore::{Tool, discover};
 use std::path::PathBuf;
 
 use crate::config::Config;
@@ -228,9 +229,9 @@ fn inspect_config_at_path(path: PathBuf) -> ConfigInspection {
 }
 
 fn check_mcp(resolved_binary: Option<&std::path::Path>, warnings: &mut u32, errors: &mut u32) {
-    match which::which("hyphae") {
-        Ok(path) => pass(&format!("hyphae binary at {}", path.display())),
-        Err(_) => {
+    match discover(Tool::Hyphae) {
+        Some(info) => pass(&format!("hyphae binary at {}", info.binary_path.display())),
+        None => {
             warn("hyphae binary not in PATH");
             *warnings += 1;
         }
@@ -718,18 +719,18 @@ fn check_embeddings(warnings: &mut u32) {
 
 fn check_ecosystem(warnings: &mut u32) {
     // Check mycelium
-    match which::which("mycelium") {
-        Ok(_) => pass("Mycelium available (chunked output integration)"),
-        Err(_) => {
+    match discover(Tool::Mycelium) {
+        Some(_) => pass("Mycelium available (chunked output integration)"),
+        None => {
             warn("Mycelium not installed (optional: token-optimized CLI)");
             *warnings += 1;
         }
     }
 
     // Check rhizome
-    match which::which("rhizome") {
-        Ok(_) => pass("Rhizome available (code-aware recall)"),
-        Err(_) => {
+    match discover(Tool::Rhizome) {
+        Some(_) => pass("Rhizome available (code-aware recall)"),
+        None => {
             warn("Rhizome not installed (optional: code intelligence)");
             *warnings += 1;
         }

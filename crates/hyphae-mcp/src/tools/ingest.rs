@@ -12,9 +12,11 @@ use hyphae_store::SqliteStore;
 
 use crate::protocol::ToolResult;
 
-use super::{get_bounded_i64, get_str, validate_required_string};
+use super::{get_bounded_i64, get_str, normalize_identity, validate_required_string};
 
 use hyphae_store::UnifiedSearchResult;
+
+const COMMAND_OUTPUT_SCHEMA_VERSION: &str = "1.0";
 
 pub(crate) fn tool_ingest_file(
     store: &SqliteStore,
@@ -207,6 +209,18 @@ pub(crate) fn tool_store_command_output(
     _compact: bool,
     project: Option<&str>,
 ) -> ToolResult {
+    match args.get("schema_version").and_then(|value| value.as_str()) {
+        Some(COMMAND_OUTPUT_SCHEMA_VERSION) => {}
+        Some(version) => {
+            return ToolResult::error(format!(
+                "unsupported command output schema_version: {version} (expected {COMMAND_OUTPUT_SCHEMA_VERSION})"
+            ));
+        }
+        None => {
+            return ToolResult::error("missing required field: schema_version".to_string());
+        }
+    }
+
     let command = match validate_required_string(args, "command") {
         Ok(c) => c,
         Err(e) => return e,
@@ -218,10 +232,13 @@ pub(crate) fn tool_store_command_output(
     let ttl_hours = get_bounded_i64(args, "ttl_hours", 4, 1, 168);
     let project_override = get_str(args, "project");
     let effective_project = project_override.or(project);
+    let (project_root, worktree_id) =
+        normalize_identity(get_str(args, "project_root"), get_str(args, "worktree_id"));
+    let runtime_session_id = get_str(args, "runtime_session_id");
 
     // 1. Auto-detect output type and chunk
     let output_type = detect_output_type(output);
-    let source_path = format!("cmd://{command}");
+    let source_path = command_output_source_path(command, project_root, worktree_id);
     let metadata = ChunkMetadata {
         source_path: source_path.clone(),
         source_type: SourceType::Text,
@@ -249,6 +266,7 @@ pub(crate) fn tool_store_command_output(
         created_at: now,
         updated_at: now,
         project: effective_project.map(String::from),
+        runtime_session_id: runtime_session_id.map(String::from),
     };
 
     // Replace existing document at the same source path
@@ -276,21 +294,23 @@ pub(crate) fn tool_store_command_output(
     let summary = format!("Command `{command}` output ({chunk_count} chunks):\n{first_lines}");
 
     let expires_at = Utc::now() + Duration::hours(ttl_hours);
-    let mut builder = Memory::builder(
-        "command_output".to_string(),
-        summary.clone(),
-        Importance::Ephemeral,
-    )
-    .keywords(vec![command.to_string()])
-    .expires_at(expires_at);
+    if project_root.is_none() {
+        let mut builder = Memory::builder(
+            "command_output".to_string(),
+            summary.clone(),
+            Importance::Ephemeral,
+        )
+        .keywords(vec![command.to_string()])
+        .expires_at(expires_at);
 
-    if let Some(p) = effective_project {
-        builder = builder.project(p.to_string());
-    }
+        if let Some(p) = effective_project {
+            builder = builder.project(p.to_string());
+        }
 
-    let memory = builder.build();
-    if let Err(e) = store.store(memory) {
-        tracing::warn!("failed to store summary memory: {e}");
+        let memory = builder.build();
+        if let Err(e) = store.store(memory) {
+            tracing::warn!("failed to store summary memory: {e}");
+        }
     }
 
     // 6. Return result
@@ -302,6 +322,19 @@ pub(crate) fn tool_store_command_output(
     ToolResult::text(result.to_string())
 }
 
+fn command_output_source_path(
+    command: &str,
+    project_root: Option<&str>,
+    worktree_id: Option<&str>,
+) -> String {
+    match (project_root, worktree_id) {
+        (Some(project_root), Some(worktree_id)) => {
+            format!("cmd://{project_root}::{worktree_id}::{command}")
+        }
+        _ => format!("cmd://{command}"),
+    }
+}
+
 pub(crate) fn tool_get_command_chunks(store: &SqliteStore, args: &Value) -> ToolResult {
     let doc_id_str = match validate_required_string(args, "document_id") {
         Ok(id) => id,
@@ -311,6 +344,12 @@ pub(crate) fn tool_get_command_chunks(store: &SqliteStore, args: &Value) -> Tool
     let limit = get_bounded_i64(args, "limit", 5, 1, 20) as usize;
 
     let doc_id = DocumentId::from(doc_id_str);
+
+    let runtime_session_id = match store.get_document(&doc_id) {
+        Ok(Some(document)) => document.runtime_session_id,
+        Ok(None) => None,
+        Err(e) => return ToolResult::error(format!("db error: {e}")),
+    };
 
     // Get all chunks for the document (already sorted by chunk_index from store)
     let chunks = match store.get_chunks(&doc_id) {
@@ -339,6 +378,7 @@ pub(crate) fn tool_get_command_chunks(store: &SqliteStore, args: &Value) -> Tool
         "total": total,
         "offset": offset,
         "has_more": has_more,
+        "runtime_session_id": runtime_session_id,
     });
     ToolResult::text(result.to_string())
 }
@@ -435,4 +475,220 @@ pub(crate) fn tool_search_all(
     }
 
     ToolResult::text(out.trim_end().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hyphae_core::ChunkStore;
+    use serde_json::json;
+
+    fn test_store() -> SqliteStore {
+        SqliteStore::in_memory().expect("in-memory store")
+    }
+
+    #[test]
+    fn test_store_command_output_namespaces_source_path_for_identity_v1() {
+        let store = test_store();
+
+        let first = tool_store_command_output(
+            &store,
+            &json!({
+                "schema_version": "1.0",
+                "command": "cargo test",
+                "output": "alpha output",
+                "project": "demo",
+                "project_root": "/repo/demo",
+                "worktree_id": "wt-alpha"
+            }),
+            false,
+            None,
+        );
+        assert!(!first.is_error);
+
+        let second = tool_store_command_output(
+            &store,
+            &json!({
+                "schema_version": "1.0",
+                "command": "cargo test",
+                "output": "beta output",
+                "project": "demo",
+                "project_root": "/repo/demo",
+                "worktree_id": "wt-beta"
+            }),
+            false,
+            None,
+        );
+        assert!(!second.is_error);
+
+        let docs = store.list_documents(Some("demo")).unwrap();
+        assert_eq!(docs.len(), 2);
+        assert!(
+            docs.iter()
+                .any(|doc| { doc.source_path == "cmd:///repo/demo::wt-alpha::cargo test" })
+        );
+        assert!(
+            docs.iter()
+                .any(|doc| { doc.source_path == "cmd:///repo/demo::wt-beta::cargo test" })
+        );
+    }
+
+    #[test]
+    fn test_store_command_output_without_identity_preserves_legacy_replacement() {
+        let store = test_store();
+
+        let first = tool_store_command_output(
+            &store,
+            &json!({
+                "schema_version": "1.0",
+                "command": "cargo test",
+                "output": "first output",
+                "project": "demo"
+            }),
+            false,
+            None,
+        );
+        assert!(!first.is_error);
+        let first_parsed: Value = serde_json::from_str(&first.content[0].text).unwrap();
+        let first_document_id = DocumentId::from(first_parsed["document_id"].as_str().unwrap());
+
+        let second = tool_store_command_output(
+            &store,
+            &json!({
+                "schema_version": "1.0",
+                "command": "cargo test",
+                "output": "second output",
+                "project": "demo"
+            }),
+            false,
+            None,
+        );
+        assert!(!second.is_error);
+        let second_parsed: Value = serde_json::from_str(&second.content[0].text).unwrap();
+        let second_document_id = DocumentId::from(second_parsed["document_id"].as_str().unwrap());
+
+        let docs = store.list_documents(Some("demo")).unwrap();
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].source_path, "cmd://cargo test");
+        assert_ne!(first_document_id, second_document_id);
+        assert!(store.get_document(&first_document_id).unwrap().is_none());
+
+        let latest_chunks = store.get_chunks(&second_document_id).unwrap();
+        assert!(!latest_chunks.is_empty());
+        assert!(
+            latest_chunks
+                .iter()
+                .any(|chunk| chunk.content.contains("second output"))
+        );
+    }
+
+    #[test]
+    fn test_store_command_output_identity_v1_skips_project_scoped_summary_memory() {
+        let store = test_store();
+
+        let result = tool_store_command_output(
+            &store,
+            &json!({
+                "schema_version": "1.0",
+                "command": "cargo test",
+                "output": "alpha output",
+                "project": "demo",
+                "project_root": "/repo/demo",
+                "worktree_id": "wt-alpha"
+            }),
+            false,
+            None,
+        );
+        assert!(!result.is_error);
+
+        let memories = store.search_fts("alpha", 10, 0, Some("demo")).unwrap();
+        assert!(memories.is_empty());
+    }
+
+    #[test]
+    fn test_store_command_output_rejects_missing_schema_version() {
+        let store = test_store();
+
+        let result = tool_store_command_output(
+            &store,
+            &json!({
+                "command": "cargo test",
+                "output": "alpha output",
+                "project": "demo"
+            }),
+            false,
+            None,
+        );
+
+        assert!(result.is_error);
+        assert_eq!(
+            result.content[0].text,
+            "missing required field: schema_version"
+        );
+    }
+
+    #[test]
+    fn test_store_command_output_rejects_unknown_schema_version() {
+        let store = test_store();
+
+        let result = tool_store_command_output(
+            &store,
+            &json!({
+                "schema_version": "2.0",
+                "command": "cargo test",
+                "output": "alpha output",
+                "project": "demo"
+            }),
+            false,
+            None,
+        );
+
+        assert!(result.is_error);
+        assert_eq!(
+            result.content[0].text,
+            "unsupported command output schema_version: 2.0 (expected 1.0)"
+        );
+    }
+
+    #[test]
+    fn test_store_command_output_persists_runtime_session_id_and_returns_it_with_chunks() {
+        let store = test_store();
+
+        let result = tool_store_command_output(
+            &store,
+            &json!({
+                "schema_version": "1.0",
+                "command": "cargo test",
+                "output": "alpha output",
+                "project": "demo",
+                "runtime_session_id": "claude-session-42"
+            }),
+            false,
+            None,
+        );
+        assert!(!result.is_error);
+
+        let stored: Value = serde_json::from_str(&result.content[0].text).unwrap();
+        let doc_id = DocumentId::from(stored["document_id"].as_str().unwrap());
+        let document = store.get_document(&doc_id).unwrap().unwrap();
+        assert_eq!(
+            document.runtime_session_id.as_deref(),
+            Some("claude-session-42")
+        );
+
+        let chunks = tool_get_command_chunks(
+            &store,
+            &json!({
+                "document_id": doc_id.to_string(),
+                "offset": 0,
+                "limit": 5
+            }),
+        );
+        assert!(!chunks.is_error);
+        let payload: Value = serde_json::from_str(&chunks.content[0].text).unwrap();
+        assert_eq!(
+            payload["runtime_session_id"].as_str(),
+            Some("claude-session-42")
+        );
+    }
 }

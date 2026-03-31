@@ -1,7 +1,36 @@
 use anyhow::Result;
-use hyphae_core::{ChunkStore, Embedder};
+use hyphae_core::{ChunkStore, Document, Embedder};
 use hyphae_store::SqliteStore;
+use serde::Serialize;
 use std::path::PathBuf;
+
+const SOURCES_SCHEMA_VERSION: &str = "1.0";
+
+#[derive(Serialize)]
+struct DocumentPayload {
+    id: String,
+    source_path: String,
+    source_type: String,
+    chunk_count: usize,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
+    project: Option<String>,
+}
+
+#[derive(Serialize)]
+struct SourcesPayload {
+    project: Option<String>,
+    total_sources: usize,
+    total_chunks: usize,
+    sources: Vec<DocumentPayload>,
+}
+
+#[derive(Serialize)]
+struct VersionedPayload<'a, T: Serialize> {
+    schema_version: &'a str,
+    #[serde(flatten)]
+    payload: &'a T,
+}
 
 pub(crate) fn cmd_ingest(
     store: &SqliteStore,
@@ -90,18 +119,27 @@ pub(crate) fn cmd_search_docs(
     Ok(())
 }
 
-pub(crate) fn cmd_list_sources(store: &SqliteStore, project: Option<String>) -> Result<()> {
-    let docs = store.list_documents(project.as_deref())?;
-    if docs.is_empty() {
+pub(crate) fn cmd_list_sources(
+    store: &SqliteStore,
+    json: bool,
+    project: Option<String>,
+) -> Result<()> {
+    let payload = list_sources_payload(store, project.as_deref())?;
+    if json {
+        print_json_versioned(SOURCES_SCHEMA_VERSION, &payload)?;
+        return Ok(());
+    }
+
+    if payload.sources.is_empty() {
         println!("No sources ingested yet");
     } else {
         println!("{:<60} {:<10} {:<8} Ingested", "Path", "Type", "Chunks");
         println!("{}", "-".repeat(90));
-        for doc in docs {
+        for doc in payload.sources {
             println!(
                 "{:<60} {:<10} {:<8} {}",
                 doc.source_path,
-                format!("{:?}", doc.source_type),
+                doc.source_type,
                 doc.chunk_count,
                 doc.created_at.format("%Y-%m-%d %H:%M"),
             );
@@ -191,4 +229,96 @@ pub(crate) fn cmd_search_all(
         }
     }
     Ok(())
+}
+
+fn list_sources_payload(store: &SqliteStore, project: Option<&str>) -> Result<SourcesPayload> {
+    let docs = store.list_documents(project)?;
+    let total_chunks = docs.iter().map(|doc| doc.chunk_count).sum();
+    Ok(SourcesPayload {
+        project: project.map(str::to_string),
+        total_sources: docs.len(),
+        total_chunks,
+        sources: docs.iter().map(to_document_payload).collect(),
+    })
+}
+
+fn to_document_payload(doc: &Document) -> DocumentPayload {
+    DocumentPayload {
+        id: doc.id.to_string(),
+        source_path: doc.source_path.clone(),
+        source_type: doc.source_type.to_string(),
+        chunk_count: doc.chunk_count,
+        created_at: doc.created_at,
+        updated_at: doc.updated_at,
+        project: doc.project.clone(),
+    }
+}
+
+fn print_json<T: Serialize>(payload: &T) -> Result<()> {
+    println!("{}", serde_json::to_string(payload)?);
+    Ok(())
+}
+
+fn print_json_versioned<T: Serialize>(schema_version: &'static str, payload: &T) -> Result<()> {
+    let versioned = VersionedPayload {
+        schema_version,
+        payload,
+    };
+    print_json(&versioned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use hyphae_core::{DocumentId, SourceType};
+
+    fn test_store() -> SqliteStore {
+        SqliteStore::in_memory().expect("in-memory store")
+    }
+
+    fn make_document(path: &str, source_type: SourceType, chunk_count: usize) -> Document {
+        let now = Utc::now();
+        Document {
+            id: DocumentId::new(),
+            source_path: path.to_string(),
+            source_type,
+            chunk_count,
+            created_at: now,
+            updated_at: now,
+            project: Some("demo-project".to_string()),
+            runtime_session_id: None,
+        }
+    }
+
+    #[test]
+    fn test_list_sources_payload_returns_structured_sources() {
+        let store = test_store();
+        store
+            .store_document(make_document("src/lib.rs", SourceType::Code, 3))
+            .unwrap();
+        store
+            .store_document(make_document("docs/readme.md", SourceType::Markdown, 2))
+            .unwrap();
+
+        let payload = list_sources_payload(&store, Some("demo-project")).unwrap();
+        let value = serde_json::to_value(&payload).unwrap();
+
+        assert_eq!(value["project"].as_str(), Some("demo-project"));
+        assert_eq!(value["total_sources"].as_u64(), Some(2));
+        assert_eq!(value["total_chunks"].as_u64(), Some(5));
+        assert_eq!(
+            value["sources"][0]["source_path"].as_str(),
+            Some("docs/readme.md")
+        );
+        assert_eq!(
+            value["sources"][0]["source_type"].as_str(),
+            Some("markdown")
+        );
+        assert_eq!(
+            value["sources"][1]["source_path"].as_str(),
+            Some("src/lib.rs")
+        );
+        assert_eq!(value["sources"][1]["source_type"].as_str(), Some("code"));
+    }
 }

@@ -473,9 +473,22 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {
+                    "schema_version": {
+                        "type": "string",
+                        "const": "1.0",
+                        "description": "Required contract version for code-graph imports. Hyphae rejects missing or unknown versions rather than accepting drifted payloads."
+                    },
                     "project": {
                         "type": "string",
                         "description": "Project name. Creates/updates memoir 'code:{project}'."
+                    },
+                    "project_root": {
+                        "type": "string",
+                        "description": "Optional repository root for future code-graph identity matching. Rhizome sends this together with worktree_id when identity v1 is active; Hyphae currently keeps memoir ownership keyed by project."
+                    },
+                    "worktree_id": {
+                        "type": "string",
+                        "description": "Optional worktree identifier paired with project_root for future code-graph identity matching. Partial identity input is ignored by callers and should not be sent."
                     },
                     "nodes": {
                         "type": "array",
@@ -539,7 +552,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                         "description": "If true (default), remove concepts whose names are not in this import (deleted or renamed symbols). Set to false for incremental partial imports."
                     }
                 },
-                "required": ["project", "nodes", "edges"]
+                "required": ["schema_version", "project", "nodes", "edges"]
             }
         }),
         json!({
@@ -585,7 +598,19 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                 },
                 "project": {
                     "type": "string",
-                    "description": "Project name to scope the search (optional, uses configured project if omitted)"
+                    "description": "Project name to scope the search (optional, uses configured project if omitted). Required when project_root and worktree_id are supplied so structured session lookup stays bounded."
+                },
+                "project_root": {
+                    "type": "string",
+                    "description": "Optional repository root for session identity v1 lookups. Use with worktree_id and project to scope structured session results to one worktree."
+                },
+                "worktree_id": {
+                    "type": "string",
+                    "description": "Optional worktree identifier for session identity v1 lookups. Use with project_root and project to avoid mixing sibling worktrees in structured session context."
+                },
+                "scope": {
+                    "type": "string",
+                    "description": "Optional worker or runtime scope filter for structured session context. Use with project_root and worktree_id when multiple parallel workers share one worktree."
                 },
                 "token_budget": {
                     "type": "integer",
@@ -603,7 +628,17 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     "description": "Which sources to include (default: all). Options: memories, errors, sessions, code"
                 }
             },
-            "required": ["task"]
+            "required": ["task"],
+            "allOf": [
+                {
+                    "if": {
+                        "required": ["project_root", "worktree_id"]
+                    },
+                    "then": {
+                        "required": ["project"]
+                    }
+                }
+            ]
         }
     }));
 
@@ -716,6 +751,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "schema_version": {
+                    "type": "string",
+                    "const": "1.0",
+                    "description": "Contract version for command-output-v1. Receivers reject missing or unknown versions."
+                },
                 "command": {
                     "type": "string",
                     "description": "The command that produced this output (e.g. 'cargo test', 'git diff')"
@@ -728,15 +768,27 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     "type": "string",
                     "description": "Project name for scoping (optional)"
                 },
+                "project_root": {
+                    "type": "string",
+                    "description": "Optional repository root for command-output identity v1. When paired with worktree_id, Hyphae namespaces the stored command-output source path so same-command captures do not collide across worktrees or projects. Partial identity input is ignored and legacy replacement behavior is preserved."
+                },
+                "worktree_id": {
+                    "type": "string",
+                    "description": "Optional worktree identifier for command-output identity v1. Use with project_root to namespace stored command output; partial identity input is ignored and legacy replacement behavior is preserved."
+                },
+                "runtime_session_id": {
+                    "type": "string",
+                    "description": "Optional external runtime session id propagated from the calling agent environment. Hyphae stores it on the command-output document so chunk retrieval can be correlated back to the originating runtime session."
+                },
                 "ttl_hours": {
-                    "type": "number",
+                    "type": "integer",
                     "default": 4,
                     "minimum": 1,
                     "maximum": 168,
                     "description": "Hours before the summary memory expires (default 4)"
                 }
             },
-            "required": ["command", "output"]
+            "required": ["schema_version", "command", "output"]
         }
     }));
     tools.push(json!({
@@ -782,9 +834,21 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     "type": "string",
                     "description": "Brief description of the task being worked on (optional)"
                 },
+                "project_root": {
+                    "type": "string",
+                    "description": "Optional repository root for session identity v1. Use with worktree_id to identify a specific structured session. When scope is also set, scope participates in identity matching so parallel sessions stay distinct."
+                },
+                "worktree_id": {
+                    "type": "string",
+                    "description": "Optional worktree identifier for session identity v1. Use with project_root to identify a specific structured session. When scope is also set, scope participates in identity matching so parallel sessions stay distinct."
+                },
                 "scope": {
                     "type": "string",
-                    "description": "Optional worker or runtime scope. Use this when one project may have multiple active sessions in parallel and they should not share a single active session id."
+                    "description": "Optional worker or runtime scope. When paired with project_root and worktree_id, it prevents distinct parallel sessions from collapsing onto one identity."
+                },
+                "runtime_session_id": {
+                    "type": "string",
+                    "description": "Optional external runtime session id propagated from the calling agent environment. Hyphae stores it as metadata so downstream consumers can correlate Hyphae sessions with Mycelium history and Canopy evidence."
                 }
             },
             "required": ["project"]
@@ -793,7 +857,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
 
     tools.push(json!({
         "name": "hyphae_session_end",
-        "description": "End a coding session and store a summary. Updates the session record with completion data and optionally stores the summary as a persistent memory for future context. Call when finishing a task.",
+        "description": "End a coding session and store a summary in the session record. Updates the session with completion data. Call when finishing a task.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -830,9 +894,17 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     "type": "string",
                     "description": "Project identifier to query sessions for"
                 },
+                "project_root": {
+                    "type": "string",
+                    "description": "Optional repository root for session identity v1 lookups. Use with worktree_id to select structured sessions. Add scope to narrow results to one parallel worker when needed."
+                },
+                "worktree_id": {
+                    "type": "string",
+                    "description": "Optional worktree identifier for session identity v1 lookups. Use with project_root to select structured sessions. Add scope to narrow results to one parallel worker when needed."
+                },
                 "scope": {
                     "type": "string",
-                    "description": "Optional worker or runtime scope filter for parallel sessions in the same project"
+                    "description": "Optional worker or runtime scope filter. Use when multiple scoped sessions exist for the same worktree."
                 },
                 "limit": {
                     "type": "integer",
@@ -890,4 +962,31 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
     }));
 
     tools
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_gather_context_requires_project_when_full_identity_is_supplied() {
+        let tools = tool_definitions_json(false);
+        let gather_tool = tools
+            .iter()
+            .find(|tool| tool["name"] == "hyphae_gather_context")
+            .expect("gather context tool");
+
+        let all_of = gather_tool["inputSchema"]["allOf"]
+            .as_array()
+            .expect("allOf schema");
+        let requirement = &all_of[0];
+
+        assert_eq!(requirement["if"]["required"][0], "project_root");
+        assert_eq!(requirement["if"]["required"][1], "worktree_id");
+        assert_eq!(requirement["then"]["required"][0], "project");
+        assert_eq!(
+            gather_tool["inputSchema"]["properties"]["scope"]["type"],
+            "string"
+        );
+    }
 }

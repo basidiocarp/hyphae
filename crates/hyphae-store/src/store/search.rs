@@ -370,6 +370,7 @@ mod tests {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             project: None,
+            runtime_session_id: None,
         }
     }
 

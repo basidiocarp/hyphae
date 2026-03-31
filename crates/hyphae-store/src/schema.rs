@@ -95,7 +95,10 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         CREATE TABLE IF NOT EXISTS sessions (
             id TEXT PRIMARY KEY,
             project TEXT NOT NULL,
+            project_root TEXT,
+            worktree_id TEXT,
             scope TEXT,
+            runtime_session_id TEXT,
             task TEXT,
             started_at TEXT NOT NULL,
             ended_at TEXT,
@@ -159,7 +162,9 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
             source_type TEXT NOT NULL,
             chunk_count INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
+            updated_at TEXT NOT NULL,
+            project TEXT,
+            runtime_session_id TEXT
         );
 
         CREATE TABLE IF NOT EXISTS chunks (
@@ -467,12 +472,50 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         tx.execute_batch("ALTER TABLE sessions ADD COLUMN scope TEXT;")
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
     }
+    let has_project_root_sessions: bool = tx
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name='project_root'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if !has_project_root_sessions {
+        tx.execute_batch("ALTER TABLE sessions ADD COLUMN project_root TEXT;")
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    }
+    let has_worktree_id_sessions: bool = tx
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name='worktree_id'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if !has_worktree_id_sessions {
+        tx.execute_batch("ALTER TABLE sessions ADD COLUMN worktree_id TEXT;")
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    }
+    let has_runtime_session_id_sessions: bool = tx
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name='runtime_session_id'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if !has_runtime_session_id_sessions {
+        tx.execute_batch("ALTER TABLE sessions ADD COLUMN runtime_session_id TEXT;")
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    }
     tx.execute_batch(
-        "CREATE INDEX IF NOT EXISTS idx_sessions_project_scope ON sessions(project, scope);",
+        "CREATE INDEX IF NOT EXISTS idx_sessions_project_scope ON sessions(project, scope);
+         CREATE INDEX IF NOT EXISTS idx_sessions_project_root_worktree ON sessions(project_root, worktree_id);
+         CREATE INDEX IF NOT EXISTS idx_sessions_runtime_session_id ON sessions(runtime_session_id);",
     )
     .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
-    // Migration: add project column to documents
+    // Migration: add project/runtime_session_id columns to documents
     let has_project_documents: bool = tx
         .query_row(
             "SELECT COUNT(*) FROM pragma_table_info('documents') WHERE name='project'",
@@ -485,6 +528,26 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         tx.execute_batch(
             "ALTER TABLE documents ADD COLUMN project TEXT;
              CREATE INDEX IF NOT EXISTS idx_documents_project ON documents(project);",
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    }
+    let has_runtime_session_id_documents: bool = tx
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('documents') WHERE name='runtime_session_id'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if !has_runtime_session_id_documents {
+        tx.execute_batch(
+            "ALTER TABLE documents ADD COLUMN runtime_session_id TEXT;
+             CREATE INDEX IF NOT EXISTS idx_documents_runtime_session_id ON documents(runtime_session_id);",
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    } else {
+        tx.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_documents_runtime_session_id ON documents(runtime_session_id);",
         )
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
     }
@@ -840,6 +903,33 @@ mod tests {
             documents_has_project,
             "documents table should have project column"
         );
+        let documents_has_runtime_session_id: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('documents') WHERE name='runtime_session_id'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0)
+            > 0;
+        assert!(
+            documents_has_runtime_session_id,
+            "documents table should have runtime_session_id column"
+        );
+
+        for column in ["project_root", "worktree_id", "scope", "runtime_session_id"] {
+            let sessions_has_column: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = ?1",
+                    [column],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0)
+                > 0;
+            assert!(
+                sessions_has_column,
+                "sessions table should have {column} column"
+            );
+        }
     }
 
     #[test]
@@ -1009,6 +1099,18 @@ mod tests {
         .unwrap();
 
         init_db(&conn).unwrap();
+
+        for column in ["scope", "project_root", "worktree_id", "runtime_session_id"] {
+            let has_column: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = ?1",
+                    [column],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0)
+                > 0;
+            assert!(has_column, "sessions table should have {column} column");
+        }
 
         let recall_invalid_session: Option<String> = conn
             .query_row(

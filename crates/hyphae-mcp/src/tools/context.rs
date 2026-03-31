@@ -12,7 +12,7 @@ use hyphae_store::SqliteStore;
 
 use crate::protocol::ToolResult;
 
-use super::{get_bounded_i64, validate_required_string};
+use super::{get_bounded_i64, get_str, normalize_identity, validate_required_string};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -42,6 +42,15 @@ pub(crate) fn tool_gather_context(
     };
 
     let project_arg = args.get("project").and_then(|v| v.as_str()).or(project);
+    let (project_root, worktree_id) =
+        normalize_identity(get_str(args, "project_root"), get_str(args, "worktree_id"));
+    let scope = get_str(args, "scope");
+
+    if project_arg.is_none() && project_root.is_some() && worktree_id.is_some() {
+        return ToolResult::error(
+            "project is required when project_root and worktree_id are provided".to_string(),
+        );
+    }
 
     let token_budget =
         get_bounded_i64(args, "token_budget", DEFAULT_TOKEN_BUDGET, 100, 50000) as usize;
@@ -90,12 +99,11 @@ pub(crate) fn tool_gather_context(
         }
     }
 
-    // ── Sessions (topic: session/*) ──────────────────────────────────────
+    // ── Sessions (structured rows only) ──────────────────────────────────
     if include.sessions {
         sources_queried.push("sessions");
-        let mut pushed_structured = false;
         let structured_rows = if let Some(proj) = project_arg {
-            store.session_context(proj, 10_000)
+            store.session_context_identity(proj, project_root, worktree_id, scope, 10_000)
         } else {
             store.session_context_all(10_000)
         };
@@ -120,31 +128,12 @@ pub(crate) fn tool_gather_context(
             for (idx, (relevance, session_project, content)) in
                 structured_hits.into_iter().take(MAX_PER_SOURCE).enumerate()
             {
-                pushed_structured = true;
                 results.push(ContextItem {
                     source: "session",
                     topic: Some(format!("session/{session_project}")),
                     symbol: None,
                     content,
                     relevance: relevance.max(relevance_score(idx)),
-                });
-            }
-        }
-        if !pushed_structured
-            && let Ok(session_hits) = store.search_fts(task, MAX_PER_SOURCE * 4, 0, project_arg)
-        {
-            let session_mems: Vec<_> = session_hits
-                .iter()
-                .filter(|m| m.topic.starts_with("session/"))
-                .take(MAX_PER_SOURCE)
-                .collect();
-            for (idx, mem) in session_mems.iter().enumerate() {
-                results.push(ContextItem {
-                    source: "session",
-                    topic: Some(mem.topic.clone()),
-                    symbol: None,
-                    content: mem.summary.clone(),
-                    relevance: relevance_score(idx),
                 });
             }
         }
@@ -429,7 +418,7 @@ mod tests {
     }
 
     #[test]
-    fn test_gather_context_with_project_falls_back_to_legacy_session_memories() {
+    fn test_gather_context_with_project_ignores_legacy_session_memories() {
         let store = test_store();
 
         let mem = Memory::builder(
@@ -453,7 +442,7 @@ mod tests {
 
         assert!(!result.is_error);
         let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
-        assert_eq!(parsed["context"][0]["topic"], "session/myapp");
+        assert!(parsed["context"].as_array().unwrap().is_empty());
     }
 
     #[test]
@@ -479,6 +468,257 @@ mod tests {
         let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
         assert_eq!(parsed["context"][0]["source"], "session");
         assert_eq!(parsed["context"][0]["topic"], "session/shared-app");
+    }
+
+    #[test]
+    fn test_gather_context_requires_project_with_full_identity() {
+        let store = test_store();
+
+        let result = tool_gather_context(
+            &store,
+            &json!({
+                "task": "login",
+                "project_root": "/repo/demo",
+                "worktree_id": "wt-alpha",
+                "include": ["sessions"]
+            }),
+            None,
+        );
+
+        assert!(result.is_error);
+        assert!(
+            result.content[0]
+                .text
+                .contains("project is required when project_root and worktree_id are provided")
+        );
+    }
+
+    #[test]
+    fn test_gather_context_filters_sessions_by_identity_v1() {
+        let store = test_store();
+
+        let (alpha_id, _) = store
+            .session_start_identity(
+                "demo",
+                Some("login flow"),
+                Some("/repo/demo"),
+                Some("wt-alpha"),
+                None,
+            )
+            .unwrap();
+        store
+            .session_end(
+                &alpha_id,
+                Some("Alpha login implementation"),
+                None,
+                Some("0"),
+            )
+            .unwrap();
+
+        let (beta_id, _) = store
+            .session_start_identity(
+                "demo",
+                Some("login flow"),
+                Some("/repo/demo"),
+                Some("wt-beta"),
+                None,
+            )
+            .unwrap();
+        store
+            .session_end(&beta_id, Some("Beta login implementation"), None, Some("0"))
+            .unwrap();
+
+        let result = tool_gather_context(
+            &store,
+            &json!({
+                "task": "login",
+                "project": "demo",
+                "project_root": "/repo/demo",
+                "worktree_id": "wt-alpha",
+                "include": ["sessions"]
+            }),
+            None,
+        );
+
+        assert!(!result.is_error);
+        let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
+        let context = parsed["context"].as_array().unwrap();
+        assert_eq!(context.len(), 1);
+        assert_eq!(context[0]["topic"], "session/demo");
+        assert!(
+            context[0]["content"]
+                .as_str()
+                .unwrap()
+                .contains("Alpha login implementation")
+        );
+    }
+
+    #[test]
+    fn test_gather_context_filters_parallel_workers_by_scope() {
+        let store = test_store();
+
+        let (worker_a_id, _) = store
+            .session_start_identity(
+                "demo",
+                Some("login flow"),
+                Some("/repo/demo"),
+                Some("wt-alpha"),
+                Some("worker-a"),
+            )
+            .unwrap();
+        store
+            .session_end(
+                &worker_a_id,
+                Some("Worker A login implementation"),
+                None,
+                Some("0"),
+            )
+            .unwrap();
+
+        let (worker_b_id, _) = store
+            .session_start_identity(
+                "demo",
+                Some("login flow"),
+                Some("/repo/demo"),
+                Some("wt-alpha"),
+                Some("worker-b"),
+            )
+            .unwrap();
+        store
+            .session_end(
+                &worker_b_id,
+                Some("Worker B login implementation"),
+                None,
+                Some("0"),
+            )
+            .unwrap();
+
+        let result = tool_gather_context(
+            &store,
+            &json!({
+                "task": "login",
+                "project": "demo",
+                "project_root": "/repo/demo",
+                "worktree_id": "wt-alpha",
+                "scope": "worker-a",
+                "include": ["sessions"]
+            }),
+            None,
+        );
+
+        assert!(!result.is_error);
+        let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
+        let context = parsed["context"].as_array().unwrap();
+        assert_eq!(context.len(), 1);
+        assert!(
+            context[0]["content"]
+                .as_str()
+                .unwrap()
+                .contains("Worker A login implementation")
+        );
+        assert!(
+            !context[0]["content"]
+                .as_str()
+                .unwrap()
+                .contains("Worker B login implementation")
+        );
+    }
+
+    #[test]
+    fn test_gather_context_partial_identity_uses_project_sessions() {
+        let store = test_store();
+
+        let (alpha_id, _) = store
+            .session_start_identity(
+                "demo",
+                Some("login flow"),
+                Some("/repo/demo"),
+                Some("wt-alpha"),
+                None,
+            )
+            .unwrap();
+        store
+            .session_end(
+                &alpha_id,
+                Some("Alpha login implementation"),
+                None,
+                Some("0"),
+            )
+            .unwrap();
+
+        let (beta_id, _) = store
+            .session_start_identity(
+                "demo",
+                Some("login flow"),
+                Some("/repo/demo"),
+                Some("wt-beta"),
+                None,
+            )
+            .unwrap();
+        store
+            .session_end(&beta_id, Some("Beta login implementation"), None, Some("0"))
+            .unwrap();
+
+        let result = tool_gather_context(
+            &store,
+            &json!({
+                "task": "login",
+                "project": "demo",
+                "project_root": "/repo/demo",
+                "include": ["sessions"]
+            }),
+            None,
+        );
+
+        assert!(!result.is_error);
+        let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
+        let context = parsed["context"].as_array().unwrap();
+        assert_eq!(context.len(), 2);
+
+        let contents: Vec<&str> = context
+            .iter()
+            .map(|entry| entry["content"].as_str().unwrap())
+            .collect();
+        assert!(
+            contents
+                .iter()
+                .any(|content| content.contains("Alpha login implementation"))
+        );
+        assert!(
+            contents
+                .iter()
+                .any(|content| content.contains("Beta login implementation"))
+        );
+    }
+
+    #[test]
+    fn test_gather_context_identity_miss_does_not_fall_back_to_legacy_session_memories() {
+        let store = test_store();
+
+        let legacy = Memory::builder(
+            "session/demo".to_string(),
+            "Legacy beta worktree summary".to_string(),
+            Importance::Medium,
+        )
+        .project("demo".to_string())
+        .build();
+        store.store(legacy).unwrap();
+
+        let result = tool_gather_context(
+            &store,
+            &json!({
+                "task": "beta",
+                "project": "demo",
+                "project_root": "/repo/demo",
+                "worktree_id": "wt-alpha",
+                "include": ["sessions"]
+            }),
+            None,
+        );
+
+        assert!(!result.is_error);
+        let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
+        assert!(parsed["context"].as_array().unwrap().is_empty());
     }
 
     #[test]

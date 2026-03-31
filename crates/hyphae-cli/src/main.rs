@@ -22,6 +22,64 @@ mod watch;
 
 use cli::{Cli, Commands};
 
+fn all_projects_allowed(command: &Commands) -> bool {
+    match command {
+        Commands::Search { .. }
+        | Commands::ListInvalidated { .. }
+        | Commands::GatherContext(_)
+        | Commands::Stats { .. }
+        | Commands::Topics { .. }
+        | Commands::Health { .. }
+        | Commands::Memory(_)
+        | Commands::Lessons { .. }
+        | Commands::Activity
+        | Commands::Analytics
+        | Commands::Config
+        | Commands::TestEmbed { .. }
+        | Commands::SearchDocs { .. }
+        | Commands::ListSources { .. }
+        | Commands::SearchAll { .. }
+        | Commands::Completions { .. }
+        | Commands::Init { .. }
+        | Commands::Bench { .. }
+        | Commands::SelfUpdate { .. }
+        | Commands::Doctor { .. }
+        | Commands::ExportTraining { .. }
+        | Commands::Evaluate { .. }
+        | Commands::Backup { .. }
+        | Commands::Restore { .. }
+        | Commands::AuditSecrets { .. }
+        | Commands::Changelog { .. } => true,
+        Commands::Project(args) => matches!(
+            args.command,
+            crate::commands::project::ProjectCommand::List
+                | crate::commands::project::ProjectCommand::Search { .. }
+        ),
+        Commands::Session(args) => matches!(
+            args.command,
+            crate::commands::session::SessionCommand::Context { .. }
+                | crate::commands::session::SessionCommand::List { .. }
+                | crate::commands::session::SessionCommand::Timeline { .. }
+                | crate::commands::session::SessionCommand::Status { .. }
+        ),
+        Commands::Store { .. }
+        | Commands::Invalidate { .. }
+        | Commands::Extract { .. }
+        | Commands::EmbedAll { .. }
+        | Commands::Ingest { .. }
+        | Commands::ForgetSource { .. }
+        | Commands::Watch { .. }
+        | Commands::Serve { .. }
+        | Commands::Memoir(_)
+        | Commands::Feedback(_)
+        | Commands::Prune { .. }
+        | Commands::ImportClaudeMemory { .. }
+        | Commands::CodexNotify { .. }
+        | Commands::IngestSessions { .. }
+        | Commands::Purge { .. } => false,
+    }
+}
+
 fn open_store(db: Option<PathBuf>, embedding_dims: usize) -> Result<SqliteStore> {
     let path = db.unwrap_or_else(paths::default_db_path);
 
@@ -110,12 +168,17 @@ fn main() -> Result<()> {
 
     let cfg = config::load_config()?;
     let resolved_db_path = paths::resolve_db_path(cli.db.clone(), cfg.store.path.as_deref());
-
-    let resolved_project: Option<String> = cli
-        .project
-        .clone()
-        .or_else(|| cfg.store.default_project.clone())
-        .or_else(project::detect_project);
+    if cli.all_projects && !all_projects_allowed(&cli.command) {
+        anyhow::bail!("--all-projects is only supported for read-only query commands");
+    }
+    let resolved_project: Option<String> = if cli.all_projects {
+        None
+    } else {
+        cli.project
+            .clone()
+            .or_else(|| cfg.store.default_project.clone())
+            .or_else(project::detect_project)
+    };
 
     if matches!(cli.command, Commands::Config) {
         commands::cmd_config(&cfg);
@@ -138,8 +201,24 @@ fn main() -> Result<()> {
             commands::memory::cmd_store(&store, topic, content, &importance, resolved_project)?;
         }
 
-        Commands::Search { query, limit } => {
-            commands::memory::cmd_search(&store, query, limit, resolved_project)?;
+        Commands::Search {
+            query,
+            topic,
+            limit,
+            include_invalidated,
+            order,
+            json,
+        } => {
+            commands::memory::cmd_search(
+                &store,
+                query,
+                topic,
+                limit,
+                include_invalidated,
+                order,
+                json,
+                resolved_project,
+            )?;
         }
 
         Commands::Invalidate {
@@ -167,8 +246,40 @@ fn main() -> Result<()> {
             println!("Extracted and stored {} facts", stored);
         }
 
-        Commands::Stats => {
-            commands::memory::cmd_stats(&store, resolved_project)?;
+        Commands::GatherContext(args) => {
+            commands::context::dispatch(&store, args, resolved_project.as_deref())?;
+        }
+
+        Commands::Stats {
+            include_invalidated,
+            json,
+        } => {
+            commands::memory::cmd_stats(&store, json, resolved_project, include_invalidated)?;
+        }
+
+        Commands::Topics {
+            include_invalidated,
+            json,
+        } => {
+            commands::memory::cmd_topics(&store, json, resolved_project, include_invalidated)?;
+        }
+
+        Commands::Health {
+            topic,
+            include_invalidated,
+            json,
+        } => {
+            commands::memory::cmd_health(
+                &store,
+                topic,
+                include_invalidated,
+                json,
+                resolved_project,
+            )?;
+        }
+
+        Commands::Memory(args) => {
+            commands::memory::dispatch(&store, args, resolved_project)?;
         }
 
         Commands::Config => unreachable!("handled in early-return block"),
@@ -236,8 +347,8 @@ fn main() -> Result<()> {
             commands::docs::cmd_search_docs(&store, query, limit, resolved_project, embedder_ref)?;
         }
 
-        Commands::ListSources => {
-            commands::docs::cmd_list_sources(&store, resolved_project)?;
+        Commands::ListSources { json } => {
+            commands::docs::cmd_list_sources(&store, json, resolved_project)?;
         }
 
         Commands::ForgetSource { path } => {
@@ -277,6 +388,18 @@ fn main() -> Result<()> {
 
         Commands::Bench { count } => {
             commands::bench::cmd_bench(count)?;
+        }
+
+        Commands::Lessons { limit } => {
+            commands::lessons::cmd_lessons(&store, resolved_project, limit)?;
+        }
+
+        Commands::Activity => {
+            commands::activity::cmd_activity(&store, resolved_project)?;
+        }
+
+        Commands::Analytics => {
+            commands::analytics::cmd_analytics(&store, resolved_project)?;
         }
 
         Commands::Prune { threshold, dry_run } => {
@@ -370,7 +493,12 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::all_projects_allowed;
     use crate::cli::Cli;
+    use crate::cli::Commands;
+    use crate::commands::memory::MemoryArgs;
+    use crate::commands::project::{ProjectArgs, ProjectCommand};
+    use crate::commands::session::{SessionArgs, SessionCommand};
     use clap::CommandFactory;
     use clap_complete::{Shell, generate};
 
@@ -384,5 +512,65 @@ mod tests {
                 "completions should not be empty for {shell:?}"
             );
         }
+    }
+
+    #[test]
+    fn test_all_projects_allowed_for_read_only_commands() {
+        assert!(all_projects_allowed(&Commands::Search {
+            query: "query".to_string(),
+            topic: None,
+            limit: 10,
+            include_invalidated: false,
+            order: crate::commands::memory::SearchOrder::Weight,
+            json: true,
+        }));
+        assert!(all_projects_allowed(&Commands::Session(SessionArgs {
+            command: SessionCommand::List {
+                project: None,
+                project_root: None,
+                worktree_id: None,
+                scope: None,
+                limit: 20,
+            },
+        })));
+        assert!(all_projects_allowed(&Commands::Project(ProjectArgs {
+            command: ProjectCommand::Search {
+                query: "query".to_string(),
+                limit: 10,
+            },
+        })));
+        assert!(all_projects_allowed(&Commands::Memory(MemoryArgs {
+            cmd: crate::commands::memory::MemoryCommand::Get {
+                id: "mem_1".to_string(),
+                json: true,
+            },
+        })));
+        assert!(all_projects_allowed(&Commands::Lessons { limit: 50 }));
+        assert!(all_projects_allowed(&Commands::Analytics));
+    }
+
+    #[test]
+    fn test_all_projects_rejected_for_mutating_commands() {
+        assert!(!all_projects_allowed(&Commands::Store {
+            topic: "topic".to_string(),
+            content: "content".to_string(),
+            importance: "medium".to_string(),
+        }));
+        assert!(!all_projects_allowed(&Commands::Session(SessionArgs {
+            command: SessionCommand::Start {
+                project: "cap".to_string(),
+                task: None,
+                project_root: None,
+                worktree_id: None,
+                scope: None,
+                runtime_session_id: None,
+            },
+        })));
+        assert!(!all_projects_allowed(&Commands::Project(ProjectArgs {
+            command: ProjectCommand::Share {
+                id: "mem_1".to_string(),
+            },
+        })));
+        assert!(!all_projects_allowed(&Commands::Serve { compact: false }));
     }
 }

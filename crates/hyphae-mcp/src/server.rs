@@ -54,8 +54,7 @@ fn initial_context(store: &SqliteStore, project: Option<&str>) -> String {
     use hyphae_core::MemoryStore;
 
     // ─────────────────────────────────────────────────────────────────────────────
-    // Session Context (query the structured sessions table first, then fallback
-    // to compatibility session/{project} memories if needed)
+    // Session Context (query the structured sessions table only)
     // ─────────────────────────────────────────────────────────────────────────────
     let mut session_summaries = Vec::new();
 
@@ -67,17 +66,6 @@ fn initial_context(store: &SqliteStore, project: Option<&str>) -> String {
         for s in &session_ctx {
             if let Some(summary) = &s.summary {
                 session_summaries.push(summary.clone());
-            }
-        }
-    }
-
-    if session_summaries.is_empty()
-        && let Some(proj) = project
-    {
-        let session_topic = format!("session/{proj}");
-        if let Ok(session_memories) = store.get_by_topic(&session_topic, project) {
-            for m in session_memories.iter().take(3) {
-                session_summaries.push(m.summary.clone());
             }
         }
     }
@@ -430,6 +418,22 @@ mod tests {
     }
 
     #[test]
+    fn test_initial_context_does_not_fall_back_to_legacy_session_memories() {
+        let store = SqliteStore::in_memory().unwrap();
+        let legacy = hyphae_core::Memory::builder(
+            "session/demo".to_string(),
+            "Legacy session summary".to_string(),
+            hyphae_core::Importance::Medium,
+        )
+        .project("demo".to_string())
+        .build();
+        <SqliteStore as hyphae_core::MemoryStore>::store(&store, legacy).unwrap();
+
+        let ctx = initial_context(&store, Some("demo"));
+        assert!(ctx.is_empty());
+    }
+
+    #[test]
     fn test_handle_tools_list_returns_tools() {
         let resp = handle_tools_list(json!(2), false);
         let result = resp.result.unwrap();
@@ -440,6 +444,16 @@ mod tests {
             assert!(tool["name"].as_str().is_some());
             assert!(tool["inputSchema"].is_object());
         }
+
+        let import_tool = tools
+            .iter()
+            .find(|tool| tool["name"] == "hyphae_import_code_graph")
+            .unwrap();
+        let properties = import_tool["inputSchema"]["properties"]
+            .as_object()
+            .unwrap();
+        assert!(properties.contains_key("project_root"));
+        assert!(properties.contains_key("worktree_id"));
     }
 
     #[test]
