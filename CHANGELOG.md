@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v0.10.2 - 2026-04-01
+
+### Fixed
+
+- **Release-gating for macOS binaries**: Apple release builds now fail fast on functional smoke-test or MCP initialize regressions instead of swallowing those failures during packaging.
+- **macOS build diagnostics**: Release workflows now capture verbose native C-build logs, pin a deterministic SDK/deployment target, re-sign the binary, and upload diagnostics when a macOS build fails.
+
 ## v0.10.0 - 2026-03-31
 
 ### Added

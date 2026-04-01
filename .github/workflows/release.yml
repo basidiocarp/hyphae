@@ -10,6 +10,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
 
 jobs:
   build:
@@ -44,6 +45,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - uses: actions/cache@v5.0.4
+        if: matrix.target != 'aarch64-apple-darwin'
         with:
           path: |
             ~/.cargo/registry
@@ -64,6 +66,28 @@ jobs:
         with:
           tool: cross
 
+      - name: Configure macOS SDK
+        if: startsWith(matrix.target, 'x86_64-apple') || startsWith(matrix.target, 'aarch64-apple')
+        run: |
+          set -euo pipefail
+          for app in \
+            /Applications/Xcode_16.3.app \
+            /Applications/Xcode_16.2.app \
+            /Applications/Xcode_16.1.app \
+            /Applications/Xcode_15.4.app
+          do
+            if [ -d "$app/Contents/Developer" ]; then
+              sudo xcode-select -s "$app/Contents/Developer"
+              break
+            fi
+          done
+          echo "DEVELOPER_DIR=$(xcode-select -p)" >> "$GITHUB_ENV"
+          echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
+          echo "MACOSX_DEPLOYMENT_TARGET=14.0" >> "$GITHUB_ENV"
+          xcode-select -p
+          xcodebuild -version
+          clang --version
+
       - name: Configure cross for musl (aarch64)
         if: matrix.cross && contains(matrix.target, 'musl')
         run: |
@@ -77,26 +101,65 @@ jobs:
 
       - name: Build
         run: |
+          set -euo pipefail
           # sqlite-vec uses BSD u_int*_t types missing from musl — define them
           if [[ "${{ matrix.target }}" == *-musl ]]; then
             export CFLAGS="-Du_int8_t=uint8_t -Du_int16_t=uint16_t -Du_int64_t=uint64_t"
           fi
           if [ "${{ matrix.cross }}" = "true" ]; then
             CROSS_CONTAINER_OPTS="--env CFLAGS" cross build --release --no-default-features --target ${{ matrix.target }}
+          elif [[ "${{ matrix.target }}" == *apple-darwin ]]; then
+            export CARGO_BUILD_JOBS=1
+            export CC_ENABLE_DEBUG_OUTPUT=1
+            cargo build --release --no-default-features --target ${{ matrix.target }} -vv 2>&1 | tee build-${{ matrix.target }}.log
           else
             cargo build --release --no-default-features --target ${{ matrix.target }}
           fi
         shell: bash
 
+      - name: Inspect macOS build diagnostics
+        if: startsWith(matrix.target, 'x86_64-apple') || startsWith(matrix.target, 'aarch64-apple')
+        run: |
+          set -euo pipefail
+          LOG=build-${{ matrix.target }}.log
+          echo "--- SDK ---"
+          xcrun --sdk macosx --show-sdk-path
+          echo "--- Relevant compiler lines ---"
+          grep -E 'running: .*clang|running: .*cc|cargo:warning=' "$LOG" | sed -n '1,120p' || true
+        shell: bash
+
+      - name: Re-sign binary (macOS)
+        if: startsWith(matrix.target, 'x86_64-apple') || startsWith(matrix.target, 'aarch64-apple')
+        run: |
+          set -euo pipefail
+          BINARY=target/${{ matrix.target }}/release/hyphae
+          codesign --force --sign - "$BINARY"
+          codesign -dv "$BINARY" 2>&1
+        shell: bash
+
       - name: Smoke test (macOS native)
         if: startsWith(matrix.target, 'x86_64-apple') || startsWith(matrix.target, 'aarch64-apple')
         run: |
+          set -euo pipefail
           BINARY=target/${{ matrix.target }}/release/hyphae
           echo "--- L0: version check ---"
-          ./$BINARY --version
-          echo "--- L1: functional check (doctor) ---"
-          ./$BINARY doctor || true
+          "$BINARY" --version
+          echo "--- L1: sqlite smoke (stats) ---"
+          "$BINARY" stats
+          echo "--- L2: MCP initialize ---"
+          printf '%s' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"release-smoke","version":"0.1"}}}' \
+            | "$BINARY" serve 2>&1 | tee smoke-${{ matrix.target }}.log
+          grep -q 'protocolVersion' smoke-${{ matrix.target }}.log
         shell: bash
+
+      - name: Upload macOS diagnostics
+        if: failure() && (startsWith(matrix.target, 'x86_64-apple') || startsWith(matrix.target, 'aarch64-apple'))
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: hyphae-${{ matrix.target }}-diagnostics
+          path: |
+            build-${{ matrix.target }}.log
+            smoke-${{ matrix.target }}.log
 
       - name: Package (unix)
         if: matrix.archive == 'tar.gz'
