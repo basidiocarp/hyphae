@@ -119,9 +119,8 @@ pub(crate) fn claude_settings_path() -> Result<PathBuf> {
     Ok(claude_dir()?.join("settings.json"))
 }
 
-pub fn write_config(editor: &Editor, binary_path: &Path) -> Result<()> {
-    let binary_str = binary_path.to_string_lossy().to_string();
-    editors::register_mcp_server(editor.shared_editor(), "hyphae", &binary_str, &["serve"])
+pub fn write_config(editor: &Editor, _binary_path: &Path) -> Result<()> {
+    editors::register_mcp_server(editor.shared_editor(), "hyphae", "hyphae", &["serve"])
         .map_err(anyhow::Error::from)?;
 
     if matches!(editor, Editor::CodexCli) {
