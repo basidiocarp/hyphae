@@ -358,7 +358,8 @@ impl SqliteStore {
         P: rusqlite::Params,
     {
         self.conn
-            .query_row(sql, params, |row| row.get(0))
+            .query_row(sql, params, |row| row.get::<_, i64>(0))
+            .map(|n| n as usize)
             .map_err(|e| HyphaeError::Database(format!("failed to execute count query: {e}")))
     }
 
@@ -379,7 +380,7 @@ impl SqliteStore {
             .query_map(params![project], |row| {
                 Ok(TopTopicAnalytics {
                     name: row.get(0)?,
-                    count: row.get(1)?,
+                    count: row.get::<_, i64>(1).map(|n| n as usize)?,
                     avg_weight: row.get(2)?,
                     latest_created_at: row.get(3)?,
                 })
@@ -418,7 +419,10 @@ impl SqliteStore {
 
         let rows = stmt
             .query_map(params![project], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, usize>(1)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1).map(|n| n as usize)?,
+                ))
             })
             .map_err(|e| {
                 HyphaeError::Database(format!("failed to query importance distribution: {e}"))

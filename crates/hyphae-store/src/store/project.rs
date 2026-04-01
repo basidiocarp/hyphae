@@ -128,7 +128,7 @@ impl SqliteStore {
 
         let rows = stmt
             .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, usize>(1)?))
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1).map(|n| n as usize)?))
             })
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 

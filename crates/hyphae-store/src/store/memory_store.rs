@@ -114,7 +114,10 @@ impl SqliteStore {
         );
 
         self.conn
-            .query_row(&sql, params![sanitized, project, topic], |row| row.get(0))
+            .query_row(&sql, params![sanitized, project, topic], |row| {
+                row.get::<_, i64>(0)
+            })
+            .map(|n| n as usize)
             .map_err(|e| HyphaeError::Database(e.to_string()))
     }
 
@@ -188,7 +191,10 @@ impl SqliteStore {
 
         let rows = stmt
             .query_map(params![project], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, usize>(1)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1).map(|n| n as usize)?,
+                ))
             })
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
@@ -206,13 +212,13 @@ impl SqliteStore {
         include_invalidated: bool,
     ) -> HyphaeResult<TopicHealth> {
         type HealthRow = (
-            usize,
+            i64,
             Option<f32>,
             Option<f32>,
             Option<String>,
             Option<String>,
             Option<String>,
-            usize,
+            i64,
         );
         let active_clause = if include_invalidated {
             String::new()
@@ -236,13 +242,13 @@ impl SqliteStore {
                AND (project = ?2 OR ?2 IS NULL)"
         );
         let (
-            entry_count,
+            entry_count_raw,
             avg_weight,
             avg_access,
             oldest_str,
             newest_str,
             last_accessed_str,
-            stale_count,
+            stale_count_raw,
         ): HealthRow = self
             .conn
             .query_row(&sql, params![topic, project], |row| {
@@ -257,6 +263,9 @@ impl SqliteStore {
                 ))
             })
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let entry_count = entry_count_raw as usize;
+        let stale_count = stale_count_raw as usize;
 
         if entry_count == 0 {
             return Err(HyphaeError::NotFound(format!("topic: {topic}")));
@@ -300,9 +309,9 @@ impl SqliteStore {
              FROM memories
              WHERE {active_clause}(project = ?1 OR ?1 IS NULL)"
         );
-        let (total_memories, total_topics, avg_weight, oldest_str, newest_str): (
-            usize,
-            usize,
+        let (total_memories_raw, total_topics_raw, avg_weight, oldest_str, newest_str): (
+            i64,
+            i64,
             f32,
             Option<String>,
             Option<String>,
@@ -325,8 +334,8 @@ impl SqliteStore {
         };
 
         Ok(StoreStats {
-            total_memories,
-            total_topics,
+            total_memories: total_memories_raw as usize,
+            total_topics: total_topics_raw as usize,
             avg_weight,
             oldest_memory: parse_opt_dt(oldest_str),
             newest_memory: parse_opt_dt(newest_str),
@@ -1006,7 +1015,10 @@ impl MemoryStore for SqliteStore {
 
         let rows = stmt
             .query_map(params![project], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, usize>(1)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1).map(|n| n as usize)?,
+                ))
             })
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
@@ -1098,8 +1110,9 @@ impl MemoryStore for SqliteStore {
             .query_row(
                 "SELECT COUNT(*) FROM memories WHERE invalidated_at IS NULL AND (project = ?1 OR ?1 IS NULL)",
                 params![project],
-                |row| row.get::<_, usize>(0),
+                |row| row.get::<_, i64>(0),
             )
+            .map(|n| n as usize)
             .map_err(|e| HyphaeError::Database(e.to_string()))
     }
 
@@ -1108,29 +1121,30 @@ impl MemoryStore for SqliteStore {
             .query_row(
                 "SELECT COUNT(*) FROM memories WHERE topic = ?1 AND invalidated_at IS NULL AND (project = ?2 OR ?2 IS NULL)",
                 params![topic, project],
-                |row| row.get::<_, usize>(0),
+                |row| row.get::<_, i64>(0),
             )
+            .map(|n| n as usize)
             .map_err(|e| HyphaeError::Database(e.to_string()))
     }
 
     fn topic_health(&self, topic: &str, project: Option<&str>) -> HyphaeResult<TopicHealth> {
         type HealthRow = (
-            usize,
+            i64,
             Option<f32>,
             Option<f32>,
             Option<String>,
             Option<String>,
             Option<String>,
-            usize,
+            i64,
         );
         let (
-            entry_count,
+            entry_count_raw,
             avg_weight,
             avg_access,
             oldest_str,
             newest_str,
             last_accessed_str,
-            stale_count,
+            stale_count_raw,
         ): HealthRow = self
             .conn
             .query_row(
@@ -1160,6 +1174,9 @@ impl MemoryStore for SqliteStore {
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
+        let entry_count = entry_count_raw as usize;
+        let stale_count = stale_count_raw as usize;
+
         if entry_count == 0 {
             return Err(HyphaeError::NotFound(format!("topic: {topic}")));
         }
@@ -1183,9 +1200,9 @@ impl MemoryStore for SqliteStore {
     }
 
     fn stats(&self, project: Option<&str>) -> HyphaeResult<StoreStats> {
-        let (total_memories, total_topics, avg_weight, oldest_str, newest_str): (
-            usize,
-            usize,
+        let (total_memories_raw, total_topics_raw, avg_weight, oldest_str, newest_str): (
+            i64,
+            i64,
             f32,
             Option<String>,
             Option<String>,
@@ -1218,8 +1235,8 @@ impl MemoryStore for SqliteStore {
         };
 
         Ok(StoreStats {
-            total_memories,
-            total_topics,
+            total_memories: total_memories_raw as usize,
+            total_topics: total_topics_raw as usize,
             avg_weight,
             oldest_memory: parse_opt_dt(oldest_str),
             newest_memory: parse_opt_dt(newest_str),

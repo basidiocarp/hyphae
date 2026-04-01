@@ -15,8 +15,9 @@ impl SqliteStore {
             .query_row(
                 "SELECT COUNT(*) FROM memories WHERE project = ?1",
                 params![project],
-                |row| row.get(0),
+                |row| row.get::<_, i64>(0),
             )
+            .map(|n| n as usize)
             .map_err(|e| HyphaeError::Database(e.to_string()))
     }
 
@@ -26,8 +27,9 @@ impl SqliteStore {
             .query_row(
                 "SELECT COUNT(*) FROM memories WHERE created_at < ?1",
                 params![before_dt],
-                |row| row.get(0),
+                |row| row.get::<_, i64>(0),
             )
+            .map(|n| n as usize)
             .map_err(|e| HyphaeError::Database(e.to_string()))
     }
 
@@ -37,8 +39,9 @@ impl SqliteStore {
             .query_row(
                 "SELECT COUNT(*) FROM sessions WHERE project = ?1",
                 params![project],
-                |row| row.get(0),
+                |row| row.get::<_, i64>(0),
             )
+            .map(|n| n as usize)
             .map_err(|e| HyphaeError::Database(e.to_string()))
     }
 
@@ -48,8 +51,9 @@ impl SqliteStore {
             .query_row(
                 "SELECT COUNT(*) FROM sessions WHERE started_at < ?1",
                 params![before_dt],
-                |row| row.get(0),
+                |row| row.get::<_, i64>(0),
             )
+            .map(|n| n as usize)
             .map_err(|e| HyphaeError::Database(e.to_string()))
     }
 
@@ -61,8 +65,9 @@ impl SqliteStore {
                     SELECT id FROM documents WHERE project = ?1
                 )",
                 params![project],
-                |row| row.get(0),
+                |row| row.get::<_, i64>(0),
             )
+            .map(|n| n as usize)
             .map_err(|e| HyphaeError::Database(e.to_string()))
     }
 
@@ -72,8 +77,9 @@ impl SqliteStore {
             .query_row(
                 "SELECT COUNT(*) FROM documents WHERE project = ?1",
                 params![project],
-                |row| row.get(0),
+                |row| row.get::<_, i64>(0),
             )
+            .map(|n| n as usize)
             .map_err(|e| HyphaeError::Database(e.to_string()))
     }
 
@@ -83,8 +89,9 @@ impl SqliteStore {
             .query_row(
                 "SELECT COUNT(*) FROM documents WHERE created_at < ?1",
                 params![before_dt],
-                |row| row.get(0),
+                |row| row.get::<_, i64>(0),
             )
+            .map(|n| n as usize)
             .map_err(|e| HyphaeError::Database(e.to_string()))
     }
 
@@ -96,8 +103,9 @@ impl SqliteStore {
                     SELECT id FROM documents WHERE created_at < ?1
                 )",
                 params![before_dt],
-                |row| row.get(0),
+                |row| row.get::<_, i64>(0),
             )
+            .map(|n| n as usize)
             .map_err(|e| HyphaeError::Database(e.to_string()))
     }
 

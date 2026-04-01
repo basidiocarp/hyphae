@@ -109,8 +109,9 @@ impl SqliteStore {
                    AND expires_at IS NOT NULL
                    AND expires_at < ?1",
                 params![now],
-                |row| row.get::<_, usize>(0),
+                |row| row.get::<_, i64>(0),
             )
+            .map(|n| n as usize)
             .map_err(|e| HyphaeError::Database(e.to_string()))
     }
 
@@ -123,8 +124,9 @@ impl SqliteStore {
                    AND weight < ?1
                    AND importance NOT IN ('critical', 'high')",
                 params![weight_threshold],
-                |row| row.get::<_, usize>(0),
+                |row| row.get::<_, i64>(0),
             )
+            .map(|n| n as usize)
             .map_err(|e| HyphaeError::Database(e.to_string()))
     }
 

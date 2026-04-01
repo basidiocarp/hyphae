@@ -780,8 +780,9 @@ impl MemoirStore for SqliteStore {
             .query_row(
                 "SELECT COUNT(*) FROM concepts WHERE memoir_id = ?1",
                 params![memoir_id.as_ref()],
-                |row| row.get(0),
+                |row| row.get::<_, i64>(0),
             )
+            .map(|n| n as usize)
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         let total_links: usize = self
@@ -790,8 +791,9 @@ impl MemoirStore for SqliteStore {
                 "SELECT COUNT(*) FROM concept_links
                  WHERE source_id IN (SELECT id FROM concepts WHERE memoir_id = ?1)",
                 params![memoir_id.as_ref()],
-                |row| row.get(0),
+                |row| row.get::<_, i64>(0),
             )
+            .map(|n| n as usize)
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         let avg_confidence: f32 = if total_concepts > 0 {
@@ -819,7 +821,7 @@ impl MemoirStore for SqliteStore {
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
         let label_counts: Vec<(String, usize)> = label_stmt
             .query_map(params![memoir_id.as_ref()], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, usize>(1)?))
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1).map(|n| n as usize)?))
             })
             .map_err(|e| HyphaeError::Database(e.to_string()))?
             .collect::<Result<Vec<_>, _>>()
