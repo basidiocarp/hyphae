@@ -1,6 +1,6 @@
 # Embedding Models for Code Search
 
-Hyphae uses embeddings to power semantic search across stored memories and ingested code. By default it uses BAAI/bge-small-en-v1.5, a general-purpose model optimized for speed. For code-heavy workloads, specialized embedders produce much better recall.
+Hyphae uses embeddings to power semantic search across stored memories and ingested code. The default model is BAAI/bge-small-en-v1.5, a general-purpose model optimized for speed. For code-heavy workloads, specialized embedders produce substantially better recall.
 
 ## The Problem with General Models
 
@@ -17,13 +17,13 @@ Hyphae has two embedder backends:
 | FastEmbed (default) | `embeddings.model` in config.toml | Local binary | BAAI/bge-small-en-v1.5 (384d) |
 | HTTP | Environment vars | Network (Ollama, OpenAI-compatible) | Your choice |
 
-The FastEmbed backend runs locally without external dependencies — no server to start, no API keys. It ships with support for 13 models across 3 dimension classes (384, 768, 1024d). The HTTP backend supports any OpenAI-compatible API or Ollama instance, letting you swap in specialized models with a single config change.
+The FastEmbed backend runs locally without external dependencies—no server to start, no API keys. It ships with support for 13 models across 3 dimension classes (384, 768, 1024d). The HTTP backend supports any OpenAI-compatible API or Ollama instance, letting you swap in specialized models with a single config change.
 
 ## Recommended Models
 
-### Option 1: nomic-embed-code (Recommended for most teams)
+### Option 1: nomic-embed-code (recommended for most teams)
 
-768 dimensions, 8192 token context, MIT license. Built specifically for code and designed to run on consumer hardware via Ollama.
+768 dimensions, 8192 token context, MIT license. Built specifically for code and runs on consumer hardware via Ollama.
 
 ```toml
 [embeddings]
@@ -40,7 +40,7 @@ export HYPHAE_EMBEDDING_MODEL=nomic-embed-code
 
 Trade-offs: Excellent code semantics (82% on CodeSearchNet), slower than bge-small (65ms vs 45ms per 512-token chunk), 150MB download. Sweet spot between quality and resource cost.
 
-### Option 2: voyage-code-3 (Best in class, API only)
+### Option 2: voyage-code-3 (API only)
 
 1024 dimensions, 16000 token context. Proprietary, ranked #1 on MTEB code benchmarks. Requires API key and network roundtrips.
 
@@ -52,7 +52,7 @@ export VOYAGE_API_KEY=<key>
 
 Trade-offs: Highest quality recall, costs ~$0.02 per 1M tokens, network latency (200-400ms roundtrips). Use when code search quality is critical or embedding batch size justifies API cost.
 
-### Option 3: Salesforce/SFR-Embedding-Code (Highest dims)
+### Option 3: Salesforce/SFR-Embedding-Code (highest dims)
 
 4096 dimensions, 4096 token context. Large model, excellent semantic precision but high storage overhead (16MB per 1000 embeddings vs 3MB for 768d).
 
@@ -142,7 +142,7 @@ Local models (FastEmbed, Ollama) have zero external dependencies and predictable
 
 ## Practical Recommendation
 
-Start with **nomic-embed-code via Ollama** for most teams:
+Start with nomic-embed-code via Ollama for most teams:
 
 ```bash
 # 1. Install Ollama (https://ollama.ai)
@@ -157,6 +157,6 @@ export HYPHAE_EMBEDDING_MODEL=nomic-embed-code
 hyphae ingest /path/to/code
 ```
 
-This gives 80% of the quality improvement for zero cost, zero external dependencies, and only 150MB disk space. Upgrade to voyage-code-3 if code search accuracy becomes a bottleneck or your team's API budget allows it.
+This delivers 80% of the quality improvement with zero cost, zero external dependencies, and 150MB disk space. Upgrade to voyage-code-3 if code search accuracy becomes a bottleneck or the API budget allows it.
 
-For large teams or production deployments, run Ollama as a shared service and point all agents to the same endpoint. This centralizes embedding cost and allows model swaps without per-agent configuration.
+For large teams or production deployments, run Ollama as a shared service and point all agents to the same endpoint. This centralizes embedding cost and allows model swaps without per-agent reconfiguration.

@@ -1,6 +1,6 @@
 # Hyphae -- MCP Tools Reference
 
-This file documents all 23 tools exposed by the Hyphae MCP server over the JSON-RPC 2.0 protocol (stdio transport). These tools are called transparently by AI agents (Claude, Cursor, Windsurf, etc.) — no manual invocation is required once the server is configured. Tools are organized into three categories: episodic memory (9 tools), memoir knowledge graphs (9 tools), and RAG document ingestion (5 tools).
+This file documents all 23 tools exposed by the Hyphae MCP server over the JSON-RPC 2.0 protocol (stdio transport). These tools are called transparently by AI agents (Claude, Cursor, Windsurf, etc.)—no manual invocation is required once the server is configured. Tools are organized into three categories: episodic memory (9 tools), memoir knowledge graphs (9 tools), and RAG document ingestion (5 tools).
 
 ## Table of Contents
 
@@ -55,10 +55,10 @@ The MCP server is started with `hyphae serve` and communicates over stdio using 
 | `keywords` | string[] | no | -- | Keywords to improve search |
 | `raw_excerpt` | string | no | -- | Verbatim excerpt (code, error message) |
 
-**Automatic behaviors:**
-- **Auto-dedup**: if a similar memory with >85% similarity exists in the same topic, it is updated instead of creating a duplicate
-- **Auto-embed**: if the embedder is available, the memory is automatically vectorized
-- **Consolidation alert**: if the topic exceeds 7 entries, a warning is added to the response
+Automatic behaviors:
+- Auto-dedup: if a similar memory with >85% similarity exists in the same topic, it is updated instead of creating a duplicate
+- Auto-embed: if the embedder is available, the memory is automatically vectorized
+- Consolidation alert: if the topic exceeds 7 entries, a warning is added to the response
 
 **Example request:**
 ```json
@@ -95,9 +95,9 @@ ok:01HWXYZ123456789ABCDEF
 | `keyword` | string | no | -- | Filter by exact keyword |
 | `session_id` | string | no | -- | Explicit session id from `hyphae_session_start`; use this for scoped attribution when one project has parallel sessions |
 
-**Automatic behaviors:**
-- **Auto-decay**: applies decay if >24h since last run
-- **Access update**: increments the access counter for each result
+Automatic behaviors:
+- Auto-decay: applies decay if >24h since last run
+- Access update: increments the access counter for each result
 
 **Example request:**
 ```json
@@ -172,7 +172,7 @@ ok:01HWXYZ123456789ABCDEF
 | `topic` | string | yes | Topic to consolidate |
 | `summary` | string | yes | Consolidated summary (replaces all memories in the topic) |
 
-**Important:** Unlike the CLI, the MCP requires the agent to provide the summary. The agent must first recall the topic's memories, then synthesize them.
+Unlike the CLI, the MCP requires the agent to provide the summary. The agent must first recall the topic's memories, then synthesize them.
 
 **Example:**
 ```json
@@ -399,11 +399,11 @@ Ingest a file or directory into Hyphae's document store for RAG search. Content 
 | `path` | string | yes | -- | Absolute or relative path to a file or directory to ingest |
 | `recursive` | boolean | no | `false` | If path is a directory, recurse into subdirectories |
 
-**Automatic behaviors:**
-- **Auto-detect file type**: Markdown, code (14 languages), or plain text
-- **Auto-chunk**: Chooses the best chunking strategy per file type
-- **Auto-embed**: If the embedder is available, chunks are automatically vectorized
-- **Skip binary files**: Binary files are detected and skipped
+Automatic behaviors:
+- Auto-detect file type: Markdown, code (14 languages), or plain text
+- Auto-chunk: chooses the best chunking strategy per file type
+- Auto-embed: if the embedder is available, chunks are automatically vectorized
+- Skip binary files: binary files are detected and skipped
 
 **Example request:**
 ```json

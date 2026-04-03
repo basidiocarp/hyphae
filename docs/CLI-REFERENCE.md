@@ -1,6 +1,6 @@
 # Hyphae -- CLI Reference
 
-This file documents all CLI commands exposed by the `hyphae` binary. Each entry covers syntax, option tables, and concrete examples. Commands are grouped into five categories: episodic memory, memoir knowledge graphs, documents and RAG, administration/maintenance, and configuration/setup — plus the benchmark suite.
+This file documents all CLI commands exposed by the `hyphae` binary. Each entry covers syntax, option tables, and concrete examples. Commands are grouped into five categories: episodic memory, memoir knowledge graphs, documents and RAG, administration/maintenance, and configuration/setup—plus the benchmark suite.
 
 All commands accept the global `--db <path>` flag to override the default database location.
 

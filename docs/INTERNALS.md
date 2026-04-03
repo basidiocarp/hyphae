@@ -1,6 +1,6 @@
 # Hyphae Internals
 
-This document describes how Hyphae's architecture works internally. It's written for contributors and maintainers who need to understand the system at each layer.
+This document describes Hyphae's internal architecture for contributors and maintainers who need to understand the system at each layer.
 
 ## Table of Contents
 
@@ -48,7 +48,7 @@ graph LR
 
 #### hyphae-core
 
-Pure domain types and trait definitions. **No I/O, no database, no networking.**
+Pure domain types and trait definitions. No I/O, no database, no networking.
 
 | Item | Purpose |
 |------|---------|
@@ -100,7 +100,7 @@ Pure domain types and trait definitions. **No I/O, no database, no networking.**
 
 #### hyphae-ingest
 
-File readers and chunking logic. **Pure logic, no database I/O.**
+File readers and chunking logic. Pure logic, no database I/O.
 
 | Function | Purpose |
 |----------|---------|
@@ -458,13 +458,13 @@ graph TD
 
 When embedder is available:
 
-1. **Embed query:** `embedder.embed(query)` → `[f32; 384]`
-2. **Search memories:** `search_hybrid(query, embedding, limit, offset, project)`
+1. Embed query: `embedder.embed(query)` → `[f32; 384]`
+2. Search memories: `search_hybrid(query, embedding, limit, offset, project)`
    - FTS5 search: `SELECT ... FROM memories_fts WHERE MATCH(sanitized_query)`
    - Vector search: `SELECT ... FROM memories m JOIN vec_memories v USING(id) WHERE vec_distance(v.embedding, query_embedding) < threshold`
    - Score: `0.3 × fts_score + 0.7 × cosine_similarity`
-3. **Merge _shared:** If searching project-specific, also search `_shared` project and merge results
-4. **Return:** Top N results with combined scores
+3. Merge _shared: if searching project-specific, also search `_shared` project and merge results
+4. Return: top N results with combined scores
 
 ---
 
@@ -477,7 +477,7 @@ When no embedder available, or embedding fails:
 3. **Search:** `SELECT ... FROM memories_fts WHERE MATCH(sanitized_query)`
 4. **Return:** Results ranked by FTS relevance
 
-**FTS5 queries are case-insensitive and support:**
+FTS5 queries are case-insensitive and support:
 - `foo bar` → OR (foo OR bar)
 - `"foo bar"` → phrase (exact sequence)
 - `foo*` → prefix (not after sanitization)
@@ -503,9 +503,9 @@ This is a LIKE-based fallback for edge cases.
 
 ### Cross-Project Search
 
-**Scenario:** Agent works on Project A but wants to recall universal patterns from Project B or _shared.
+When an agent works on Project A but wants to recall universal patterns from Project B or _shared:
 
-**Tool:** `hyphae_recall_global`
+Tool: `hyphae_recall_global`
 
 1. Search project-specific memories
 2. Search `_shared` project (for universal patterns)
@@ -517,7 +517,7 @@ This is a LIKE-based fallback for edge cases.
 
 ### Code-Context Expansion
 
-**For code-heavy queries:** `recall(query: "authentication middleware", code_context: true)`
+For code-heavy queries: `recall(query: "authentication middleware", code_context: true)`
 
 1. Detect if query is code-related (e.g., contains keywords like "function", "class", "API")
 2. Query `code:{project}` memoir for related concepts (e.g., types, functions)
@@ -653,7 +653,7 @@ Algorithm:
 5. Mark memoir updated_at = now()
 ```
 
-**Staleness detection:**
+Staleness detection:
 - Track `memoir.updated_at`
 - On `hyphae_memoir_show`, warn if >7 days old
 - Suggest `hyphae_import_code_graph` to refresh
@@ -737,7 +737,7 @@ Query processing:
 
 Hyphae scans memories during storage to detect sensitive information using 8 regex patterns compiled into a `OnceLock` for performance:
 
-**Detected patterns:**
+Detected patterns:
 - API keys (OpenAI, AWS, GCP, GitHub)
 - Passwords and tokens (JWT, Bearer, auth tokens)
 - AWS keys (access keys, secret keys)
@@ -745,11 +745,7 @@ Hyphae scans memories during storage to detect sensitive information using 8 reg
 - Database URLs with credentials
 - OAuth tokens and refresh tokens
 
-**Behavior:**
-- Detection is non-blocking: warnings are appended to response, not errors
-- Sensitive values are replaced with `***` in logs but stored as-is (agent's choice to store)
-- Warnings guide users toward environment variable management
-- Detection runs once per store call
+Detection is non-blocking: warnings are appended to the response rather than returned as errors. Sensitive values are replaced with `***` in logs but stored as-is (the agent's choice to store). Detection runs once per store call.
 
 **Implementation:**
 ```rust
@@ -770,21 +766,18 @@ fn check_memory(memory: &Memory) -> Vec<SecretWarning> {
 
 The `hyphae evaluate` command measures agent improvement over time across 6 metrics:
 
-**Metrics:**
+Six metrics:
 
-1. **Recall quality** — Hits/misses over time window, calculated from access_count deltas
-2. **Consolidation efficiency** — Topics with >15 memories and consolidation rate
-3. **Lesson extraction** — Unique lessons extracted from corrections and errors
-4. **Code graph coverage** — Symbols in `code:{project}` memoirs, call graph density
-5. **Training data volume** — Exportable SFT/DPO pairs per format
-6. **Topic coverage** — Entropy of topic distribution (uniform = high coverage)
+1. Recall quality: hits/misses over time window, calculated from access_count deltas
+2. Consolidation efficiency: topics with >15 memories and consolidation rate
+3. Lesson extraction: unique lessons extracted from corrections and errors
+4. Code graph coverage: symbols in `code:{project}` memoirs, call graph density
+5. Training data volume: exportable SFT/DPO pairs per format
+6. Topic coverage: entropy of topic distribution (uniform = high coverage)
 
-**Time window:**
-- Default: last 14 days
-- Configurable: `--days N`
-- Compared against baseline (first week vs last week)
+The default window is the last 14 days, configurable with `--days N`, and compared against baseline (first week vs last week).
 
-**Output:**
+Output:
 ```
 Evaluation Results (last 14 days)
 
@@ -804,9 +797,7 @@ Overall: 6.2/10 — Code graph and training data growing. Consolidation hint: er
 
 ### Store Nudge (Escalating Reminder)
 
-**Purpose:** Encourage agents to persist important context before it's forgotten.
-
-**Implementation:**
+The nudge encourages agents to persist important context before it's forgotten.
 
 ```rust
 // In server.rs
@@ -836,18 +827,13 @@ match calls_since_store {
 calls_since_store = 0  // Reset counter
 ```
 
-**Behavior:**
-- Escalates from hint → warn → strong
-- Backs off after NUDGE_STRONG until tool resets counter
-- Frequency tuned empirically
+The nudge escalates from hint → warn → strong, then backs off after NUDGE_STRONG until the tool resets the counter. Thresholds are tuned empirically.
 
 ---
 
 ### Consolidation Hint
 
-**Purpose:** Alert agent when a topic has too many entries (signal to consolidate).
-
-**Implementation:**
+The consolidation hint alerts the agent when a topic has accumulated too many entries.
 
 ```rust
 // After store or recall operations:
@@ -864,23 +850,21 @@ if let Ok(count) = store.count_by_topic(topic, project) {
 
 ### Lesson Extraction
 
-**Tool:** `hyphae_extract_lessons(topic_filter: optional)`
+`hyphae_extract_lessons(topic_filter: optional)` groups corrections, errors, and fixes into learnable patterns.
 
-**Purpose:** Group corrections, errors, and fixes into learnable patterns.
-
-**Data sources:**
+Data sources:
 - `corrections` topic — agent self-corrections
 - `errors/active` + `errors/resolved` — errors and solutions
 - `tests/failed` + `tests/resolved` — test failures and fixes
 - Review comments (when available)
 
-**Algorithm:**
+Algorithm:
 1. Load all memories matching sources (optionally filtered by topic)
 2. Group by concept: extract common terms, themes, patterns
 3. For each group: write summary lesson with examples
 4. Return grouped lessons
 
-**Example output:**
+Example output:
 ```
 Lesson: "Type-related errors in Rust"
   Occurrences: 5

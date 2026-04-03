@@ -1,6 +1,6 @@
 # Hyphae Troubleshooting & FAQ
 
-Common problems and their fixes, plus answers to frequently asked questions. If you've just installed Hyphae and something isn't working, start with **#1** — most issues trace back to the MCP config or a missing restart.
+Common problems and their fixes, plus answers to frequently asked questions. If you've just installed Hyphae and something isn't working, start with #1—most issues trace back to the MCP config or a missing restart.
 
 ---
 
@@ -38,7 +38,7 @@ Common problems and their fixes, plus answers to frequently asked questions. If 
 
 **Symptom:** Hyphae takes 30+ seconds on the first `store` or `recall`.
 
-**Explanation:** The embedding model (~45MB for bge-small-en-v1.5) is downloaded on first use. Subsequent runs load from cache (~1-2s).
+The embedding model (~45MB for bge-small-en-v1.5) is downloaded on first use. Subsequent runs load from cache in 1-2 seconds.
 
 **Solutions:**
 - This is normal the first time — wait for the download
@@ -53,7 +53,7 @@ Common problems and their fixes, plus answers to frequently asked questions. If 
 
 **Symptom:** Multiple near-identical memories in the same topic.
 
-**Explanation:** Auto-dedup only works via MCP (server with embedder). The `hyphae store` CLI does not have auto-dedup by default.
+Auto-dedup only works via MCP (server with embedder). The `hyphae store` CLI does not have auto-dedup by default.
 
 **Solutions:**
 - Backfill embeddings: `hyphae embed`
@@ -187,7 +187,7 @@ cp ~/backup-hyphae.db ~/Library/Application\ Support/dev.hyphae.hyphae/memories.
 
 ### Q5: What's the difference between `hyphae consolidate` (CLI) and `hyphae_memory_consolidate` (MCP)?
 
-The CLI automatically merges summaries (concatenation with ` | `). The MCP asks the agent to provide the summary, which produces a smarter result because the agent understands the content and can synthesize it.
+The CLI automatically merges summaries by concatenating with ` | `. The MCP asks the agent to provide the summary, which produces a smarter result because the agent understands the content and can synthesize it.
 
 ### Q6: Can I change the embedding model without losing my data?
 
@@ -211,9 +211,9 @@ The database is automatically recreated on next launch.
 
 ### Q9: Does Hyphae consume LLM tokens?
 
-**Not for storage and recall.** Hyphae calls no LLM API. The only tokens consumed are those of the agent calling the MCP tools -- exactly like any other MCP tool. Compact mode (`--compact`) reduces these tokens by ~40%.
+No, not for storage and recall. Hyphae calls no LLM API. The only tokens consumed are those of the agent calling the MCP tools—exactly like any other MCP tool. Compact mode (`--compact`) reduces these tokens by ~40%.
 
-Extraction (Layer 0) is purely rule-based -- zero LLM cost. Layer 1 (PreCompact, planned) will use ~500 tokens per session.
+Extraction (Layer 0) is purely rule-based—zero LLM cost. Layer 1 (PreCompact, planned) will use ~500 tokens per session.
 
 ### Q10: Can I share my memory with my team?
 
@@ -221,7 +221,7 @@ Not directly (it's a local SQLite file). However, **memoirs** are designed to ca
 
 ### Q11: Is auto-dedup reliable?
 
-Auto-dedup uses hybrid similarity (BM25 + cosine) with an 85% threshold. It works well for close duplicates but lets through very different reformulations of the same fact. This is intentional: a duplicate is better than data loss.
+Auto-dedup uses hybrid similarity (BM25 + cosine) with an 85% threshold. It catches close duplicates reliably but lets through very different reformulations of the same fact. This is intentional: a duplicate is better than data loss.
 
 ### Q12: How does the MCP server "store nudge" work?
 

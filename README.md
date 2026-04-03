@@ -2,18 +2,18 @@
 
 Persistent memory for AI coding agents. Single binary, zero runtime dependencies, MCP-native.
 
-Part of the [Basidiocarp ecosystem](https://github.com/basidiocarp) — see the [Technical Overview](https://github.com/basidiocarp/.github/blob/main/profile/README.md#technical-overview) for how Hyphae fits with Mycelium, Rhizome, Cap, and Lamella.
+Part of the [Basidiocarp ecosystem](https://github.com/basidiocarp). See the [Technical Overview](https://github.com/basidiocarp/.github/blob/main/profile/README.md#technical-overview) for how Hyphae fits with Mycelium, Rhizome, Cap, and Lamella.
 
 ## The Problem
 
-AI agents forget everything between sessions. Architecture decisions, resolved bugs, project conventions; all lost when the context window compacts or a session ends.
+AI agents forget everything between sessions. Architecture decisions, resolved bugs, project conventions—all lost when the context window compacts or a session ends.
 
 ## The Solution
 
 Hyphae gives your agent permanent memory with two complementary models:
 
-- **Memories** (episodic) — temporal storage with decay. Important decisions persist, trivial notes fade naturally.
-- **Memoirs** (semantic) — permanent knowledge graphs. Concepts are refined, never forgotten.
+- Memories (episodic): temporal storage with decay. Important decisions persist, trivial notes fade naturally.
+- Memoirs (semantic): permanent knowledge graphs. Concepts are refined, never forgotten.
 
 ## Installation
 
@@ -31,10 +31,14 @@ cargo build --release --no-default-features
 Then configure your editors and agent runtimes:
 
 ```bash
+# Recommended: full ecosystem setup
+stipe init
+
+# Alternative: hyphae-only setup
 hyphae init
 ```
 
-This auto-detects and configures the supported integrations. Your setup now has access to 35 MCP tools.
+Both commands auto-detect and configure supported integrations. `stipe init` sets up the full Basidiocarp ecosystem; `hyphae init` configures Hyphae alone. Your setup will have access to 37 MCP tools.
 
 ## How It Works
 
@@ -64,19 +68,19 @@ Next session:  Agent queries the "backend" memoir
 
 ## Key Features
 
-- **Two memory models** — episodic (decay-based) + semantic (knowledge graphs)
-- **RAG pipeline** — ingest files with automatic chunking, hybrid search, auto-context injection on session start
-- **Training data export** — `hyphae export-training --format sft|dpo|alpaca` exports memories as training JSONL for fine-tuning
-- **Session lifecycle tracking** — `hyphae session start|end|context` records structured coding sessions for later recall and operator views
-- **Structured feedback signals** — `hyphae feedback signal` records corrections, recoveries, and session outcomes for recall-to-action tuning
-- **Backup & restore** — `hyphae backup` / `hyphae restore` for database persistence and recovery
-- **Secrets scanning** — 8 regex patterns detect API keys, tokens, and passwords during memory storage with non-blocking warnings
-- **Evaluation framework** — `hyphae evaluate --days 14` measures agent improvement over time across 6 metrics
-- **Feedback loop** — `hyphae_extract_lessons` reads captured corrections and error resolutions to surface actionable patterns
-- **Auto-context injection** — MCP server injects recent sessions, decisions, and resolved errors into agent context on initialization
-- **Zero LLM cost** — rule-based fact extraction, local embeddings, no API calls for storage
-- **Local-first** — single SQLite file, no cloud, no network dependency
-- **Hybrid search** — 30% BM25 full-text + 70% cosine similarity via sqlite-vec
+- Two memory models: episodic (decay-based) + semantic (knowledge graphs)
+- RAG pipeline: ingest files with automatic chunking, hybrid search, auto-context injection on session start
+- Training data export: `hyphae export-training --format sft|dpo|alpaca` exports memories as training JSONL for fine-tuning
+- Session lifecycle tracking: `hyphae session start|end|context` records structured coding sessions for later recall and operator views
+- Structured feedback signals: `hyphae feedback signal` records corrections, recoveries, and session outcomes for recall-to-action tuning
+- Backup & restore: `hyphae backup` / `hyphae restore` for database persistence and recovery
+- Secrets scanning: 8 regex patterns detect API keys, tokens, and passwords during memory storage with non-blocking warnings
+- Evaluation framework: `hyphae evaluate --days 14` measures agent improvement over time across 6 metrics
+- Feedback loop: `hyphae_extract_lessons` reads captured corrections and error resolutions to surface actionable patterns
+- Auto-context injection: MCP server injects recent sessions, decisions, and resolved errors into agent context on initialization
+- Zero LLM cost: rule-based fact extraction, local embeddings, no API calls for storage
+- Local-first: single SQLite file, no cloud, no network dependency
+- Hybrid search: 30% BM25 full-text + 70% cosine similarity via sqlite-vec
 
 ## Technical Deep Dives
 
@@ -109,10 +113,10 @@ effective_rate = base_decay × importance_multiplier / (1 + access_count × 0.1)
 Ingestion → Chunking → Embedding → Storage → Hybrid Search → Context Injection
 ```
 
-- **Ingestion**: `hyphae_ingest_file` with 3 chunking strategies (sliding window, by heading, by function)
-- **Search**: `hyphae_search_docs` / `hyphae_search_all` with hybrid FTS5+vector
-- **Auto-indexing**: Lamella hook triggers `hyphae ingest-file` when 3+ document files change
-- **Auto-context**: MCP initialize response includes recent sessions, decisions, errors
+- Ingestion: `hyphae_ingest_file` with 3 chunking strategies (sliding window, by heading, by function)
+- Search: `hyphae_search_docs` / `hyphae_search_all` with hybrid FTS5+vector
+- Auto-indexing: Lamella hook triggers `hyphae ingest-file` when 3+ document files change
+- Auto-context: MCP initialize response includes recent sessions, decisions, errors
 
 ### Feedback & Lesson Extraction
 
@@ -137,14 +141,7 @@ hyphae session start --project demo --scope worker-a --task "run validation"
 hyphae session context --project demo --scope worker-a
 ```
 
-This is the bridge Cortina now uses when it turns hook activity into session
-records instead of only storing free-form summaries. Hyphae now also records
-recall events and structured outcome signals so those session results can be
-correlated later instead of living only as topic memories. MCP callers can also
-pass an explicit `session_id` to `hyphae_memory_recall` so recall attribution
-stays attached to the right scoped session. Cortina now validates cached session
-state with the structured `hyphae session status` surface instead of scraping
-human-readable `session context` output.
+Cortina uses this lifecycle surface to turn hook activity into structured session records rather than free-form summaries. Hyphae records recall events and outcome signals alongside session rows so results can be correlated after the fact. MCP callers pass an explicit `session_id` to `hyphae_memory_recall` to keep recall attribution attached to the correct scoped session. Cortina validates cached session state against `hyphae session status` rather than parsing human-readable `session context` output.
 
 ## Performance
 
@@ -162,7 +159,7 @@ hyphae (single binary)
 ├── hyphae-core    Types, traits, embedder (no I/O)
 ├── hyphae-ingest  File readers + chunking logic (no database dependency)
 ├── hyphae-store   SQLite + FTS5 + sqlite-vec
-├── hyphae-mcp     MCP server (31+ tools, JSON-RPC 2.0 over stdio)
+├── hyphae-mcp     MCP server (37 tools, JSON-RPC 2.0 over stdio)
 └── hyphae-cli     CLI commands, config, extraction, benchmarks
 ```
 

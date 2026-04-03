@@ -8,9 +8,9 @@ Engineering design document for automatically boosting memories that correlate w
 
 ## Problem
 
-Hyphae recalls memories based on text similarity (FTS5 + cosine via sqlite-vec) and static weight. The weight decays over time but never increases based on utility. A memory that gets recalled before a successful coding session is treated identically to one recalled before a session full of errors. Over time, all episodic memories drift toward zero weight regardless of value.
+Hyphae recalls memories based on text similarity (FTS5 + cosine via sqlite-vec) and static weight. The weight decays over time but never increases based on utility. A memory recalled before a successful coding session is treated identically to one recalled before a session full of errors. Over time, all episodic memories drift toward zero weight regardless of value.
 
-The goal: close the loop between recall and outcome so that useful memories float to the top without manual curation.
+The goal is to close the loop between recall and outcome so that useful memories rise without manual curation.
 
 ## 1. Signal Collection
 
@@ -32,7 +32,7 @@ Signals are collected within a **window** after each recall event. The window is
 
 ### Signal collection is passive
 
-Phase 1 collects signals without acting on them. The MCP server already sees every tool call in sequence. The additions are:
+Phase 1 collects signals without acting on them. The MCP server already sees every tool call in sequence. The required additions are:
 
 1. Log which memory IDs were returned by each `hyphae_memory_recall` call
 2. Log tool call outcomes (success/error) with timestamps
@@ -193,7 +193,7 @@ new_weight = clamp(
 
 ### 3.4 Interaction with existing decay
 
-The existing `apply_decay` mechanism runs on recall (via `maybe_auto_decay`). The feedback boost runs **after** decay, so the net effect is:
+The existing `apply_decay` mechanism runs on recall (via `maybe_auto_decay`). The feedback boost runs after decay, so the net effect is:
 
 ```
 after_decay = weight * decay_factor_adjusted_for_importance
@@ -317,60 +317,60 @@ if let Ok(true) = store.should_compute_feedback(session_id) {
 
 ### 5.1 False positives: unrelated success boosts recalled memories
 
-**Scenario**: Agent recalls memory about "database indexing", then proceeds to successfully fix a CSS bug. The database memory gets falsely boosted.
+An agent recalls a memory about "database indexing", then successfully fixes a CSS bug. The database memory gets falsely boosted.
 
-**Mitigations**:
-- **Position discount**: Memories lower in the result list get less credit. If the agent recalled 5 memories and only used one, the others are naturally discounted.
-- **MIN_SIGNALS_FOR_BOOST = 2**: Requires multiple signals, not just one session success.
-- **Recency half-life = 14 days**: A single false-positive event fades to 25% influence within a month.
-- **Aggregate across events**: One false positive among many true negatives averages out.
-- **Phase 2 analysis**: Before enabling online boosting, inspect the data manually via `hyphae feedback inspect` to validate correlation quality.
+Mitigations:
+- Position discount: memories lower in the result list get less credit. If the agent recalled 5 memories and only used one, the others are naturally discounted.
+- MIN_SIGNALS_FOR_BOOST = 2: requires multiple signals, not just one session success.
+- Recency half-life = 14 days: a single false-positive event fades to 25% influence within a month.
+- Aggregate across events: one false positive among many true negatives averages out.
+- Phase 2 analysis: before enabling online boosting, inspect data manually via `hyphae feedback inspect` to validate correlation quality.
 
 ### 5.2 Runaway boosting: popular memories dominate
 
-**Scenario**: A frequently recalled memory accumulates effectiveness score and drowns out newer, potentially better memories.
+A frequently recalled memory accumulates effectiveness score and drowns out newer, potentially better memories.
 
-**Mitigations**:
-- **MAX_BOOST_MULTIPLIER = 1.5**: Hard ceiling. Weight can never exceed 150% of base.
-- **Weight is clamped to [0.0, 1.0]** by the existing `Weight` type. The boost multiplier applies to the base weight, so even 1.5 * 1.0 = 1.5 is clamped to 1.0 by `Weight::new_clamped`.
-- **Decay still applies**: Even boosted memories decay if not accessed. The boost slows decay, it does not exempt from it.
-- **Existing search uses RRF**: The hybrid search (30% FTS + 70% cosine) already considers text relevance. Weight is used as a tiebreaker in `ORDER BY weight DESC`, not as the primary ranking signal. A boosted irrelevant memory still won't surface for unrelated queries.
+Mitigations:
+- MAX_BOOST_MULTIPLIER = 1.5: hard ceiling. Weight can never exceed 150% of base.
+- Weight is clamped to [0.0, 1.0] by the existing `Weight` type. The boost multiplier applies to the base weight, so even 1.5 * 1.0 = 1.5 is clamped to 1.0 by `Weight::new_clamped`.
+- Decay still applies: even boosted memories decay if not accessed. The boost slows decay but does not exempt from it.
+- Existing search uses RRF: the hybrid search (30% FTS + 70% cosine) already considers text relevance. Weight is used as a tiebreaker in `ORDER BY weight DESC`, not as the primary ranking signal. A boosted irrelevant memory still won't surface for unrelated queries.
 
 ### 5.3 Cold start: new memories have no recall history
 
-**Scenario**: A freshly stored memory has effectiveness = 0, competing against well-established memories.
+A freshly stored memory has effectiveness = 0, competing against well-established memories.
 
-**Mitigations**:
-- **No penalty for no data**: `mean_effectiveness = 0.0` when there are no recall events. This means the memory's weight is unmodified by the feedback system.
-- **Importance as prior**: New memories start with `weight = 1.0` (the maximum). The feedback loop only adjusts weight downward (via decay) or slows the decay (via positive effectiveness). New memories start at full strength.
-- **MIN_SIGNALS_FOR_BOOST = 2**: The system does not penalize memories that have been recalled fewer than 2 times. They keep their natural weight.
+Mitigations:
+- No penalty for no data: `mean_effectiveness = 0.0` when there are no recall events, so the memory's weight is unmodified by the feedback system.
+- Importance as prior: new memories start with `weight = 1.0` (the maximum). The feedback loop only adjusts weight downward via decay or slows that decay via positive effectiveness.
+- MIN_SIGNALS_FOR_BOOST = 2: the system does not penalize memories recalled fewer than 2 times. They keep their natural weight.
 
 ### 5.4 Stale correlations persist
 
-**Scenario**: A memory was useful 6 months ago but the codebase has changed. Its boosted weight keeps it surfacing.
+A memory was useful 6 months ago but the codebase has changed. Its boosted weight keeps it surfacing.
 
-**Mitigations**:
-- **Recency half-life = 14 days**: After 28 days, an event has ~25% influence. After 56 days, ~6%.
-- **Existing decay runs continuously**: `maybe_auto_decay` runs on every recall, applying importance-weighted decay. Even a boosted memory will eventually drop below the prune threshold.
-- **Stale indicator at 30 days**: The existing `age_indicator` in `tool_recall` already warns agents about stale memories.
+Mitigations:
+- Recency half-life = 14 days: after 28 days, an event has ~25% influence; after 56 days, ~6%.
+- Existing decay runs continuously: `maybe_auto_decay` runs on every recall, applying importance-weighted decay. Even a boosted memory eventually drops below the prune threshold.
+- Stale indicator at 30 days: the existing `age_indicator` in `tool_recall` already warns agents about stale memories.
 
 ### 5.5 Storage growth
 
-**Scenario**: High-volume usage creates many recall_events and outcome_signals rows.
+High-volume usage creates many recall_events and outcome_signals rows.
 
-**Mitigations**:
-- **Prune old data**: `hyphae feedback prune --older-than 90d` deletes recall_events and outcome_signals older than the retention period. Can be added to the existing `hyphae prune` command.
-- **Estimated size**: Each recall event is ~200 bytes, each signal is ~150 bytes. At 100 recalls/day and 500 signals/day, that is ~70 KB/day, ~25 MB/year. Negligible.
+Mitigations:
+- Prune old data: `hyphae feedback prune --older-than 90d` deletes recall_events and outcome_signals older than the retention period. Can be added to the existing `hyphae prune` command.
+- Estimated size: each recall event is ~200 bytes, each signal ~150 bytes. At 100 recalls/day and 500 signals/day, that is ~70 KB/day, ~25 MB/year.
 
 ### 5.6 Feedback loop instability
 
-**Scenario**: Boosted memories get recalled more, generating more positive signals, getting boosted further.
+Boosted memories get recalled more, generating more positive signals, getting boosted further.
 
-**Mitigations**:
-- **MAX_BOOST_MULTIPLIER = 1.5 with weight capped at 1.0**: The ceiling prevents exponential growth.
-- **BOOST_FACTOR = 0.15**: Conservative step size. Even with perfect effectiveness (+1.0), each cycle adds at most 15% of current weight.
-- **Penalty factor exists**: Bad outcomes reduce weight, providing a counterbalancing force.
-- **Weight is one of many ranking signals**: Hybrid search uses text similarity and embedding distance as primary signals. Weight breaks ties, it does not dominate ranking.
+Mitigations:
+- MAX_BOOST_MULTIPLIER = 1.5 with weight capped at 1.0: the ceiling prevents exponential growth.
+- BOOST_FACTOR = 0.15: conservative step size. Even with perfect effectiveness (+1.0), each cycle adds at most 15% of current weight.
+- Penalty factor: bad outcomes reduce weight, providing a counterbalancing force.
+- Weight is one of many ranking signals: hybrid search uses text similarity and embedding distance as primary signals. Weight breaks ties, it does not dominate ranking.
 
 ## 6. Implementation Phases
 

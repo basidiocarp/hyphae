@@ -19,10 +19,7 @@ This file covers the conceptual and operational guides for Hyphae: when to use e
 
 ## Overview
 
-Hyphae (Infinite Context Memory) offers two complementary memory systems:
-
-- **Memories** (episodic): temporal storage with decay. Important memories persist, trivial ones fade naturally. Organized by **topic**.
-- **Memoirs** (semantic): permanent knowledge graphs. Concepts are refined, never declined. Organized by **memoir** containing **concepts** linked by **typed relations**.
+Hyphae offers two complementary memory systems. Memories are episodic: temporal storage with decay, organized by topic. Important memories persist, trivial ones fade naturally. Memoirs are semantic: permanent knowledge graphs organized by memoir, containing concepts linked by typed relations. Concepts are refined, never deleted.
 
 The CLI offers 29 commands. The MCP server exposes 23 tools (9 memory + 9 memoir + 5 RAG). Both access the same SQLite database.
 
@@ -159,11 +156,11 @@ Agent: (applies the known solution directly without re-debugging)
 
 ### Key points of multi-session workflow
 
-1. **At session start**: always `hyphae_memory_recall` with project context
-2. **After each important decision**: `hyphae_memory_store` with importance `high`
-3. **After each bug fix**: `hyphae_memory_store` with specific keywords
-4. **Periodically**: `hyphae_memory_health` to check topic hygiene
-5. **When a topic grows**: `hyphae_memory_consolidate` to densify
+1. At session start: always `hyphae_memory_recall` with project context
+2. After each important decision: `hyphae_memory_store` with importance `high`
+3. After each bug fix: `hyphae_memory_store` with specific keywords
+4. Periodically: `hyphae_memory_health` to check topic hygiene
+5. When a topic grows: `hyphae_memory_consolidate` to densify
 
 ---
 
@@ -185,12 +182,12 @@ Agent: (applies the known solution directly without re-debugging)
 
 #### Basic rules
 
-1. **One topic per concern** -- Don't mix decisions and errors in the same topic
-2. **Prefix by project** when working on multiple projects
-3. **Use `critical`** for invariant facts (ports, URLs, credentials)
-4. **Use `low`** for temporary notes that don't need to persist
-5. **Consolidate regularly** when a topic exceeds 7-10 entries
-6. **Don't create overly granular topics** -- `cors-errors` is too narrow, `errors-resolved` is sufficient
+1. One topic per concern -- don't mix decisions and errors in the same topic
+2. Prefix by project when working on multiple projects
+3. Use `critical` for invariant facts (ports, URLs, credentials)
+4. Use `low` for temporary notes that don't need to persist
+5. Consolidate regularly when a topic exceeds 7-10 entries
+6. Don't create overly granular topics -- `cors-errors` is too narrow, `errors-resolved` is sufficient
 
 #### Anti-patterns
 
@@ -346,7 +343,7 @@ hyphae store -t "context" -c "Currently debugging the auth module" -i low
 
 ### The principle
 
-Each memory has a **weight** that starts at 1.0 and decreases over time. The lower the weight, the less relevant the memory. When the weight drops below a threshold (default 0.1), the memory can be automatically pruned.
+Each memory has a weight that starts at 1.0 and decreases over time. The lower the weight, the less relevant the memory. When the weight drops below a threshold (default 0.1), the memory can be automatically pruned.
 
 ### The formula
 
@@ -356,7 +353,7 @@ effective_rate = base_rate x importance_multiplier / (1 + access_count x 0.1)
 new_weight = weight x (1 - effective_rate)
 ```
 
-**Where:**
+Where:
 - `base_rate` = configured decay rate (default 0.95, meaning 5% loss per cycle)
 - `importance_multiplier` = see table below
 - `access_count` = number of times the memory has been recalled
@@ -381,7 +378,7 @@ The more a memory is recalled, the more it resists decay. The denominator `(1 + 
 | 10 | 2.0 | 2.5% per cycle |
 | 20 | 3.0 | 1.7% per cycle |
 
-**Interpretation:** a memory recalled 10 times decays 2x slower than a memory never recalled.
+A memory recalled 10 times decays 2x slower than a memory never recalled.
 
 ### When decay runs
 
@@ -415,9 +412,9 @@ And at `critical`: weight = 1.000 forever.
 
 ### Protection against data loss
 
-- `critical` memories **never** decay
-- `high` memories are **never pruned** (even if their weight drops)
-- Decay is `access-aware`: recalling a memory reinforces it
+- `critical` memories never decay
+- `high` memories are never pruned (even if their weight drops)
+- Decay is access-aware: recalling a memory reinforces it
 - Pruning only removes `medium` and `low` below the threshold
 
 ---

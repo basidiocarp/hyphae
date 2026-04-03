@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Updated documentation across all guides: README, architecture, CLI reference, embedding models, features, feedback loop design, guide, internals, MCP tools, product, setup-by-tool, training data, and troubleshooting
+
 ## v0.10.2 - 2026-04-01
 
 ### Fixed

@@ -33,7 +33,7 @@ That's it. Your agent now has access to 18 MCP tools. It uses them automatically
 
 ## Two Memory Models
 
-Hyphae has two complementary memory systems — use both.
+Hyphae has two complementary memory systems—use both.
 
 ### Memories (Episodic)
 
@@ -106,9 +106,9 @@ hyphae memoir search-all "database"
 hyphae memoir inspect -m "backend-arch" "user-service" -D 2
 ```
 
-**9 relation types:** `part_of`, `depends_on`, `related_to`, `contradicts`, `refines`, `alternative_to`, `caused_by`, `instance_of`, `superseded_by`.
+9 relation types: `part_of`, `depends_on`, `related_to`, `contradicts`, `refines`, `alternative_to`, `caused_by`, `instance_of`, `superseded_by`.
 
-Use `superseded_by` to mark obsolete facts instead of deleting them — the history is valuable.
+Use `superseded_by` to mark obsolete facts instead of deleting them—the history is valuable.
 
 ## Topic Organization
 
@@ -140,7 +140,7 @@ hyphae consolidate --topic "errors-resolved"
 hyphae consolidate --topic "errors-resolved" --keep-originals
 ```
 
-Hyphae warns when a topic has >7 entries via the MCP `hyphae_memory_store` response.
+When a topic exceeds 7 entries, the MCP `hyphae_memory_store` response includes a consolidation warning.
 
 ### Decay and Pruning
 
@@ -185,7 +185,7 @@ cat session-log.txt | hyphae extract -p my-project
 echo "Switched from MySQL to PostgreSQL for JSONB support" | hyphae extract -p api --dry-run
 ```
 
-Detected signals: architecture patterns, error resolutions, decisions, configurations, refactors, deployments.
+Detected signals cover architecture patterns, error resolutions, decisions, configurations, refactors, and deployments.
 
 ## Context Injection
 
@@ -283,7 +283,7 @@ url = "http://localhost:11434"
 model = "nomic-embed-text"
 ```
 
-**Environment variable precedence**: If both `HYPHAE_EMBEDDING_URL` and config.toml are set, the environment variable wins.
+If both `HYPHAE_EMBEDDING_URL` and config.toml are set, the environment variable wins.
 
 ### No Embeddings (Fast Iteration)
 
@@ -336,7 +336,7 @@ If embeddings are disabled, search falls back to FTS5 only (100% keyword matchin
 | Ollama (HTTP) | Variable | Server-side | ~50-200ms (network) | Depends on model |
 | OpenAI (HTTP) | N/A | N/A | ~200ms (network) | Excellent |
 
-Choose based on your machine and response time requirements. Local embeddings are almost always faster than HTTP due to network latency.
+Choose based on your machine and response time requirements. Local embeddings are faster than HTTP in almost all cases due to network latency.
 
 ### Troubleshooting
 

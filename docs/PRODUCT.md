@@ -10,15 +10,15 @@ Existing solutions either cost too much (Mem0 burns 2 LLM calls per message), lo
 
 ## What Hyphae does
 
-Hyphae stores what your agent learns and gives it back when needed. Two memory models handle different kinds of knowledge:
+Hyphae stores what your agent learns and gives it back when needed. Two memory models handle different kinds of knowledge.
 
-**Episodic memories** capture events: decisions, errors, configurations, preferences. They decay over time unless accessed or marked important. A critical architecture decision stays forever; a one-time debug note fades in weeks.
+Episodic memories capture events: decisions, errors, configurations, preferences. They decay over time unless accessed or marked important. A critical architecture decision stays forever; a one-time debug note fades in weeks.
 
-**Semantic memoirs** capture structure: architecture graphs, concept relationships, domain models. Concepts are refined, never decayed. Link your API gateway to its database dependency, and that relationship persists across every session.
+Semantic memoirs capture structure: architecture graphs, concept relationships, domain models. Concepts are refined, never decayed. Link your API gateway to its database dependency and that relationship persists across every session.
 
-**Rule-based extraction** detects architecture decisions, error resolutions, and configuration changes from conversation text. No API calls, no token cost, no latency.
+Rule-based extraction detects architecture decisions, error resolutions, and configuration changes from conversation text—no API calls, no token cost, no latency.
 
-**Universal tool support** covers 14 editors. `hyphae init` writes the MCP config for Claude Code, Cursor, VS Code, Windsurf, Zed, Amp, Amazon Q, Cline, Roo Code, Kilo Code, Codex CLI, OpenCode, Claude Desktop, and Gemini. Switch tools without losing memory.
+Universal tool support covers 14 editors. `hyphae init` writes the MCP config for Claude Code, Cursor, VS Code, Windsurf, Zed, Amp, Amazon Q, Cline, Roo Code, Kilo Code, Codex CLI, OpenCode, Claude Desktop, and Gemini. Switch tools without losing memory.
 
 ## Use cases
 
@@ -98,7 +98,7 @@ Single binary (hyphae)
   Tests: 317 tests (unit, security, performance, UX, integration)
 ```
 
-Local SQLite only. No cloud, no API key for storage, no Docker.
+Local SQLite only—no cloud, no API key for storage, no Docker.
 
 ## Security
 
@@ -111,7 +111,7 @@ brew tap basidiocarp/tap && brew install hyphae
 hyphae init
 ```
 
-Two commands. Your agent now has permanent memory.
+Two commands configure permanent memory for your agent.
 
 ## Resources
 

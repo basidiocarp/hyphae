@@ -1,6 +1,6 @@
 # Training Data from Hyphae
 
-Hyphae stores data that's useful for fine-tuning LLMs on your team's coding patterns. This guide covers what data exists, what format it's in, and how it maps to training formats.
+Hyphae accumulates data useful for fine-tuning LLMs on your team's coding patterns. This guide covers what data exists, what format it takes, and how it maps to training formats.
 
 See the [ecosystem-level LLM Training Guide](https://github.com/basidiocarp/.github/blob/main/docs/LLM-TRAINING.md) for the full picture.
 
@@ -143,7 +143,7 @@ After N agent sessions:
 | 200 | ~400 | ~120 | ~250 | ~650 | ~120 |
 | 500 | ~1000 | ~300 | ~600 | ~1600 | ~300 |
 
-You need roughly 1,000 SFT pairs for a useful fine-tune and 500 DPO pairs for preference learning. That's about 200-500 active coding sessions.
+A useful fine-tune requires roughly 1,000 SFT pairs and 500 DPO pairs for preference learning—approximately 200-500 active coding sessions.
 
 ## Export Format
 
@@ -183,11 +183,11 @@ The database is at:
 
 ## What to Fine-tune On
 
-Start narrow. Don't dump everything into training. Pick one:
+Start narrow. Pick one topic rather than dumping everything into training:
 
-1. **Company conventions** — decisions topic only. Teaches the model how your team works.
-2. **Debugging patterns** — errors/resolved topic. Teaches the model your common failure modes.
-3. **Code style** — corrections topic as DPO. Teaches the model to write code the way you want it.
+1. Company conventions: decisions topic only. Teaches the model how your team works.
+2. Debugging patterns: errors/resolved topic. Teaches the model your common failure modes.
+3. Code style: corrections topic as DPO. Teaches the model to write code the way you want it.
 
 Each of these alone, with 500+ examples, produces a noticeable improvement in a fine-tuned Llama 3 or Mistral model.
 

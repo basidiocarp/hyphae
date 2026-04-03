@@ -384,10 +384,10 @@ Saves ~40% tokens on recall output.
 
 ### Auto-behaviors
 
-- **Auto-dedup**: `hyphae_memory_store` checks hybrid similarity >85% in same topic → updates existing instead of duplicating
-- **Auto-decay**: `hyphae_memory_recall` runs decay if >24h since last run
-- **Consolidation hint**: `hyphae_memory_store` warns when topic has >7 entries
-- **Auto-embed**: if embedder is available, memories are embedded on store/update
+- Auto-dedup: `hyphae_memory_store` checks hybrid similarity >85% in same topic → updates existing instead of duplicating
+- Auto-decay: `hyphae_memory_recall` runs decay if >24h since last run
+- Consolidation hint: `hyphae_memory_store` warns when topic has >7 entries
+- Auto-embed: if embedder is available, memories are embedded on store/update
 
 ## hyphae-cli
 
