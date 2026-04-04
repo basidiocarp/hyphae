@@ -924,7 +924,7 @@ impl MemoryStore for SqliteStore {
         let changed = self
             .conn
             .execute(
-                "UPDATE memories SET weight = weight * (
+                "UPDATE memories SET weight = MAX(0.0, weight * (
                     1.0 - (1.0 - ?1) *
                     CASE importance
                         WHEN 'high' THEN 0.5
@@ -932,7 +932,7 @@ impl MemoryStore for SqliteStore {
                         ELSE 1.0
                     END
                     / (1.0 + access_count * 0.1)
-                )
+                ))
                 WHERE importance != 'critical' AND invalidated_at IS NULL",
                 params![decay_factor],
             )

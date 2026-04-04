@@ -128,6 +128,26 @@ impl SqliteStore {
         )
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
+        tx.execute(
+            "DELETE FROM vec_chunks WHERE chunk_id IN (
+                SELECT id FROM chunks WHERE document_id IN (
+                    SELECT id FROM documents WHERE project = ?1
+                )
+            )",
+            params![project],
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        tx.execute(
+            "DELETE FROM chunks_fts WHERE id IN (
+                SELECT id FROM chunks WHERE document_id IN (
+                    SELECT id FROM documents WHERE project = ?1
+                )
+            )",
+            params![project],
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
         // Delete memories
         let memories_deleted = tx
             .execute("DELETE FROM memories WHERE project = ?1", params![project])
@@ -178,6 +198,22 @@ impl SqliteStore {
         tx.execute(
             "DELETE FROM vec_memories WHERE memory_id IN (
                 SELECT id FROM memories WHERE created_at < ?1
+            )",
+            params![before_dt],
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        tx.execute(
+            "DELETE FROM vec_chunks WHERE chunk_id IN (
+                SELECT id FROM chunks WHERE created_at < ?1
+            )",
+            params![before_dt],
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        tx.execute(
+            "DELETE FROM chunks_fts WHERE id IN (
+                SELECT id FROM chunks WHERE created_at < ?1
             )",
             params![before_dt],
         )

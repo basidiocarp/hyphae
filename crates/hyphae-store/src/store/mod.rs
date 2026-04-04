@@ -329,6 +329,22 @@ mod tests {
     }
 
     #[test]
+    fn test_apply_decay_clamps_low_importance_weight_to_non_negative() {
+        let store = test_store();
+        let mut mem = make_memory("test", "low importance decay");
+        mem.importance = Importance::Low;
+        mem.weight = Weight::new_clamped(0.1);
+        mem.access_count = 1;
+        let id = mem.id.clone();
+        store.store(mem).unwrap();
+
+        store.apply_decay(0.0).unwrap();
+
+        let updated = store.get(&id).unwrap().unwrap();
+        assert!(updated.weight.value() >= 0.0);
+    }
+
+    #[test]
     fn test_prune() {
         let store = test_store();
         let mut mem = make_memory("test", "low weight");
@@ -1827,6 +1843,89 @@ mod tests {
         assert_eq!(ses_del, 0);
         assert_eq!(chk_del, 0);
         assert_eq!(doc_del, 0);
+    }
+
+    #[test]
+    fn test_purge_project_removes_chunk_fts_entries() {
+        use chunk_store::test_helpers::{make_chunk, make_document};
+        use hyphae_core::ChunkStore;
+
+        let store = test_store();
+        let mut doc = make_document("docs/proj-a.md");
+        doc.project = Some("proj_a".into());
+        let doc_id = doc.id.clone();
+        store.store_document(doc).unwrap();
+        store
+            .store_chunks(vec![make_chunk(&doc_id, 0, "ownership borrowing rust")])
+            .unwrap();
+
+        assert!(
+            !store
+                .search_chunks_fts("ownership borrowing", 10, 0, Some("proj_a"))
+                .unwrap()
+                .is_empty()
+        );
+
+        let (_mem_del, _ses_del, chk_del, doc_del) = store.purge_project("proj_a").unwrap();
+
+        assert_eq!(chk_del, 1);
+        assert_eq!(doc_del, 1);
+        assert!(
+            store
+                .search_chunks_fts("ownership borrowing", 10, 0, Some("proj_a"))
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn test_purge_before_date_removes_chunk_fts_entries() {
+        use chunk_store::test_helpers::{make_chunk, make_document};
+        use hyphae_core::ChunkStore;
+
+        let store = test_store();
+        let mut doc = make_document("docs/old.md");
+        doc.project = Some("proj_old".into());
+        let doc_id = doc.id.clone();
+        store.store_document(doc).unwrap();
+        let chunk = make_chunk(&doc_id, 0, "stale purge target");
+        let chunk_id = chunk.id.clone();
+        store.store_chunks(vec![chunk]).unwrap();
+
+        let old_dt = (Utc::now() - chrono::Duration::days(30)).to_rfc3339();
+        store
+            .conn
+            .execute(
+                "UPDATE documents SET created_at = ?1, updated_at = ?1 WHERE id = ?2",
+                params![old_dt, doc_id.to_string()],
+            )
+            .unwrap();
+        store
+            .conn
+            .execute(
+                "UPDATE chunks SET created_at = ?1 WHERE id = ?2",
+                params![old_dt, chunk_id.to_string()],
+            )
+            .unwrap();
+
+        assert!(
+            !store
+                .search_chunks_fts("stale purge target", 10, 0, Some("proj_old"))
+                .unwrap()
+                .is_empty()
+        );
+
+        let before_dt = (Utc::now() - chrono::Duration::days(7)).to_rfc3339();
+        let (_mem_del, _ses_del, chk_del, doc_del) = store.purge_before_date(&before_dt).unwrap();
+
+        assert_eq!(chk_del, 1);
+        assert_eq!(doc_del, 1);
+        assert!(
+            store
+                .search_chunks_fts("stale purge target", 10, 0, Some("proj_old"))
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
