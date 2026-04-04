@@ -205,7 +205,9 @@ impl SqliteStore {
 
         tx.execute(
             "DELETE FROM vec_chunks WHERE chunk_id IN (
-                SELECT id FROM chunks WHERE created_at < ?1
+                SELECT id FROM chunks WHERE document_id IN (
+                    SELECT id FROM documents WHERE created_at < ?1
+                )
             )",
             params![before_dt],
         )
@@ -213,7 +215,9 @@ impl SqliteStore {
 
         tx.execute(
             "DELETE FROM chunks_fts WHERE id IN (
-                SELECT id FROM chunks WHERE created_at < ?1
+                SELECT id FROM chunks WHERE document_id IN (
+                    SELECT id FROM documents WHERE created_at < ?1
+                )
             )",
             params![before_dt],
         )
@@ -238,7 +242,9 @@ impl SqliteStore {
         // Delete chunks
         let chunks_deleted = tx
             .execute(
-                "DELETE FROM chunks WHERE created_at < ?1",
+                "DELETE FROM chunks WHERE document_id IN (
+                    SELECT id FROM documents WHERE created_at < ?1
+                )",
                 params![before_dt],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;

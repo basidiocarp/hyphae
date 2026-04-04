@@ -821,7 +821,10 @@ impl MemoirStore for SqliteStore {
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
         let label_counts: Vec<(String, usize)> = label_stmt
             .query_map(params![memoir_id.as_ref()], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1).map(|n| n as usize)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1).map(|n| n as usize)?,
+                ))
             })
             .map_err(|e| HyphaeError::Database(e.to_string()))?
             .collect::<Result<Vec<_>, _>>()

@@ -1879,7 +1879,7 @@ mod tests {
     }
 
     #[test]
-    fn test_purge_before_date_removes_chunk_fts_entries() {
+    fn test_purge_before_date_removes_chunk_fts_entries_for_old_documents() {
         use chunk_store::test_helpers::{make_chunk, make_document};
         use hyphae_core::ChunkStore;
 
@@ -1900,13 +1900,19 @@ mod tests {
                 params![old_dt, doc_id.to_string()],
             )
             .unwrap();
-        store
+
+        let stored_chunk_created_at: String = store
             .conn
-            .execute(
-                "UPDATE chunks SET created_at = ?1 WHERE id = ?2",
-                params![old_dt, chunk_id.to_string()],
+            .query_row(
+                "SELECT created_at FROM chunks WHERE id = ?1",
+                params![chunk_id.to_string()],
+                |row| row.get(0),
             )
             .unwrap();
+        assert!(
+            stored_chunk_created_at > old_dt,
+            "chunk row should stay newer than the old document timestamp"
+        );
 
         assert!(
             !store
