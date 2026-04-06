@@ -129,6 +129,10 @@ signals = SELECT * FROM outcome_signals
           WHERE session_id = R.session_id
             AND occurred_at BETWEEN window_start AND window_end
 
+-- session_success/session_failure count for every recall whose window reaches
+-- session_end, even though the timeline still attaches the row to the latest
+-- recall for operator display
+
 positive_sum = sum(signal_value) for signals where signal_value > 0
 negative_sum = sum(signal_value) for signals where signal_value < 0
 
@@ -153,18 +157,13 @@ events = SELECT * FROM recall_effectiveness WHERE memory_id = M.id
 
 recency_half_life = 14 days
 aggregate = 0.0
-weight_sum = 0.0
 
 for event in events:
     age_days = (now - event.computed_at).days()
     recency_weight = exp(-0.693 * age_days / recency_half_life)  -- 0.693 = ln(2)
     aggregate += event.effectiveness * recency_weight
-    weight_sum += recency_weight
 
-if weight_sum > 0:
-    mean_effectiveness = aggregate / weight_sum
-else:
-    mean_effectiveness = 0.0
+aggregate_effectiveness = clamp(aggregate, -1.0, 1.0)
 ```
 
 ### 3.3 Weight boosting
@@ -177,10 +176,10 @@ MAX_BOOST_MULTIPLIER = 1.5   -- weight can never exceed 1.5x its base value
 MIN_WEIGHT = 0.05            -- floor to prevent memories from being zeroed out
 PENALTY_FACTOR = 0.05        -- negative effectiveness penalizes less aggressively
 
-if mean_effectiveness > 0:
-    boost = weight * BOOST_FACTOR * mean_effectiveness
+if aggregate_effectiveness > 0:
+    boost = weight * BOOST_FACTOR * aggregate_effectiveness
 else:
-    boost = weight * PENALTY_FACTOR * mean_effectiveness  -- negative, reduces weight
+    boost = weight * PENALTY_FACTOR * aggregate_effectiveness  -- negative, reduces weight
 
 -- Apply with ceiling
 base_weight = weight stored at memory creation (or last consolidation)
@@ -323,7 +322,7 @@ Mitigations:
 - Position discount: memories lower in the result list get less credit. If the agent recalled 5 memories and only used one, the others are naturally discounted.
 - MIN_SIGNALS_FOR_BOOST = 2: requires multiple signals, not just one session success.
 - Recency half-life = 14 days: a single false-positive event fades to 25% influence within a month.
-- Aggregate across events: one false positive among many true negatives averages out.
+- Aggregate across events: one false positive is diluted by later negative evidence and fades as its recency weight decays.
 - Phase 2 analysis: before enabling online boosting, inspect data manually via `hyphae feedback inspect` to validate correlation quality.
 
 ### 5.2 Runaway boosting: popular memories dominate
@@ -341,9 +340,9 @@ Mitigations:
 A freshly stored memory has effectiveness = 0, competing against well-established memories.
 
 Mitigations:
-- No penalty for no data: `mean_effectiveness = 0.0` when there are no recall events, so the memory's weight is unmodified by the feedback system.
+- No penalty for no data: `aggregate_effectiveness = 0.0` when there are no recall events, so the memory's weight is unmodified by the feedback system.
 - Importance as prior: new memories start with `weight = 1.0` (the maximum). The feedback loop only adjusts weight downward via decay or slows that decay via positive effectiveness.
-- MIN_SIGNALS_FOR_BOOST = 2: the system does not penalize memories recalled fewer than 2 times. They keep their natural weight.
+- MIN_SIGNALS_FOR_BOOST = 2: recalls with fewer than 2 contributing signals persist a `0.0` effectiveness row, so they do not get boosted or penalized from sparse evidence.
 
 ### 5.4 Stale correlations persist
 
@@ -489,7 +488,7 @@ impl SqliteStore {
     pub fn aggregate_effectiveness(
         &self,
         memory_id: &MemoryId,
-    ) -> HyphaeResult<f32>;  // returns mean_effectiveness [-1.0, 1.0]
+    ) -> HyphaeResult<f32>;  // returns recency-weighted effectiveness [-1.0, 1.0]
 
     /// Get feedback stats: total recall events, total signals, top memories.
     pub fn feedback_stats(

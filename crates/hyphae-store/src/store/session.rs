@@ -242,6 +242,9 @@ impl SqliteStore {
         ) {
             tracing::warn!("failed to record session outcome signal: {e}");
         }
+        if let Err(e) = self.score_recall_effectiveness(session_id) {
+            tracing::warn!("failed to score recall effectiveness: {e}");
+        }
 
         Ok((project, started_at, task, ended_at, duration_minutes))
     }

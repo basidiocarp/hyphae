@@ -67,34 +67,22 @@ fn normalize_signal_type(signal_type: &str) -> Option<&'static str> {
 }
 
 fn signal_contribution(signal_type: &str, signal_value: i64) -> Option<i64> {
-    let _ = signal_value;
-    match normalize_signal_type(signal_type)? {
-        SIGNAL_SESSION_SUCCESS => Some(4),
-        SIGNAL_SESSION_FAILURE => Some(-4),
-        SIGNAL_BUILD_PASSED | SIGNAL_TEST_PASSED => Some(2),
-        SIGNAL_ERROR_RESOLVED => Some(1),
-        SIGNAL_CORRECTION | SIGNAL_TOOL_ERROR => Some(-1),
-        SIGNAL_ERROR_FREE_RUN => Some(1),
-        SIGNAL_EXPLICIT_BOOST => Some(3),
-        _ => None,
+    if signal_value == 0 {
+        return None;
     }
+
+    normalize_signal_type(signal_type).map(|_| signal_value)
 }
 
 fn aggregate_effectiveness(rows: &[(f32, String)]) -> f32 {
     let mut weighted_sum = 0.0_f32;
-    let mut weight_sum = 0.0_f32;
 
     for (effectiveness, computed_at) in rows {
         let weight = recency_weight(computed_at);
         weighted_sum += *effectiveness * weight;
-        weight_sum += weight;
     }
 
-    if weight_sum > 0.0 {
-        weighted_sum / weight_sum
-    } else {
-        0.0
-    }
+    weighted_sum.clamp(-1.0, 1.0)
 }
 
 impl SqliteStore {
@@ -291,7 +279,12 @@ impl SqliteStore {
             )
             .map_err(|e| HyphaeError::Database(format!("failed to log outcome signal: {e}")))?;
 
-        if let Some(session_id) = session_id {
+        if let Some(session_id) = session_id
+            && !matches!(
+                stored_signal_type,
+                SIGNAL_SESSION_SUCCESS | SIGNAL_SESSION_FAILURE
+            )
+        {
             let session_status: Option<String> = self
                 .conn
                 .query_row(
@@ -305,8 +298,8 @@ impl SqliteStore {
                 })?;
 
             if matches!(session_status.as_deref(), Some("completed")) {
-                if let Err(e) = self.compute_session_effectiveness(session_id) {
-                    tracing::warn!("compute_session_effectiveness failed: {e}");
+                if let Err(e) = self.score_recall_effectiveness(session_id) {
+                    tracing::warn!("score_recall_effectiveness failed: {e}");
                 }
             }
         }
@@ -505,7 +498,7 @@ impl SqliteStore {
         })
     }
 
-    pub(crate) fn compute_session_effectiveness(&self, session_id: &str) -> HyphaeResult<usize> {
+    pub(crate) fn score_recall_effectiveness(&self, session_id: &str) -> HyphaeResult<usize> {
         let session_ended_at: Option<String> = self
             .conn
             .query_row(
@@ -594,7 +587,10 @@ impl SqliteStore {
                            AND (
                                 recall_event_id = ?4
                                 OR (
-                                    recall_event_id IS NULL
+                                    (
+                                        recall_event_id IS NULL
+                                        OR signal_type IN (?5, ?6)
+                                    )
                                     AND occurred_at >= ?2
                                     AND occurred_at <= ?3
                                 )
@@ -611,7 +607,9 @@ impl SqliteStore {
                             session_id,
                             &recall.recalled_at,
                             window_end.to_rfc3339(),
-                            &recall.id
+                            &recall.id,
+                            SIGNAL_SESSION_SUCCESS,
+                            SIGNAL_SESSION_FAILURE,
                         ],
                         |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
                     )
@@ -630,23 +628,23 @@ impl SqliteStore {
                     .collect()
             };
 
-            if signal_values.len() < MIN_SIGNALS_FOR_EFFECTIVENESS {
-                continue;
-            }
-
-            let positive_sum: i64 = signal_values
-                .iter()
-                .copied()
-                .filter(|value| *value > 0)
-                .sum();
-            let negative_sum: i64 = signal_values
-                .iter()
-                .copied()
-                .filter(|value| *value < 0)
-                .sum();
-            let total = positive_sum + negative_sum;
-            let magnitude = (positive_sum.abs() + negative_sum.abs()).max(1);
-            let raw_score = total as f32 / magnitude as f32;
+            let raw_score = if signal_values.len() < MIN_SIGNALS_FOR_EFFECTIVENESS {
+                0.0
+            } else {
+                let positive_sum: i64 = signal_values
+                    .iter()
+                    .copied()
+                    .filter(|value| *value > 0)
+                    .sum();
+                let negative_sum: i64 = signal_values
+                    .iter()
+                    .copied()
+                    .filter(|value| *value < 0)
+                    .sum();
+                let total = positive_sum + negative_sum;
+                let magnitude = (positive_sum.abs() + negative_sum.abs()).max(1);
+                total as f32 / magnitude as f32
+            };
 
             for (index, memory_id) in recall.memory_ids.iter().enumerate() {
                 let position_factor = 1.0 / (1.0 + POSITION_DISCOUNT * index as f32);
@@ -659,7 +657,7 @@ impl SqliteStore {
                      ON CONFLICT(memory_id, recall_event_id) DO UPDATE SET
                         effectiveness = excluded.effectiveness,
                         signal_count = excluded.signal_count,
-                        computed_at = excluded.computed_at",
+                        computed_at = COALESCE(recall_effectiveness.computed_at, excluded.computed_at)",
                     params![
                         memory_id,
                         &recall.id,
@@ -1068,17 +1066,23 @@ mod tests {
             .session_end(&session_id, Some("done"), None, Some("0"))
             .unwrap();
 
-        let rows_before: Vec<(String, String, f32, i64)> = store
+        let rows_before: Vec<(String, String, f32, i64, String)> = store
             .conn
             .prepare(
-                "SELECT memory_id, recall_event_id, effectiveness, signal_count
+                "SELECT memory_id, recall_event_id, effectiveness, signal_count, computed_at
                  FROM recall_effectiveness
                  WHERE recall_event_id = ?1
                  ORDER BY memory_id",
             )
             .unwrap()
             .query_map(params![recall_event_id], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
             })
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
@@ -1094,17 +1098,23 @@ mod tests {
             )
             .unwrap();
 
-        let rows_after: Vec<(String, String, f32, i64)> = store
+        let rows_after: Vec<(String, String, f32, i64, String)> = store
             .conn
             .prepare(
-                "SELECT memory_id, recall_event_id, effectiveness, signal_count
+                "SELECT memory_id, recall_event_id, effectiveness, signal_count, computed_at
                  FROM recall_effectiveness
                  WHERE recall_event_id = ?1
                  ORDER BY memory_id",
             )
             .unwrap()
             .query_map(params![recall_event_id], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
             })
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
@@ -1118,7 +1128,7 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_session_effectiveness_prefers_direct_recall_attribution() {
+    fn test_compute_session_effectiveness_applies_session_end_signal_to_all_eligible_recalls() {
         let store = test_store();
         let (session_id, _) = store.session_start("demo", Some("feedback")).unwrap();
 
@@ -1142,6 +1152,15 @@ mod tests {
                 Some(&session_id),
                 "first recall",
                 &[first.as_ref().to_string()],
+                Some("demo"),
+            )
+            .unwrap();
+        store
+            .log_outcome_signal(
+                Some(&session_id),
+                "test_passed",
+                2,
+                Some("manual"),
                 Some("demo"),
             )
             .unwrap();
@@ -1176,22 +1195,25 @@ mod tests {
             .session_end(&session_id, Some("done"), None, Some("0"))
             .unwrap();
 
-        let rows: Vec<(String, String)> = store
+        let rows: Vec<(String, String, f32)> = store
             .conn
             .prepare(
-                "SELECT memory_id, recall_event_id
+                "SELECT memory_id, recall_event_id, effectiveness
                  FROM recall_effectiveness
                  ORDER BY recall_event_id, memory_id",
             )
             .unwrap()
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].0, second.as_ref().to_string());
-        assert_eq!(rows[0].1, second_recall);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].0, first.as_ref().to_string());
+        assert!(rows[0].2 > 0.0);
+        assert_eq!(rows[1].0, second.as_ref().to_string());
+        assert_eq!(rows[1].1, second_recall);
+        assert!(rows[1].2 > 0.0);
     }
 
     #[test]
@@ -1246,6 +1268,157 @@ mod tests {
 
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].2, 2);
+    }
+
+    #[test]
+    fn test_score_recall_effectiveness_records_negative_scores() {
+        let store = test_store();
+        let (session_id, _) = store.session_start("demo", Some("feedback")).unwrap();
+
+        let memory = store
+            .store(Memory::new(
+                "demo".into(),
+                "recalled memory".into(),
+                Importance::Medium,
+            ))
+            .unwrap();
+
+        let recall_event_id = store
+            .log_recall_event(
+                Some(&session_id),
+                "recall query",
+                &[memory.as_ref().to_string()],
+                Some("demo"),
+            )
+            .unwrap();
+
+        store
+            .log_outcome_signal(
+                Some(&session_id),
+                "correction",
+                -1,
+                Some("manual"),
+                Some("demo"),
+            )
+            .unwrap();
+        let (_project, _, _, _, _) = store
+            .session_end(&session_id, Some("done"), None, Some("2"))
+            .unwrap();
+
+        let row: (f32, i64) = store
+            .conn
+            .query_row(
+                "SELECT effectiveness, signal_count
+                 FROM recall_effectiveness
+                 WHERE memory_id = ?1 AND recall_event_id = ?2",
+                params![memory.as_ref().to_string(), recall_event_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+
+        assert!(row.0 < 0.0);
+        assert_eq!(row.1, 2);
+    }
+
+    #[test]
+    fn test_score_recall_effectiveness_persists_zero_when_below_signal_threshold() {
+        let store = test_store();
+        let (session_id, _) = store.session_start("demo", Some("feedback")).unwrap();
+
+        let memory = store
+            .store(Memory::new(
+                "demo".into(),
+                "recalled memory".into(),
+                Importance::Medium,
+            ))
+            .unwrap();
+
+        let recall_event_id = store
+            .log_recall_event(
+                Some(&session_id),
+                "recall query",
+                &[memory.as_ref().to_string()],
+                Some("demo"),
+            )
+            .unwrap();
+
+        let (_project, _, _, _, _) = store
+            .session_end(&session_id, Some("done"), None, Some("0"))
+            .unwrap();
+
+        let row: (f32, i64) = store
+            .conn
+            .query_row(
+                "SELECT effectiveness, signal_count
+                 FROM recall_effectiveness
+                 WHERE memory_id = ?1 AND recall_event_id = ?2",
+                params![memory.as_ref().to_string(), recall_event_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+
+        assert_eq!(row.0, 0.0);
+        assert_eq!(row.1, 1);
+
+        let scores = store
+            .recall_effectiveness_for_memory_ids(&[memory.as_ref().to_string()])
+            .unwrap();
+        assert_eq!(
+            scores.get(memory.as_ref()).copied().unwrap_or_default(),
+            0.0
+        );
+    }
+
+    #[test]
+    fn test_recall_effectiveness_for_memory_ids_applies_recency_weighting() {
+        let store = test_store();
+        let older = store
+            .store(Memory::new(
+                "demo".into(),
+                "older recalled memory".into(),
+                Importance::Medium,
+            ))
+            .unwrap();
+        let newer = store
+            .store(Memory::new(
+                "demo".into(),
+                "newer recalled memory".into(),
+                Importance::Medium,
+            ))
+            .unwrap();
+
+        let old_timestamp = (Utc::now() - Duration::days(90)).to_rfc3339();
+        let new_timestamp = (Utc::now() - Duration::days(7)).to_rfc3339();
+
+        store
+            .conn
+            .execute(
+                "INSERT INTO recall_effectiveness
+                    (memory_id, recall_event_id, effectiveness, signal_count, computed_at)
+                 VALUES (?1, 'rec_old', 0.8, 3, ?2),
+                        (?3, 'rec_new', 0.8, 3, ?4)",
+                params![
+                    older.as_ref().to_string(),
+                    old_timestamp,
+                    newer.as_ref().to_string(),
+                    new_timestamp
+                ],
+            )
+            .unwrap();
+
+        let scores = store
+            .recall_effectiveness_for_memory_ids(&[
+                older.as_ref().to_string(),
+                newer.as_ref().to_string(),
+            ])
+            .unwrap();
+
+        let older_score = scores.get(older.as_ref()).copied().unwrap_or_default();
+        let newer_score = scores.get(newer.as_ref()).copied().unwrap_or_default();
+
+        assert!(older_score > 0.0);
+        assert!(newer_score > 0.0);
+        assert!(newer_score > older_score);
     }
 
     #[test]
