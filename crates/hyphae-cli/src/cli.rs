@@ -198,6 +198,12 @@ pub(crate) enum Commands {
         /// Include document chunks in results
         #[arg(long, default_value = "true")]
         include_docs: bool,
+        /// Optional repository root for identity v1 lookup
+        #[arg(long, requires = "worktree_id")]
+        project_root: Option<String>,
+        /// Optional worktree identifier for identity v1 lookup
+        #[arg(long, requires = "project_root")]
+        worktree_id: Option<String>,
     },
 
     /// Generate shell completions

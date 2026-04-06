@@ -94,10 +94,16 @@ ok:01HWXYZ123456789ABCDEF
 | `limit` | integer | no | `5` | Max results (1-20) |
 | `keyword` | string | no | -- | Filter by exact keyword |
 | `session_id` | string | no | -- | Explicit session id from `hyphae_session_start`; use this for scoped attribution when one project has parallel sessions |
+| `project_root` | string | no | -- | Repository root for identity-v1 worktree scoping; must be paired with `worktree_id` |
+| `worktree_id` | string | no | -- | Worktree identifier for identity-v1 scoping; must be paired with `project_root` |
+| `code_context` | boolean | no | `false` | For code-shaped queries, expand through `code:{project}` memoir concepts using extracted code terms before finalizing recall |
 
 Automatic behaviors:
 - Auto-decay: applies decay if >24h since last run
 - Access update: increments the access counter for each result
+- Context-aware recall: session-shaped queries boost `session/*` memories first
+- Context-aware recall: when `code_context: true` and the query looks code-related, recall expands with matching `code:{project}` concepts using extracted code terms
+- Context-aware recall: identity-v1 worktree scoping still applies to the primary query and any code-context expansion
 
 **Example request:**
 ```json
@@ -105,7 +111,8 @@ Automatic behaviors:
   "query": "database choice",
   "topic": "decisions-api",
   "limit": 3,
-  "session_id": "ses_01ABC..."
+  "session_id": "ses_01ABC...",
+  "code_context": false
 }
 ```
 
@@ -494,14 +501,19 @@ Remove an ingested document source and all its chunks from the store.
 ### `hyphae_search_all` -- Unified cross-store search
 
 Search across both episodic memories and ingested documents in a single query. Results are merged and ranked using Reciprocal Rank Fusion (RRF) to produce a unified relevance ordering.
+When `project_root` and `worktree_id` are supplied together, the memory side is scoped to the active worktree and `_shared` memories are still included. Document chunks remain project-scoped.
 
 **Parameters:**
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `query` | string | yes | -- | Natural language search query |
+| `project_root` | string | no | -- | Identity v1 repository root used with `worktree_id` to scope memory results to the active worktree |
+| `worktree_id` | string | no | -- | Identity v1 worktree identifier used with `project_root` to scope memory results to the active worktree |
 | `limit` | integer | no | `10` | Total results across both stores (1-50) |
 | `include_docs` | boolean | no | `true` | Whether to include document chunks in results |
+
+The identity fields must be provided together. Supplying only one of them returns an error.
 
 **Example request:**
 ```json

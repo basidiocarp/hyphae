@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use hyphae_core::MemoirStore;
 
 use super::SqliteStore;
@@ -90,17 +92,100 @@ fn has_snake_case(s: &str) -> bool {
     false
 }
 
+const MAX_CODE_TERMS: usize = 8;
+
+fn push_code_term(
+    term: &str,
+    allow_plain: bool,
+    seen: &mut HashSet<String>,
+    terms: &mut Vec<String>,
+) {
+    if terms.len() >= MAX_CODE_TERMS {
+        return;
+    }
+
+    let trimmed = term.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_');
+    if trimmed.is_empty() || trimmed.len() > 64 {
+        return;
+    }
+
+    if !allow_plain && !has_camel_case(trimmed) && !has_snake_case(trimmed) {
+        return;
+    }
+
+    if seen.insert(trimmed.to_string()) {
+        terms.push(trimmed.to_string());
+    }
+}
+
+fn collect_code_terms(
+    fragment: &str,
+    allow_plain: bool,
+    seen: &mut HashSet<String>,
+    terms: &mut Vec<String>,
+) {
+    if terms.len() >= MAX_CODE_TERMS {
+        return;
+    }
+
+    let trimmed = fragment.trim_matches(|c: char| {
+        !c.is_ascii_alphanumeric() && c != '_' && c != '/' && c != '.' && c != ':'
+    });
+    if trimmed.is_empty() {
+        return;
+    }
+
+    if trimmed.contains('/') || trimmed.contains(':') {
+        for segment in trimmed
+            .split(['/', ':'])
+            .filter(|segment| !segment.is_empty())
+        {
+            collect_code_terms(segment, true, seen, terms);
+            if terms.len() >= MAX_CODE_TERMS {
+                return;
+            }
+        }
+        return;
+    }
+
+    if let Some((stem, ext)) = trimmed.rsplit_once('.') {
+        if !stem.is_empty() && !ext.is_empty() {
+            let stem = stem.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_');
+            if !stem.is_empty() {
+                push_code_term(stem, true, seen, terms);
+            }
+        }
+    }
+
+    push_code_term(trimmed, allow_plain, seen, terms);
+}
+
+fn extract_code_terms(query: &str) -> Vec<String> {
+    let mut terms = Vec::new();
+    let mut seen = HashSet::new();
+
+    for fragment in query.split_whitespace() {
+        collect_code_terms(fragment, false, &mut seen, &mut terms);
+        if terms.len() >= MAX_CODE_TERMS {
+            break;
+        }
+    }
+
+    terms
+}
+
 // ---------------------------------------------------------------------------
 // Code-context expansion
 // ---------------------------------------------------------------------------
 
-/// Look up the `code:{project}` memoir and search its concepts via FTS for
-/// terms related to `query`.  Returns up to 5 concept names to use as
+/// Look up the `code:{project}` memoir and search its concepts using extracted
+/// code-shaped terms from `query`. Returns up to 5 concept names to use as
 /// additional search terms when expanding a recall query.
 ///
 /// Returns an empty `Vec` when:
 /// - No `code:{project}` memoir exists (graceful degradation)
-/// - The FTS search returns no matching concepts
+/// - No code-shaped terms are extracted from the query
+/// - The exact-match and FTS lookups return no matching concepts
 pub fn expand_with_code_context(store: &SqliteStore, query: &str, project: &str) -> Vec<String> {
     let memoir_name = format!("code:{project}");
 
@@ -110,10 +195,42 @@ pub fn expand_with_code_context(store: &SqliteStore, query: &str, project: &str)
         Err(_) => return Vec::new(),
     };
 
-    let concepts = match store.search_concepts_fts(&memoir.id, query, 5) {
-        Ok(c) => c,
-        Err(_) => return Vec::new(),
-    };
+    let terms = extract_code_terms(query);
+    if terms.is_empty() {
+        return Vec::new();
+    }
+
+    let mut concepts = Vec::new();
+    let mut seen = HashSet::new();
+
+    for term in &terms {
+        if concepts.len() >= 5 {
+            break;
+        }
+        if let Ok(Some(concept)) = store.get_concept_by_name(&memoir.id, term) {
+            if seen.insert(concept.name.clone()) {
+                concepts.push(concept);
+            }
+        }
+    }
+
+    for term in &terms {
+        if concepts.len() >= 5 {
+            break;
+        }
+        let matches = match store.search_concepts_fts(&memoir.id, term, 5) {
+            Ok(c) => c,
+            Err(_) => break,
+        };
+        for concept in matches {
+            if concepts.len() >= 5 {
+                break;
+            }
+            if seen.insert(concept.name.clone()) {
+                concepts.push(concept);
+            }
+        }
+    }
 
     concepts.into_iter().map(|c| c.name).collect()
 }
@@ -140,6 +257,10 @@ mod tests {
     fn add_concept(store: &SqliteStore, memoir_id: &MemoirId, name: &str, definition: &str) {
         let concept = Concept::new(memoir_id.clone(), name.to_string(), definition.to_string());
         store.add_concept(concept).unwrap();
+    }
+
+    fn extract_terms(query: &str) -> Vec<String> {
+        extract_code_terms(query)
     }
 
     // --- is_code_related ---
@@ -210,7 +331,7 @@ mod tests {
             &store,
             &memoir_id,
             "TokenValidator",
-            "Validates JWT tokens for the auth pipeline",
+            "verify_token path validates auth tokens",
         );
         add_concept(
             &store,
@@ -219,15 +340,15 @@ mod tests {
             "Manages database connection pooling",
         );
 
-        let terms = expand_with_code_context(&store, "auth middleware", "myproject");
+        let terms = expand_with_code_context(&store, "previous verify_token failure", "myproject");
 
         assert!(
             !terms.is_empty(),
-            "should return expanded terms for auth middleware query"
+            "should return expanded terms for a mixed prose/code query"
         );
         assert!(
-            terms.contains(&"AuthMiddleware".to_string()),
-            "should include AuthMiddleware in expanded terms, got: {terms:?}"
+            terms.contains(&"TokenValidator".to_string()),
+            "should include TokenValidator in expanded terms, got: {terms:?}"
         );
     }
 
@@ -270,5 +391,52 @@ mod tests {
             terms.is_empty(),
             "should return empty for wrong project name"
         );
+    }
+
+    #[test]
+    fn test_expand_returns_empty_when_query_has_no_code_terms() {
+        let store = make_store();
+        let memoir_id = make_memoir(&store, "code:myproject");
+
+        add_concept(
+            &store,
+            &memoir_id,
+            "TokenValidator",
+            "validates auth tokens",
+        );
+
+        let terms =
+            expand_with_code_context(&store, "previous failure in the workflow", "myproject");
+
+        assert!(
+            terms.is_empty(),
+            "prose-only queries should not produce code expansion terms"
+        );
+    }
+
+    #[test]
+    fn test_extract_code_terms_returns_empty_for_prose() {
+        assert!(extract_terms("previous failure in the workflow").is_empty());
+    }
+
+    #[test]
+    fn test_extract_code_terms_dedupes_and_caps_results() {
+        let terms = extract_terms(
+            "TokenValidator verify_token TokenValidator src/auth/middleware.rs AuthMiddleware another_term",
+        );
+
+        assert!(terms.len() <= MAX_CODE_TERMS);
+        assert_eq!(
+            terms
+                .iter()
+                .filter(|term| *term == "TokenValidator")
+                .count(),
+            1
+        );
+        assert_eq!(
+            terms.iter().filter(|term| *term == "verify_token").count(),
+            1
+        );
+        assert!(terms.iter().any(|term| term == "middleware"));
     }
 }

@@ -1,6 +1,6 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use hyphae_core::{ChunkStore, Document, Embedder};
-use hyphae_store::SqliteStore;
+use hyphae_store::{SqliteStore, UnifiedSearchResult};
 use serde::Serialize;
 use std::path::PathBuf;
 
@@ -169,6 +169,8 @@ pub(crate) fn cmd_search_all(
     limit: usize,
     include_docs: bool,
     project: Option<String>,
+    project_root: Option<&str>,
+    worktree_id: Option<&str>,
     embedder: Option<&dyn Embedder>,
 ) -> Result<()> {
     #[cfg(feature = "embeddings")]
@@ -180,14 +182,15 @@ pub(crate) fn cmd_search_all(
     };
 
     let emb_ref = embedding.as_deref();
-    let results = store.search_all(
+    let results = search_all_results(
+        store,
         &query,
         emb_ref,
         limit,
-        0,
         include_docs,
         project.as_deref(),
-        None,
+        project_root,
+        worktree_id,
     )?;
 
     if results.is_empty() {
@@ -195,7 +198,7 @@ pub(crate) fn cmd_search_all(
     } else {
         for (i, r) in results.iter().enumerate() {
             match r {
-                hyphae_store::UnifiedSearchResult::Memory { memory, score } => {
+                UnifiedSearchResult::Memory { memory, score } => {
                     println!(
                         "{}. [memory] [{:.3}] [{}] {}",
                         i + 1,
@@ -204,7 +207,7 @@ pub(crate) fn cmd_search_all(
                         memory.summary,
                     );
                 }
-                hyphae_store::UnifiedSearchResult::Chunk { chunk, score } => {
+                UnifiedSearchResult::Chunk { chunk, score } => {
                     let meta = &chunk.metadata;
                     let lines = match (meta.line_start, meta.line_end) {
                         (Some(s), Some(e)) => format!(":{s}-{e}"),
@@ -229,6 +232,42 @@ pub(crate) fn cmd_search_all(
         }
     }
     Ok(())
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "mirrors search-all command inputs"
+)]
+fn search_all_results(
+    store: &SqliteStore,
+    query: &str,
+    embedding: Option<&[f32]>,
+    limit: usize,
+    include_docs: bool,
+    project: Option<&str>,
+    project_root: Option<&str>,
+    worktree_id: Option<&str>,
+) -> Result<Vec<UnifiedSearchResult>> {
+    let scoped_worktree = match (project_root, worktree_id) {
+        (Some(project_root), Some(_worktree_id)) => Some(project_root),
+        (None, None) => None,
+        _ => bail!("project_root and worktree_id must be provided together"),
+    };
+
+    if let Some(worktree) = scoped_worktree {
+        return Ok(store.search_all_scoped(
+            query,
+            embedding,
+            limit,
+            0,
+            include_docs,
+            project,
+            Some(worktree),
+            None,
+        )?);
+    }
+
+    Ok(store.search_all(query, embedding, limit, 0, include_docs, project, None)?)
 }
 
 fn list_sources_payload(store: &SqliteStore, project: Option<&str>) -> Result<SourcesPayload> {
@@ -271,7 +310,7 @@ fn print_json_versioned<T: Serialize>(schema_version: &'static str, payload: &T)
 mod tests {
     use super::*;
     use chrono::Utc;
-    use hyphae_core::{DocumentId, SourceType};
+    use hyphae_core::{Chunk, DocumentId, Importance, Memory, MemoryStore, SourceType};
 
     fn test_store() -> SqliteStore {
         SqliteStore::in_memory().expect("in-memory store")
@@ -288,6 +327,25 @@ mod tests {
             updated_at: now,
             project: Some("demo-project".to_string()),
             runtime_session_id: None,
+        }
+    }
+
+    fn make_chunk(doc_id: &DocumentId, content: &str, source_path: &str) -> Chunk {
+        Chunk {
+            id: hyphae_core::ChunkId::new(),
+            document_id: doc_id.clone(),
+            chunk_index: 0,
+            content: content.to_string(),
+            metadata: hyphae_core::ChunkMetadata {
+                source_path: source_path.to_string(),
+                source_type: SourceType::Markdown,
+                heading: None,
+                line_start: None,
+                line_end: None,
+                language: None,
+            },
+            embedding: None,
+            created_at: Utc::now(),
         }
     }
 
@@ -320,5 +378,115 @@ mod tests {
             Some("src/lib.rs")
         );
         assert_eq!(value["sources"][1]["source_type"].as_str(), Some("code"));
+    }
+
+    #[test]
+    fn test_search_all_results_scopes_memories_and_keeps_docs_project_scoped() {
+        let store = test_store();
+        store
+            .store(
+                Memory::builder(
+                    "architecture".to_string(),
+                    "Alpha scoped target".to_string(),
+                    Importance::Medium,
+                )
+                .project("demo-project".to_string())
+                .worktree("/repo/demo".to_string())
+                .build(),
+            )
+            .unwrap();
+        store
+            .store(
+                Memory::builder(
+                    "architecture".to_string(),
+                    "Beta other worktree target".to_string(),
+                    Importance::Medium,
+                )
+                .project("demo-project".to_string())
+                .worktree("/repo/other".to_string())
+                .build(),
+            )
+            .unwrap();
+        store
+            .store(
+                Memory::builder(
+                    "architecture".to_string(),
+                    "Shared scoped target".to_string(),
+                    Importance::Medium,
+                )
+                .project(hyphae_store::SHARED_PROJECT.to_string())
+                .build(),
+            )
+            .unwrap();
+
+        let mut doc = make_document("docs/scoped.md", SourceType::Markdown, 1);
+        doc.project = Some("demo-project".to_string());
+        let doc_id = doc.id.clone();
+        store.store_document(doc).unwrap();
+        store
+            .store_chunks(vec![make_chunk(
+                &doc_id,
+                "Scoped target document chunk",
+                "docs/scoped.md",
+            )])
+            .unwrap();
+
+        let results = search_all_results(
+            &store,
+            "target",
+            None,
+            10,
+            true,
+            Some("demo-project"),
+            Some("/repo/demo"),
+            Some("wt-alpha"),
+        )
+        .unwrap();
+
+        let has_alpha = results.iter().any(|r| match r {
+            UnifiedSearchResult::Memory { memory, .. } => memory.summary.contains("Alpha scoped"),
+            _ => false,
+        });
+        let has_shared = results.iter().any(|r| match r {
+            UnifiedSearchResult::Memory { memory, .. } => memory.summary.contains("Shared scoped"),
+            _ => false,
+        });
+        let has_beta = results.iter().any(|r| match r {
+            UnifiedSearchResult::Memory { memory, .. } => memory.summary.contains("Beta other"),
+            _ => false,
+        });
+        let has_chunk = results
+            .iter()
+            .any(|r| matches!(r, UnifiedSearchResult::Chunk { .. }));
+
+        assert!(has_alpha, "worktree-scoped memory should be included");
+        assert!(has_shared, "_shared memories should still be included");
+        assert!(has_chunk, "document chunks should remain project-scoped");
+        assert!(
+            !has_beta,
+            "other worktrees should not leak into scoped memory results"
+        );
+    }
+
+    #[test]
+    fn test_search_all_results_rejects_partial_identity_pair() {
+        let store = test_store();
+
+        let err = search_all_results(
+            &store,
+            "target",
+            None,
+            10,
+            true,
+            Some("demo-project"),
+            Some("/repo/demo"),
+            None,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "project_root and worktree_id must be provided together"
+        );
     }
 }

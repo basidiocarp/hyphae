@@ -162,6 +162,14 @@ Agent: (applies the known solution directly without re-debugging)
 4. Periodically: `hyphae_memory_health` to check topic hygiene
 5. When a topic grows: `hyphae_memory_consolidate` to densify
 
+### Context-aware recall
+
+`hyphae_memory_recall` now makes a few query-context decisions explicitly:
+
+- Session/history queries such as "previous session login flow" boost `session/*` memories ahead of general matches.
+- When `code_context: true` and the query looks code-related, recall expands through matching concepts in `code:{project}` using extracted code terms before finalizing results.
+- Identity-v1 worktree scoping still applies to both the primary recall pass and any code-context expansion.
+
 ---
 
 ## Topic organization
@@ -455,6 +463,7 @@ Document search follows the same pipeline as memory search:
 ### Unified cross-store search with RRF
 
 The `search-all` command (and `hyphae_search_all` MCP tool) searches across **both** episodic memories and document chunks in a single query. Results are merged using **Reciprocal Rank Fusion (RRF)**, which combines rankings from different sources into a single relevance order without requiring score normalization.
+When the identity-v1 pair is present, memory results are scoped to the active worktree and `_shared` memories remain visible. Document chunks stay project-scoped because the chunk store does not currently track worktree identity.
 
 ```bash
 # Search everything at once

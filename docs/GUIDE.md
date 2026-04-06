@@ -368,7 +368,7 @@ hyphae embed --force
 | Tool                        | What it does |
 |-----------------------------|-------------|
 | `hyphae_memory_store`       | Store a memory. Auto-dedup: >85% similar in same topic → update. Warns at >7 entries. |
-| `hyphae_memory_recall`      | Search by query. Filters: `topic`, `keyword`, `limit`. Auto-decay if >24h. |
+| `hyphae_memory_recall`      | Search by query. Filters: `topic`, `keyword`, `limit`. Auto-decay if >24h. Context-aware: boosts `session/*` for session-shaped queries, optionally expands through `code:{project}`, and respects identity-v1 worktree scoping. |
 | `hyphae_memory_update`      | Edit content, importance, or keywords of an existing memory by ID. |
 | `hyphae_memory_forget`      | Delete a memory by ID. |
 | `hyphae_memory_consolidate` | Replace all memories of a topic with a single summary. |

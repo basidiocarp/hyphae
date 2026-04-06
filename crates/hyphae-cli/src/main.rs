@@ -359,6 +359,8 @@ fn main() -> Result<()> {
             query,
             limit,
             include_docs,
+            project_root,
+            worktree_id,
         } => {
             commands::docs::cmd_search_all(
                 &store,
@@ -366,6 +368,8 @@ fn main() -> Result<()> {
                 limit,
                 include_docs,
                 resolved_project,
+                project_root.as_deref(),
+                worktree_id.as_deref(),
                 embedder_ref,
             )?;
         }
@@ -500,6 +504,7 @@ mod tests {
     use crate::commands::project::{ProjectArgs, ProjectCommand};
     use crate::commands::session::{SessionArgs, SessionCommand};
     use clap::CommandFactory;
+    use clap::Parser;
     use clap_complete::{Shell, generate};
 
     #[test]
@@ -572,5 +577,47 @@ mod tests {
             },
         })));
         assert!(!all_projects_allowed(&Commands::Serve { compact: false }));
+    }
+
+    #[test]
+    fn test_search_all_accepts_identity_pair() {
+        let cli = Cli::try_parse_from([
+            "hyphae",
+            "search-all",
+            "auth",
+            "--project-root",
+            "/repo/demo",
+            "--worktree-id",
+            "wt-alpha",
+        ])
+        .expect("search-all should accept a full identity pair");
+
+        match cli.command {
+            Commands::SearchAll {
+                project_root,
+                worktree_id,
+                ..
+            } => {
+                assert_eq!(project_root.as_deref(), Some("/repo/demo"));
+                assert_eq!(worktree_id.as_deref(), Some("wt-alpha"));
+            }
+            _ => panic!("expected SearchAll command"),
+        }
+    }
+
+    #[test]
+    fn test_search_all_rejects_partial_identity_pair() {
+        let err = match Cli::try_parse_from([
+            "hyphae",
+            "search-all",
+            "auth",
+            "--project-root",
+            "/repo/demo",
+        ]) {
+            Ok(_) => panic!("search-all should reject a partial identity pair"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("--worktree-id"));
     }
 }

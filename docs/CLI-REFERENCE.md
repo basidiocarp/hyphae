@@ -579,7 +579,7 @@ hyphae forget-source /home/user/project/src/old_module.rs
 ### `hyphae search-all` -- Unified cross-store search
 
 ```
-hyphae search-all <query> [--limit N] [--include-docs]
+hyphae search-all <query> [--limit N] [--include-docs] [--project-root <path> --worktree-id <id>]
 ```
 
 | Option | Short | Required | Default | Description |
@@ -587,8 +587,11 @@ hyphae search-all <query> [--limit N] [--include-docs]
 | `<query>` | -- | yes | -- | Search query |
 | `--limit` | `-l` | no | `10` | Maximum total results |
 | `--include-docs` | -- | no | `true` | Include document chunks in results |
+| `--project-root` | -- | no | -- | Identity v1 repository root used with `--worktree-id` to scope memory results to the active worktree |
+| `--worktree-id` | -- | no | -- | Identity v1 worktree identifier used with `--project-root` to scope memory results to the active worktree |
 
 Searches across both episodic memories and ingested documents, merging results using Reciprocal Rank Fusion (RRF) for unified relevance ranking.
+When the identity-v1 pair is supplied, memory results are scoped to the active worktree and `_shared` memories remain visible. Document chunks remain project-scoped. The identity flags must be supplied together.
 
 ```bash
 # Search everything
@@ -599,6 +602,9 @@ hyphae search-all "database connection" --include-docs false
 
 # Limit results
 hyphae search-all "auth" --limit 5
+
+# Scope memory results to one worktree while keeping docs project-scoped
+hyphae search-all "auth" --project-root /repo/demo --worktree-id wt-alpha
 ```
 
 ---

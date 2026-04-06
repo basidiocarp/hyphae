@@ -12,7 +12,9 @@ use hyphae_store::SqliteStore;
 
 use crate::protocol::ToolResult;
 
-use super::{get_bounded_i64, get_str, normalize_identity, validate_required_string};
+use super::{
+    get_bounded_i64, get_str, normalize_identity, scoped_worktree_root, validate_required_string,
+};
 
 use hyphae_store::UnifiedSearchResult;
 
@@ -400,14 +402,38 @@ pub(crate) fn tool_search_all(
         .get("include_docs")
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
+    let raw_project_root = get_str(args, "project_root");
+    let raw_worktree_id = get_str(args, "worktree_id");
+    if raw_project_root.is_some() ^ raw_worktree_id.is_some() {
+        return ToolResult::error(
+            "project_root and worktree_id must be provided together".to_string(),
+        );
+    }
+    let (project_root, worktree_id) = normalize_identity(raw_project_root, raw_worktree_id);
+    let scoped_worktree = scoped_worktree_root(project_root, worktree_id);
 
     let embedding = embedder.and_then(|emb| emb.embed(query).ok());
     let emb_ref = embedding.as_deref();
 
-    let results = match store.search_all(query, emb_ref, limit, offset, include_docs, project, None)
-    {
-        Ok(r) => r,
-        Err(e) => return ToolResult::error(format!("search error: {e}")),
+    let results = if let Some(worktree) = scoped_worktree {
+        match store.search_all_scoped(
+            query,
+            emb_ref,
+            limit,
+            offset,
+            include_docs,
+            project,
+            Some(worktree),
+            None,
+        ) {
+            Ok(r) => r,
+            Err(e) => return ToolResult::error(format!("search error: {e}")),
+        }
+    } else {
+        match store.search_all(query, emb_ref, limit, offset, include_docs, project, None) {
+            Ok(r) => r,
+            Err(e) => return ToolResult::error(format!("search error: {e}")),
+        }
     };
 
     if results.is_empty() {
@@ -480,7 +506,7 @@ pub(crate) fn tool_search_all(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hyphae_core::ChunkStore;
+    use hyphae_core::{Chunk, ChunkId, ChunkStore, Importance, Memory, MemoryStore};
     use serde_json::json;
 
     fn test_store() -> SqliteStore {
@@ -690,5 +716,119 @@ mod tests {
             payload["runtime_session_id"].as_str(),
             Some("claude-session-42")
         );
+    }
+
+    #[test]
+    fn test_search_all_rejects_partial_identity_pair() {
+        let store = test_store();
+
+        let result = tool_search_all(
+            &store,
+            None,
+            &json!({
+                "query": "target",
+                "project_root": "/repo/demo"
+            }),
+            false,
+            Some("demo"),
+        );
+
+        assert!(result.is_error);
+        assert_eq!(
+            result.content[0].text,
+            "project_root and worktree_id must be provided together"
+        );
+    }
+
+    #[test]
+    fn test_search_all_scopes_memories_and_keeps_docs_project_scoped() {
+        let store = test_store();
+        store
+            .store(
+                Memory::builder(
+                    "architecture".to_string(),
+                    "Alpha scoped target".to_string(),
+                    Importance::Medium,
+                )
+                .project("demo".to_string())
+                .worktree("/repo/demo".to_string())
+                .build(),
+            )
+            .unwrap();
+        store
+            .store(
+                Memory::builder(
+                    "architecture".to_string(),
+                    "Beta other worktree target".to_string(),
+                    Importance::Medium,
+                )
+                .project("demo".to_string())
+                .worktree("/repo/other".to_string())
+                .build(),
+            )
+            .unwrap();
+        store
+            .store(
+                Memory::builder(
+                    "architecture".to_string(),
+                    "Shared scoped target".to_string(),
+                    Importance::Medium,
+                )
+                .project(hyphae_store::SHARED_PROJECT.to_string())
+                .build(),
+            )
+            .unwrap();
+
+        let now = chrono::Utc::now();
+        let mut doc = Document {
+            id: DocumentId::new(),
+            source_path: "docs/scoped.md".to_string(),
+            source_type: SourceType::Markdown,
+            chunk_count: 1,
+            created_at: now,
+            updated_at: now,
+            project: Some("demo".to_string()),
+            runtime_session_id: None,
+        };
+        doc.project = Some("demo".to_string());
+        let doc_id = doc.id.clone();
+        store.store_document(doc).unwrap();
+        store
+            .store_chunks(vec![Chunk {
+                id: ChunkId::new(),
+                document_id: doc_id,
+                chunk_index: 0,
+                content: "Scoped target document chunk".to_string(),
+                metadata: ChunkMetadata {
+                    source_path: "docs/scoped.md".to_string(),
+                    source_type: SourceType::Markdown,
+                    heading: None,
+                    line_start: None,
+                    line_end: None,
+                    language: None,
+                },
+                embedding: None,
+                created_at: chrono::Utc::now(),
+            }])
+            .unwrap();
+
+        let result = tool_search_all(
+            &store,
+            None,
+            &json!({
+                "query": "target",
+                "project_root": "/repo/demo",
+                "worktree_id": "wt-alpha"
+            }),
+            false,
+            Some("demo"),
+        );
+
+        assert!(!result.is_error);
+        let output = &result.content[0].text;
+        assert!(output.contains("Alpha scoped"));
+        assert!(output.contains("Shared scoped"));
+        assert!(output.contains("docs/scoped.md"));
+        assert!(!output.contains("Beta other"));
     }
 }

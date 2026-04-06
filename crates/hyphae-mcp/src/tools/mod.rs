@@ -2174,6 +2174,116 @@ mod tests {
     }
 
     #[test]
+    fn test_tool_search_all_rejects_partial_identity_pair() {
+        let store = test_store();
+        let result = call_tool(
+            &store,
+            None,
+            "hyphae_search_all",
+            &json!({
+                "query": "identity scoped search",
+                "project_root": "/repo/demo"
+            }),
+            false,
+            Some("demo"),
+            false,
+        );
+        assert!(result.is_error);
+        assert!(
+            result.content[0]
+                .text
+                .contains("project_root and worktree_id must be provided together")
+        );
+    }
+
+    #[test]
+    fn test_tool_search_all_identity_contract() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let store = test_store();
+
+        call_tool(
+            &store,
+            None,
+            "hyphae_memory_store",
+            &json!({
+                "topic": "identity",
+                "content": "Alpha memory search target",
+                "worktree": "/repo/demo/wt-alpha"
+            }),
+            false,
+            Some("demo"),
+            false,
+        );
+        call_tool(
+            &store,
+            None,
+            "hyphae_memory_store",
+            &json!({
+                "topic": "identity",
+                "content": "Beta memory search target",
+                "worktree": "/repo/demo/wt-beta"
+            }),
+            false,
+            Some("demo"),
+            false,
+        );
+        call_tool(
+            &store,
+            None,
+            "hyphae_memory_store",
+            &json!({
+                "topic": "identity",
+                "content": "Shared memory search target"
+            }),
+            false,
+            Some(hyphae_store::SHARED_PROJECT),
+            false,
+        );
+
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("identity.md");
+        fs::write(&path, "Identity search target doc chunk for project demo.").unwrap();
+        call_tool(
+            &store,
+            None,
+            "hyphae_ingest_file",
+            &json!({"path": path.to_str().unwrap()}),
+            false,
+            Some("demo"),
+            false,
+        );
+
+        let result = call_tool(
+            &store,
+            None,
+            "hyphae_search_all",
+            &json!({
+                "query": "search target",
+                "project_root": "/repo/demo/wt-alpha",
+                "worktree_id": "wt-alpha"
+            }),
+            false,
+            Some("demo"),
+            false,
+        );
+        assert!(
+            !result.is_error,
+            "search_all error: {}",
+            result.content[0].text
+        );
+        let text = &result.content[0].text;
+        assert!(text.contains("Alpha memory search target"));
+        assert!(text.contains("Shared memory search target"));
+        assert!(text.contains("Identity search target doc chunk"));
+        assert!(
+            !text.contains("Beta memory search target"),
+            "other worktrees should not leak into identity-scoped search_all"
+        );
+    }
+
+    #[test]
     fn test_is_session_query_detects_keywords() {
         assert!(memory::is_session_query("what did I do last session"));
         assert!(memory::is_session_query("last time I worked on auth"));

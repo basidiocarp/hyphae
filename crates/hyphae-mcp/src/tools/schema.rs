@@ -50,7 +50,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }),
         json!({
             "name": "hyphae_memory_recall",
-            "description": "Search Hyphae long-term memory. Use to find past decisions, project context, preferences, or solutions to previously encountered problems. Automatically includes results from the '_shared' knowledge pool alongside project-scoped results.",
+            "description": "Search Hyphae long-term memory with context-aware recall. Use to find past decisions, project context, preferences, or solutions to previously encountered problems. Session-shaped queries boost session memories first, code-shaped queries can expand through code memoirs, and project-scoped recall also includes the '_shared' knowledge pool.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -94,7 +94,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     "code_context": {
                         "type": "boolean",
                         "default": false,
-                        "description": "When true, expands the search with code symbols from the project's code memoir (code:{project}). Only effective when a project is configured and the query looks code-related."
+                        "description": "When true, code-shaped queries can expand through the project's code memoir (code:{project}) before recall results are finalized. Only effective when a project is configured."
                     }
                 },
                 "required": ["query"],
@@ -731,13 +731,21 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
     }));
     tools.push(json!({
         "name": "hyphae_search_all",
-        "description": "Unified cross-store search across memories and ingested documents. Returns ranked results using Reciprocal Rank Fusion.",
+        "description": "Unified cross-store search across memories and ingested documents. Returns ranked results using Reciprocal Rank Fusion. When project_root and worktree_id are supplied together, memory results are scoped to the active worktree and _shared memories are still included. Document chunks remain project-scoped.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
                     "description": "Natural language search query"
+                },
+                "project_root": {
+                    "type": "string",
+                    "description": "Optional repository root for identity v1 lookups. Use with worktree_id to scope memory results to the active worktree."
+                },
+                "worktree_id": {
+                    "type": "string",
+                    "description": "Optional worktree identifier for identity v1 lookups. Use with project_root to scope memory results to the active worktree."
                 },
                 "limit": {
                     "type": "integer",
@@ -758,7 +766,17 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     "description": "Number of results to skip (for pagination)"
                 }
             },
-            "required": ["query"]
+            "required": ["query"],
+            "allOf": [
+                {
+                    "if": { "required": ["project_root"] },
+                    "then": { "required": ["worktree_id"] }
+                },
+                {
+                    "if": { "required": ["worktree_id"] },
+                    "then": { "required": ["project_root"] }
+                }
+            ]
         }
     }));
 
@@ -1017,6 +1035,25 @@ mod tests {
             .expect("memory recall tool");
 
         let all_of = recall_tool["inputSchema"]["allOf"]
+            .as_array()
+            .expect("allOf schema");
+
+        assert_eq!(all_of.len(), 2);
+        assert_eq!(all_of[0]["if"]["required"][0], "project_root");
+        assert_eq!(all_of[0]["then"]["required"][0], "worktree_id");
+        assert_eq!(all_of[1]["if"]["required"][0], "worktree_id");
+        assert_eq!(all_of[1]["then"]["required"][0], "project_root");
+    }
+
+    #[test]
+    fn test_search_all_requires_identity_fields_in_pairs() {
+        let tools = tool_definitions_json(false);
+        let search_tool = tools
+            .iter()
+            .find(|tool| tool["name"] == "hyphae_search_all")
+            .expect("search-all tool");
+
+        let all_of = search_tool["inputSchema"]["allOf"]
             .as_array()
             .expect("allOf schema");
 

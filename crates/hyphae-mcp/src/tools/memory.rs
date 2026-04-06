@@ -70,6 +70,182 @@ fn log_recall_results(
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct RecallHeuristics {
+    session_query: bool,
+    code_related: bool,
+    code_expansion_terms: Vec<String>,
+}
+
+impl RecallHeuristics {
+    fn detect(
+        store: &SqliteStore,
+        query: &str,
+        project: Option<&str>,
+        code_context_requested: bool,
+    ) -> Self {
+        let session_query = is_session_query(query);
+        let code_related = context::is_code_related(query);
+        let code_expansion_terms = if code_context_requested && code_related {
+            project
+                .map(|project| context::expand_with_code_context(store, query, project))
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        Self {
+            session_query,
+            code_related,
+            code_expansion_terms,
+        }
+    }
+
+    fn prefer_context_aware_recall(&self) -> bool {
+        self.session_query || !self.code_expansion_terms.is_empty()
+    }
+}
+
+fn search_primary_fts(
+    store: &SqliteStore,
+    query: &str,
+    limit: usize,
+    offset: usize,
+    project: Option<&str>,
+    scoped_worktree: Option<&str>,
+) -> Result<Vec<Memory>, ToolResult> {
+    let mut results = match if let Some(worktree) = scoped_worktree {
+        store.search_fts_scoped(query, limit, offset, project, Some(worktree))
+    } else {
+        store.search_fts(query, limit, offset, project)
+    } {
+        Ok(r) => r,
+        Err(e) => return Err(ToolResult::error(format!("search error: {e}"))),
+    };
+
+    if results.is_empty() {
+        let keywords: Vec<&str> = query.split_whitespace().collect();
+        results = match if let Some(worktree) = scoped_worktree {
+            store.search_by_keywords_scoped(&keywords, limit, offset, project, Some(worktree))
+        } else {
+            store.search_by_keywords(&keywords, limit, offset, project)
+        } {
+            Ok(r) => r,
+            Err(e) => return Err(ToolResult::error(format!("search error: {e}"))),
+        };
+    }
+
+    Ok(results)
+}
+
+fn boost_session_results(
+    store: &SqliteStore,
+    query: &str,
+    limit: usize,
+    project: Option<&str>,
+    scoped_worktree: Option<&str>,
+    mut results: Vec<Memory>,
+) -> Vec<Memory> {
+    let session_limit = 5usize.min(limit);
+    let session_hits = if let Some(worktree) = scoped_worktree {
+        store.search_fts_scoped(query, session_limit * 4, 0, project, Some(worktree))
+    } else {
+        store.search_fts(query, session_limit * 4, 0, project)
+    };
+    if let Ok(session_hits) = session_hits {
+        let existing_ids: std::collections::HashSet<String> =
+            results.iter().map(|m| m.id.to_string()).collect();
+        let session_mems: Vec<_> = session_hits
+            .into_iter()
+            .filter(|m| {
+                m.topic.starts_with("session/") && !existing_ids.contains(&m.id.to_string())
+            })
+            .take(session_limit)
+            .collect();
+        if !session_mems.is_empty() {
+            let mut boosted = session_mems;
+            boosted.append(&mut results);
+            boosted.truncate(limit);
+            return boosted;
+        }
+    }
+    results
+}
+
+fn expand_code_context_results(
+    store: &SqliteStore,
+    extra_terms: &[String],
+    limit: usize,
+    offset: usize,
+    project: Option<&str>,
+    scoped_worktree: Option<&str>,
+    mut results: Vec<Memory>,
+) -> Vec<Memory> {
+    if extra_terms.is_empty() {
+        return results;
+    }
+
+    let mut existing_ids: std::collections::HashSet<String> =
+        results.iter().map(|m| m.id.to_string()).collect();
+
+    for term in extra_terms {
+        if results.len() >= limit {
+            break;
+        }
+        let expanded = if let Some(worktree) = scoped_worktree {
+            store.search_fts_scoped(term, limit, offset, project, Some(worktree))
+        } else {
+            store.search_fts(term, limit, offset, project)
+        };
+
+        if let Ok(expanded) = expanded {
+            for mem in expanded {
+                let mem_id = mem.id.to_string();
+                if existing_ids.insert(mem_id) {
+                    results.push(mem);
+                }
+                if results.len() >= limit {
+                    break;
+                }
+            }
+        }
+    }
+
+    results.truncate(limit);
+    results
+}
+
+fn run_context_aware_recall(
+    store: &SqliteStore,
+    query: &str,
+    limit: usize,
+    offset: usize,
+    project: Option<&str>,
+    scoped_worktree: Option<&str>,
+    heuristics: &RecallHeuristics,
+) -> Result<Vec<Memory>, ToolResult> {
+    let mut results = search_primary_fts(store, query, limit, offset, project, scoped_worktree)?;
+    results = merge_shared_fts(store, query, limit, project, scoped_worktree, results);
+
+    if heuristics.session_query {
+        results = boost_session_results(store, query, limit, project, scoped_worktree, results);
+    }
+
+    if !heuristics.code_expansion_terms.is_empty() {
+        results = expand_code_context_results(
+            store,
+            &heuristics.code_expansion_terms,
+            limit,
+            offset,
+            project,
+            scoped_worktree,
+            results,
+        );
+    }
+
+    Ok(results)
+}
+
 pub(crate) fn tool_store(
     store: &SqliteStore,
     embedder: Option<&dyn Embedder>,
@@ -298,7 +474,7 @@ pub(crate) fn tool_recall(
     }
     let (project_root, worktree_id) = normalize_identity(raw_project_root, raw_worktree_id);
     let scoped_worktree = scoped_worktree_root(project_root, worktree_id);
-    let code_context = args
+    let code_context_requested = args
         .get("code_context")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
@@ -312,6 +488,7 @@ pub(crate) fn tool_recall(
         None
     };
     let project = session_project.as_deref().or(project);
+    let heuristics = RecallHeuristics::detect(store, query, project, code_context_requested);
 
     // ─────────────────────────────────────────────────────────────────────────────
     // Compute auto-consolidation hint (if topic filter is used)
@@ -353,7 +530,7 @@ pub(crate) fn tool_recall(
     };
 
     // Try hybrid search if embedder is available
-    if let Some(emb) = embedder {
+    if let Some(emb) = embedder.filter(|_| !heuristics.prefer_context_aware_recall()) {
         if let Ok(query_emb) = emb.embed(query) {
             let hybrid_results = if let Some(worktree) = scoped_worktree {
                 store.search_hybrid_scoped(
@@ -446,133 +623,18 @@ pub(crate) fn tool_recall(
         }
     }
 
-    // Fallback: FTS then keywords
-    let mut results = match if let Some(worktree) = scoped_worktree {
-        store.search_fts_scoped(query, limit, offset, project, Some(worktree))
-    } else {
-        store.search_fts(query, limit, offset, project)
-    } {
-        Ok(r) => r,
-        Err(e) => return ToolResult::error(format!("search error: {e}")),
+    let mut results = match run_context_aware_recall(
+        store,
+        query,
+        limit,
+        offset,
+        project,
+        scoped_worktree,
+        &heuristics,
+    ) {
+        Ok(results) => results,
+        Err(err) => return err,
     };
-
-    if results.is_empty() {
-        let keywords: Vec<&str> = query.split_whitespace().collect();
-        results = match if let Some(worktree) = scoped_worktree {
-            store.search_by_keywords_scoped(&keywords, limit, offset, project, Some(worktree))
-        } else {
-            store.search_by_keywords(&keywords, limit, offset, project)
-        } {
-            Ok(r) => r,
-            Err(e) => return ToolResult::error(format!("search error: {e}")),
-        };
-    }
-
-    // Merge _shared results when searching a specific project
-    results = merge_shared_fts(store, query, limit, project, scoped_worktree, results);
-
-    // Session-aware recall boost: when the query mentions sessions,
-    // prepend matching session/* memories so recent session context surfaces first.
-    if is_session_query(query) {
-        let session_limit = 5usize.min(limit);
-        let session_hits = if let Some(worktree) = scoped_worktree {
-            store.search_fts_scoped(query, session_limit * 4, 0, project, Some(worktree))
-        } else {
-            store.search_fts(query, session_limit * 4, 0, project)
-        };
-        if let Ok(session_hits) = session_hits {
-            let existing_ids: std::collections::HashSet<String> =
-                results.iter().map(|m| m.id.to_string()).collect();
-            let session_mems: Vec<_> = session_hits
-                .into_iter()
-                .filter(|m| {
-                    m.topic.starts_with("session/") && !existing_ids.contains(&m.id.to_string())
-                })
-                .take(session_limit)
-                .collect();
-            if !session_mems.is_empty() {
-                let mut boosted = session_mems;
-                boosted.append(&mut results);
-                results = boosted;
-                results.truncate(limit);
-            }
-        }
-    }
-
-    // Optional code-context expansion: additional FTS pass with expanded terms
-    if code_context {
-        if let Some(expand_project) = project {
-            if context::is_code_related(query) {
-                let extra_terms = context::expand_with_code_context(store, query, expand_project);
-                if !extra_terms.is_empty() {
-                    // Build single expanded query and run a second FTS pass
-                    let expanded_query = extra_terms
-                        .iter()
-                        .map(|t| {
-                            // Quote each token for FTS
-                            let clean: String = t
-                                .chars()
-                                .map(|c| {
-                                    if matches!(
-                                        c,
-                                        '-' | '*'
-                                            | '"'
-                                            | '('
-                                            | ')'
-                                            | '{'
-                                            | '}'
-                                            | ':'
-                                            | '^'
-                                            | '+'
-                                            | '~'
-                                            | '\\'
-                                    ) {
-                                        ' '
-                                    } else {
-                                        c
-                                    }
-                                })
-                                .collect();
-                            let tokens: Vec<String> = clean
-                                .split_whitespace()
-                                .filter(|w| !w.is_empty())
-                                .map(|w| format!("\"{w}\""))
-                                .collect();
-                            tokens.join(" ")
-                        })
-                        .filter(|s| !s.is_empty())
-                        .collect::<Vec<_>>()
-                        .join(" OR ");
-
-                    if !expanded_query.is_empty() {
-                        let expanded = if let Some(worktree) = scoped_worktree {
-                            store.search_fts_scoped(
-                                &expanded_query,
-                                limit,
-                                offset,
-                                project,
-                                Some(worktree),
-                            )
-                        } else {
-                            store.search_fts(&expanded_query, limit, offset, project)
-                        };
-                        if let Ok(expanded) = expanded {
-                            // Merge: append expanded results not already present
-                            let existing_ids: std::collections::HashSet<String> =
-                                results.iter().map(|m| m.id.to_string()).collect();
-                            for mem in expanded {
-                                if !existing_ids.contains(&mem.id.to_string()) {
-                                    results.push(mem);
-                                }
-                            }
-                            // Re-limit after merge
-                            results.truncate(limit);
-                        }
-                    }
-                }
-            }
-        }
-    }
 
     if let Some(t) = topic {
         results.retain(|m| m.topic == t);
@@ -1575,10 +1637,43 @@ pub(crate) fn tool_evaluate(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hyphae_core::memoir::{Concept, Memoir};
+    use hyphae_core::{Importance, MemoirStore, MemoryStore, ids::MemoirId};
     use serde_json::json;
 
     fn test_store() -> SqliteStore {
         SqliteStore::in_memory().expect("in-memory store")
+    }
+
+    fn store_memory(
+        store: &SqliteStore,
+        topic: &str,
+        summary: &str,
+        project: Option<&str>,
+        worktree: Option<&str>,
+    ) {
+        let mut builder =
+            Memory::builder(topic.to_string(), summary.to_string(), Importance::Medium);
+        if let Some(project) = project {
+            builder = builder.project(project.to_string());
+        }
+        if let Some(worktree) = worktree {
+            builder = builder.worktree(worktree.to_string());
+        }
+        store.store(builder.build()).unwrap();
+    }
+
+    fn make_code_memoir(store: &SqliteStore, project: &str) -> MemoirId {
+        let memoir = Memoir::new(
+            format!("code:{project}"),
+            format!("Code memoir for {project}"),
+        );
+        store.create_memoir(memoir).unwrap()
+    }
+
+    fn add_concept(store: &SqliteStore, memoir_id: &MemoirId, name: &str, definition: &str) {
+        let concept = Concept::new(memoir_id.clone(), name.to_string(), definition.to_string());
+        store.add_concept(concept).unwrap();
     }
 
     #[test]
@@ -1658,6 +1753,222 @@ mod tests {
         let content = "api_key=sk-abc123def456ghi789jkl and password: secretpassword123";
         let warnings = detect_secrets(content);
         assert!(!warnings.is_empty());
+    }
+
+    #[test]
+    fn test_recall_heuristics_detect_session_and_code_expansion_terms() {
+        let store = test_store();
+        let memoir_id = make_code_memoir(&store, "demo");
+        add_concept(
+            &store,
+            &memoir_id,
+            "TokenValidator",
+            "verify_token path validates auth tokens",
+        );
+
+        let heuristics =
+            RecallHeuristics::detect(&store, "previous verify_token failure", Some("demo"), true);
+
+        assert!(heuristics.session_query);
+        assert!(heuristics.code_related);
+        assert_eq!(
+            heuristics.code_expansion_terms,
+            vec!["TokenValidator".to_string()]
+        );
+        assert!(heuristics.prefer_context_aware_recall());
+    }
+
+    #[test]
+    fn test_tool_recall_boosts_session_memories_for_session_queries() {
+        let store = test_store();
+        store_memory(
+            &store,
+            "notes",
+            "login flow login flow login flow root cause summary",
+            Some("demo"),
+            None,
+        );
+        store_memory(
+            &store,
+            "session/demo",
+            "previous login flow fix applied to the auth redirect",
+            Some("demo"),
+            None,
+        );
+
+        let result = tool_recall(
+            &store,
+            None,
+            &json!({"query": "previous session login flow", "limit": 5}),
+            true,
+            Some("demo"),
+        );
+
+        assert!(!result.is_error);
+        let output = &result.content[0].text;
+        let first_line = output.lines().next().unwrap_or_default();
+        assert!(
+            first_line.starts_with("[session/demo]"),
+            "session memory should be surfaced first, got: {output}"
+        );
+    }
+
+    #[test]
+    fn test_tool_recall_expands_code_context_for_code_queries() {
+        let store = test_store();
+        let memoir_id = make_code_memoir(&store, "demo");
+        add_concept(
+            &store,
+            &memoir_id,
+            "TokenValidator",
+            "verify_token auth validation path",
+        );
+        store_memory(
+            &store,
+            "errors/resolved",
+            "TokenValidator panic on expired token",
+            Some("demo"),
+            None,
+        );
+
+        let result = tool_recall(
+            &store,
+            None,
+            &json!({"query": "verify_token panic", "code_context": true}),
+            true,
+            Some("demo"),
+        );
+
+        assert!(!result.is_error);
+        assert!(
+            result.content[0]
+                .text
+                .contains("TokenValidator panic on expired token"),
+            "code-context expansion should surface the related memory, got: {}",
+            result.content[0].text
+        );
+    }
+
+    #[test]
+    fn test_tool_recall_expands_multiple_code_context_terms() {
+        let store = test_store();
+        let memoir_id = make_code_memoir(&store, "demo");
+        add_concept(
+            &store,
+            &memoir_id,
+            "TokenValidator",
+            "verify_token auth validation path",
+        );
+        add_concept(
+            &store,
+            &memoir_id,
+            "SessionCache",
+            "session_cache login cache path",
+        );
+        store_memory(
+            &store,
+            "errors/resolved",
+            "TokenValidator panic on expired token",
+            Some("demo"),
+            None,
+        );
+        store_memory(
+            &store,
+            "architecture",
+            "SessionCache stale entry on login refresh",
+            Some("demo"),
+            None,
+        );
+
+        let result = tool_recall(
+            &store,
+            None,
+            &json!({"query": "verify_token session_cache", "code_context": true, "limit": 10}),
+            true,
+            Some("demo"),
+        );
+
+        assert!(!result.is_error);
+        assert!(
+            result.content[0]
+                .text
+                .contains("TokenValidator panic on expired token"),
+            "first expanded code term should surface a related memory, got: {}",
+            result.content[0].text
+        );
+        assert!(
+            result.content[0]
+                .text
+                .contains("SessionCache stale entry on login refresh"),
+            "second expanded code term should also surface a related memory, got: {}",
+            result.content[0].text
+        );
+    }
+
+    #[test]
+    fn test_tool_recall_does_not_expand_code_context_for_non_code_queries() {
+        let store = test_store();
+        let memoir_id = make_code_memoir(&store, "demo");
+        add_concept(
+            &store,
+            &memoir_id,
+            "TokenValidator",
+            "auth validation path for request handling",
+        );
+        store_memory(
+            &store,
+            "errors/resolved",
+            "TokenValidator panic on expired token",
+            Some("demo"),
+            None,
+        );
+
+        let result = tool_recall(
+            &store,
+            None,
+            &json!({"query": "authentication issue", "code_context": true}),
+            true,
+            Some("demo"),
+        );
+
+        assert!(!result.is_error);
+        assert_eq!(result.content[0].text, "No memories found.");
+    }
+
+    #[test]
+    fn test_tool_recall_identity_scoping_respects_active_worktree() {
+        let store = test_store();
+        store_memory(
+            &store,
+            "architecture",
+            "Alpha worktree target memory",
+            Some("demo"),
+            Some("/repo/demo"),
+        );
+        store_memory(
+            &store,
+            "architecture",
+            "Beta worktree target memory",
+            Some("demo"),
+            Some("/repo/other"),
+        );
+
+        let result = tool_recall(
+            &store,
+            None,
+            &json!({
+                "query": "target memory",
+                "project_root": "/repo/demo",
+                "worktree_id": "wt-alpha"
+            }),
+            true,
+            Some("demo"),
+        );
+
+        assert!(!result.is_error);
+        let output = &result.content[0].text;
+        assert!(output.contains("Alpha worktree target memory"));
+        assert!(!output.contains("Beta worktree target memory"));
     }
 
     #[test]

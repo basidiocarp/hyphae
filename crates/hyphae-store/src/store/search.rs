@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use hyphae_core::{Chunk, ChunkStore, HyphaeResult, Memory, MemoryStore};
 
-use super::{SqliteStore, context};
+use super::{SHARED_PROJECT, SqliteStore, context};
 
 // ---------------------------------------------------------------------------
 // Unified search result
@@ -55,19 +55,114 @@ impl SqliteStore {
         project: Option<&str>,
         code_expand_project: Option<&str>,
     ) -> HyphaeResult<Vec<UnifiedSearchResult>> {
+        self.search_all_impl(
+            query,
+            embedding,
+            limit,
+            offset,
+            include_docs,
+            project,
+            None,
+            false,
+            code_expand_project,
+        )
+    }
+
+    /// Search across memories and document chunks using Reciprocal Rank Fusion.
+    ///
+    /// This variant scopes memory results to a specific worktree when `worktree`
+    /// is supplied. Document chunks remain project-scoped because the chunk store
+    /// does not track worktree identity yet.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "parameters mirror the MemoryStore search API"
+    )]
+    pub fn search_all_scoped(
+        &self,
+        query: &str,
+        embedding: Option<&[f32]>,
+        limit: usize,
+        offset: usize,
+        include_docs: bool,
+        project: Option<&str>,
+        worktree: Option<&str>,
+        code_expand_project: Option<&str>,
+    ) -> HyphaeResult<Vec<UnifiedSearchResult>> {
+        self.search_all_impl(
+            query,
+            embedding,
+            limit,
+            offset,
+            include_docs,
+            project,
+            worktree,
+            true,
+            code_expand_project,
+        )
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "shared internal implementation for the public search helpers"
+    )]
+    fn search_all_impl(
+        &self,
+        query: &str,
+        embedding: Option<&[f32]>,
+        limit: usize,
+        offset: usize,
+        include_docs: bool,
+        project: Option<&str>,
+        worktree: Option<&str>,
+        merge_shared_memories: bool,
+        code_expand_project: Option<&str>,
+    ) -> HyphaeResult<Vec<UnifiedSearchResult>> {
         const K: f32 = 60.0;
         const EXPANDED_WEIGHT: f32 = 0.5;
         let pool = limit + offset;
 
         let mem_results: Vec<(Memory, f32)> = if let Some(emb) = embedding {
-            self.search_hybrid(query, emb, pool, 0, project)?
+            if let Some(worktree) = worktree {
+                self.search_hybrid_scoped(query, emb, pool, 0, project, Some(worktree))?
+            } else {
+                self.search_hybrid(query, emb, pool, 0, project)?
+            }
         } else {
-            self.search_fts(query, pool, 0, project)?
-                .into_iter()
-                .enumerate()
-                .map(|(i, m)| (m, 1.0 / (K + i as f32)))
-                .collect()
+            if let Some(worktree) = worktree {
+                self.search_fts_scoped(query, pool, 0, project, Some(worktree))?
+            } else {
+                self.search_fts(query, pool, 0, project)?
+            }
+            .into_iter()
+            .enumerate()
+            .map(|(i, m)| (m, 1.0 / (K + i as f32)))
+            .collect()
         };
+
+        let mut combined_mem_results: Vec<(Memory, f32)> = mem_results;
+        let mut seen_mem_ids: HashSet<String> = combined_mem_results
+            .iter()
+            .map(|(mem, _)| mem.id.to_string())
+            .collect();
+        let should_merge_shared =
+            merge_shared_memories && worktree.is_some() && project != Some(SHARED_PROJECT);
+        if should_merge_shared {
+            let shared_mem_results: Vec<(Memory, f32)> = if let Some(emb) = embedding {
+                self.search_hybrid(query, emb, pool, 0, Some(SHARED_PROJECT))?
+            } else {
+                self.search_fts(query, pool, 0, Some(SHARED_PROJECT))?
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, m)| (m, 1.0 / (K + i as f32)))
+                    .collect()
+            };
+            for (mem, score) in shared_mem_results {
+                let id = mem.id.to_string();
+                if seen_mem_ids.insert(id) {
+                    combined_mem_results.push((mem, score));
+                }
+            }
+        }
 
         // Fetch chunk results once, keep them for later use
         let chunk_search_results = if include_docs {
@@ -86,15 +181,12 @@ impl SqliteStore {
 
         let mut scores: HashMap<String, f32> = HashMap::new();
         let mut memory_map: HashMap<String, Memory> = HashMap::new();
-        let mut seen_mem_ids: HashSet<String> = HashSet::new();
 
         // Score memories from primary search
-        for (rank, (mem, _original_score)) in mem_results.into_iter().enumerate() {
+        for (rank, (mem, _original_score)) in combined_mem_results.into_iter().enumerate() {
             let rrf = 1.0 / (K + rank as f32);
             let key = format!("mem:{}", mem.id);
-            let id = mem.id.to_string();
             *scores.entry(key.clone()).or_default() += rrf;
-            seen_mem_ids.insert(id);
             memory_map.insert(key, mem);
         }
 
@@ -121,9 +213,19 @@ impl SqliteStore {
                         .join(" OR ");
 
                     if !expanded_query.is_empty() {
-                        let expanded_mems = self
-                            .search_fts(&expanded_query, pool, 0, project)
-                            .unwrap_or_default();
+                        let expanded_mems = if let Some(worktree) = worktree {
+                            self.search_fts_scoped(
+                                &expanded_query,
+                                pool,
+                                0,
+                                project,
+                                Some(worktree),
+                            )
+                            .unwrap_or_default()
+                        } else {
+                            self.search_fts(&expanded_query, pool, 0, project)
+                                .unwrap_or_default()
+                        };
 
                         for (rank, mem) in expanded_mems.into_iter().enumerate() {
                             let id = mem.id.to_string();
@@ -513,6 +615,96 @@ mod tests {
                 "results should be sorted by descending score"
             );
         }
+    }
+
+    #[test]
+    fn test_search_all_scoped_keeps_chunks_project_scoped_and_merges_shared_memories() {
+        let store = test_store();
+
+        store
+            .store(
+                Memory::builder(
+                    "architecture".to_string(),
+                    "Alpha scoped target".to_string(),
+                    hyphae_core::Importance::Medium,
+                )
+                .project("demo".to_string())
+                .worktree("/repo/demo".to_string())
+                .build(),
+            )
+            .unwrap();
+        store
+            .store(
+                Memory::builder(
+                    "architecture".to_string(),
+                    "Beta other worktree target".to_string(),
+                    hyphae_core::Importance::Medium,
+                )
+                .project("demo".to_string())
+                .worktree("/repo/other".to_string())
+                .build(),
+            )
+            .unwrap();
+        store
+            .store(
+                Memory::builder(
+                    "architecture".to_string(),
+                    "Shared scoped target".to_string(),
+                    hyphae_core::Importance::Medium,
+                )
+                .project(crate::SHARED_PROJECT.to_string())
+                .build(),
+            )
+            .unwrap();
+
+        let mut doc = make_doc("docs/scoped.md");
+        doc.project = Some("demo".to_string());
+        let doc_id = doc.id.clone();
+        store.store_document(doc).unwrap();
+        store
+            .store_chunks(vec![make_chunk(
+                &doc_id,
+                "Scoped target document chunk",
+                "docs/scoped.md",
+            )])
+            .unwrap();
+
+        let results = store
+            .search_all_scoped(
+                "target",
+                None,
+                10,
+                0,
+                true,
+                Some("demo"),
+                Some("/repo/demo"),
+                None,
+            )
+            .unwrap();
+
+        let has_alpha = results.iter().any(|r| match r {
+            UnifiedSearchResult::Memory { memory, .. } => memory.summary.contains("Alpha scoped"),
+            _ => false,
+        });
+        let has_shared = results.iter().any(|r| match r {
+            UnifiedSearchResult::Memory { memory, .. } => memory.summary.contains("Shared scoped"),
+            _ => false,
+        });
+        let has_beta = results.iter().any(|r| match r {
+            UnifiedSearchResult::Memory { memory, .. } => memory.summary.contains("Beta other"),
+            _ => false,
+        });
+        let has_chunk = results
+            .iter()
+            .any(|r| matches!(r, UnifiedSearchResult::Chunk { .. }));
+
+        assert!(has_alpha, "worktree-scoped memory should be included");
+        assert!(has_shared, "_shared memories should still be included");
+        assert!(has_chunk, "document chunks should remain project-scoped");
+        assert!(
+            !has_beta,
+            "other worktrees should not leak into scoped memory results"
+        );
     }
 
     #[test]
