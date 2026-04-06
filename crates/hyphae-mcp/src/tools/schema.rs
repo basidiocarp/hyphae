@@ -83,13 +83,31 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                         "type": "string",
                         "description": "Optional explicit session ID from hyphae_session_start. Prefer this when multiple scoped sessions may be active for one project."
                     },
+                    "project_root": {
+                        "type": "string",
+                        "description": "Optional repository root for identity v1 lookups. Use with worktree_id to scope memory recall to the active worktree."
+                    },
+                    "worktree_id": {
+                        "type": "string",
+                        "description": "Optional worktree identifier for identity v1 lookups. Use with project_root to scope memory recall to the active worktree."
+                    },
                     "code_context": {
                         "type": "boolean",
                         "default": false,
                         "description": "When true, expands the search with code symbols from the project's code memoir (code:{project}). Only effective when a project is configured and the query looks code-related."
                     }
                 },
-                "required": ["query"]
+                "required": ["query"],
+                "allOf": [
+                    {
+                        "if": { "required": ["project_root"] },
+                        "then": { "required": ["worktree_id"] }
+                    },
+                    {
+                        "if": { "required": ["worktree_id"] },
+                        "then": { "required": ["project_root"] }
+                    }
+                ]
             }
         }),
         json!({
@@ -988,5 +1006,24 @@ mod tests {
             gather_tool["inputSchema"]["properties"]["scope"]["type"],
             "string"
         );
+    }
+
+    #[test]
+    fn test_recall_requires_identity_fields_in_pairs() {
+        let tools = tool_definitions_json(false);
+        let recall_tool = tools
+            .iter()
+            .find(|tool| tool["name"] == "hyphae_memory_recall")
+            .expect("memory recall tool");
+
+        let all_of = recall_tool["inputSchema"]["allOf"]
+            .as_array()
+            .expect("allOf schema");
+
+        assert_eq!(all_of.len(), 2);
+        assert_eq!(all_of[0]["if"]["required"][0], "project_root");
+        assert_eq!(all_of[0]["then"]["required"][0], "worktree_id");
+        assert_eq!(all_of[1]["if"]["required"][0], "worktree_id");
+        assert_eq!(all_of[1]["then"]["required"][0], "project_root");
     }
 }

@@ -44,6 +44,7 @@ pub(crate) fn tool_gather_context(
     let project_arg = args.get("project").and_then(|v| v.as_str()).or(project);
     let (project_root, worktree_id) =
         normalize_identity(get_str(args, "project_root"), get_str(args, "worktree_id"));
+    let scoped_worktree = super::scoped_worktree_root(project_root, worktree_id);
     let scope = get_str(args, "scope");
 
     if project_arg.is_none() && project_root.is_some() && worktree_id.is_some() {
@@ -64,7 +65,12 @@ pub(crate) fn tool_gather_context(
     // ── Memories ─────────────────────────────────────────────────────────
     if include.memories {
         sources_queried.push("memories");
-        if let Ok(memories) = store.search_fts(task, MAX_PER_SOURCE, 0, project_arg) {
+        let memories = if let Some(worktree) = scoped_worktree {
+            store.search_fts_scoped(task, MAX_PER_SOURCE, 0, project_arg, Some(worktree))
+        } else {
+            store.search_fts(task, MAX_PER_SOURCE, 0, project_arg)
+        };
+        if let Ok(memories) = memories {
             for (idx, mem) in memories.iter().enumerate() {
                 results.push(ContextItem {
                     source: "memory",
@@ -81,7 +87,18 @@ pub(crate) fn tool_gather_context(
     if include.errors {
         sources_queried.push("errors");
         let error_query = task;
-        if let Ok(all_errors) = store.search_fts(error_query, MAX_PER_SOURCE * 2, 0, project_arg) {
+        let all_errors = if let Some(worktree) = scoped_worktree {
+            store.search_fts_scoped(
+                error_query,
+                MAX_PER_SOURCE * 2,
+                0,
+                project_arg,
+                Some(worktree),
+            )
+        } else {
+            store.search_fts(error_query, MAX_PER_SOURCE * 2, 0, project_arg)
+        };
+        if let Ok(all_errors) = all_errors {
             let error_mems: Vec<_> = all_errors
                 .iter()
                 .filter(|m| m.topic.starts_with("errors/"))
@@ -344,6 +361,49 @@ mod tests {
         let ctx = parsed["context"].as_array().unwrap();
         assert!(!ctx.is_empty(), "should find the auth memory");
         assert_eq!(ctx[0]["source"], "memory");
+    }
+
+    #[test]
+    fn test_gather_context_scopes_memories_to_worktree_identity() {
+        let store = test_store();
+
+        let alpha = Memory::builder(
+            "architecture".to_string(),
+            "Alpha worktree gather target".to_string(),
+            Importance::High,
+        )
+        .project("demo".to_string())
+        .worktree("/repo/demo/wt-alpha".to_string())
+        .build();
+        let beta = Memory::builder(
+            "architecture".to_string(),
+            "Beta worktree gather target".to_string(),
+            Importance::High,
+        )
+        .project("demo".to_string())
+        .worktree("/repo/demo/wt-beta".to_string())
+        .build();
+        store.store(alpha).unwrap();
+        store.store(beta).unwrap();
+
+        let result = tool_gather_context(
+            &store,
+            &json!({
+                "task": "gather target",
+                "project": "demo",
+                "project_root": "/repo/demo/wt-alpha",
+                "worktree_id": "wt-alpha",
+                "include": ["memories"]
+            }),
+            None,
+        );
+        assert!(!result.is_error);
+        let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
+        let ctx = parsed["context"].as_array().unwrap();
+        assert_eq!(ctx.len(), 1);
+        let content = ctx[0]["content"].as_str().unwrap();
+        assert!(content.contains("Alpha worktree gather target"));
+        assert!(!content.contains("Beta worktree gather target"));
     }
 
     #[test]

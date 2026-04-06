@@ -1,239 +1,342 @@
-# Hyphae Troubleshooting & FAQ
+# Hyphae Troubleshooting
 
-Common problems and their fixes, plus answers to frequently asked questions. If you've just installed Hyphae and something isn't working, start with #1—most issues trace back to the MCP config or a missing restart.
+Start with `hyphae init` and restart your client. Most new-install failures come from missing MCP registration, missing Claude hook setup, or a stale client process that never reloaded the new config.
 
----
+## Fast Triage
 
-## Troubleshooting
+| Symptom | First Command | What it usually means |
+|---------|---------------|-----------------------|
+| Agent never recalls or stores anything | `hyphae init` | MCP registration or Claude hook setup is missing |
+| `hyphae recall` returns nothing | `hyphae stats` | The store is empty, the query is too narrow, or embeddings are missing |
+| Responses stay long after compact mode was enabled | `hyphae config` | Compact mode is off or the client has not restarted |
+| Embedding-related commands fail | `hyphae doctor` | Embeddings are disabled, not configured, or still downloading |
+| SQLite errors show up during recall or stats | `hyphae doctor` | The database path is wrong, locked, or damaged |
 
-### 1. The agent doesn't use Hyphae tools
+## Setup and Registration Issues
 
-**Symptom:** The agent neither recalls nor stores anything, even when asked.
+### Agent does not use Hyphae tools
 
-**Solutions:**
-- Run `hyphae init` and check the output for each tool
-- Verify that the MCP config file exists (e.g., `~/.claude.json` for Claude Code)
-- If you want Claude Code lifecycle capture, run `hyphae init --mode hook` and verify
-  `~/.claude/settings.json` contains `PostToolUse`, `PreCompact`, and `SessionEnd` entries
-- Test the server manually:
-  ```bash
-  echo '{"jsonrpc":"2.0","id":1,"method":"initialize"}' | hyphae serve
-  ```
-  You should see a JSON response with `capabilities` and `serverInfo`
-- Verify that `hyphae serve` is in your PATH: `which hyphae`
-- **Restart your AI tool** after running `hyphae init`
+**Symptom:** The agent never recalls, stores, or mentions Hyphae even when asked.
 
-### 2. `hyphae recall` returns nothing
+**Diagnosis:** Hyphae is not registered as an MCP server, the Claude hook mode was never installed, or the client never reloaded the updated config.
 
-**Symptom:** Search returns "No memories found."
+**Fix:**
 
-**Solutions:**
-- `hyphae topics` — verify there are stored memories
-- `hyphae stats` — check the total
-- Try a broader query or remove topic/keyword filters
-- `hyphae list --all` — list everything to verify content
-- If memories exist but don't match: backfill embeddings with `hyphae embed`
+1. Run the setup flow again and read the per-tool output:
+   ```bash
+   hyphae init
+   ```
+   Healthy output names the tool it configured and the config file it changed.
 
-### 3. Embeddings are slow on first launch
+2. If you want Claude lifecycle capture, install hook mode too:
+   ```bash
+   hyphae init --mode hook
+   ```
+   For Claude Code, `~/.claude/settings.json` should end up with `PostToolUse`, `PreCompact`, and `SessionEnd` entries.
 
-**Symptom:** Hyphae takes 30+ seconds on the first `store` or `recall`.
+3. Verify the server can answer a basic MCP initialize request, then restart your client:
+   ```bash
+   echo '{"jsonrpc":"2.0","id":1,"method":"initialize"}' | hyphae serve
+   ```
+   A healthy response includes JSON with `capabilities` and `serverInfo`.
 
-The embedding model (~45MB for bge-small-en-v1.5) is downloaded on first use. Subsequent runs load from cache in 1-2 seconds.
+### `hyphae init` does not detect my tool
 
-**Solutions:**
-- This is normal the first time — wait for the download
-- To speed things up: use a lighter model in `config.toml`:
-  ```toml
-  [embeddings]
-  model = "BAAI/bge-small-en-v1.5"  # 384d, English only, fastest
-  ```
-- To compile without embeddings: `cargo build --no-default-features`
+**Symptom:** The tool you expected to configure does not appear in `hyphae init` output.
 
-### 4. Duplicate memories appear
+**Diagnosis:** Hyphae only auto-configures tools it can detect locally. Missing config files or unsupported clients will not show up in the automatic pass.
 
-**Symptom:** Multiple near-identical memories in the same topic.
+**Fix:**
 
-Auto-dedup only works via MCP (server with embedder). The `hyphae store` CLI does not have auto-dedup by default.
+1. Confirm the client is installed and has created its config file:
+   ```bash
+   hyphae init
+   ```
+   If the tool still does not appear, Hyphae did not detect a supported config target.
 
-**Solutions:**
-- Backfill embeddings: `hyphae embed`
-- Delete duplicates manually: `hyphae forget <id>`
-- Consolidate the topic: `hyphae consolidate -t <topic>`
+2. For Claude Code, make sure the client has been launched at least once:
+   ```bash
+   ls ~/.claude.json
+   ```
+   If that file is missing, Claude Code has not created its MCP config yet.
 
-### 5. Error "embeddings feature not enabled"
+3. Add Hyphae manually if needed:
+   ```bash
+   claude mcp add hyphae -- hyphae serve
+   ```
+   For other tools, add the same command and args in their MCP config format.
 
-**Symptom:** `hyphae embed` fails with a message about the feature.
+### Compact mode does not activate
 
-**Solution:** Recompile with the embeddings feature:
-```bash
-cargo build --release  # The "embeddings" feature is active by default
-```
+**Symptom:** MCP responses stay long even though you enabled compact mode.
 
-If you are using the pre-compiled binary from GitHub releases, embeddings are always included.
+**Diagnosis:** Compact mode is off in config, the MCP command does not include `--compact`, or the client is still using an old process.
 
-### 6. Database corruption
+**Fix:**
 
-**Symptom:** `hyphae stats` or `hyphae recall` fails with a SQLite error.
+1. Inspect the loaded configuration:
+   ```bash
+   hyphae config
+   ```
+   Look for `[mcp] compact = true`.
 
-**Solutions:**
-- Locate the database:
-  - macOS: `~/Library/Application Support/dev.hyphae.hyphae/memories.db`
-  - Linux: `~/.local/share/dev.hyphae.hyphae/memories.db`
-- Back up the `.db` file and its WAL files (`.db-wal`, `.db-shm`)
-- Delete and rebuild if necessary — migration is automatic
-- To test with a clean database: `hyphae --db /tmp/test.db stats`
+2. Force compact mode at process start if you want to rule out config loading:
+   ```bash
+   hyphae serve --compact
+   ```
 
-### 7. `hyphae init` doesn't detect my tool
+3. Restart the client after any config or MCP command change.
 
-**Symptom:** The tool doesn't appear in `hyphae init` output.
+## Recall and Memory Issues
 
-**Solutions:**
-- Verify that the tool is installed and its config file exists
-- For Claude Code: `~/.claude.json` must exist (created on first launch)
-- Manual configuration: `claude mcp add hyphae -- hyphae serve`
-- For unsupported tools, add manually in their MCP config:
-  ```json
-  { "command": "/path/to/hyphae", "args": ["serve"] }
-  ```
+### `hyphae recall` returns nothing
 
-### 8. Decay is too aggressive / not aggressive enough
+**Symptom:** Search returns `No memories found` or only empty-looking results.
 
-**Symptom:** Memories disappear too quickly, or accumulate without being cleaned up.
+**Diagnosis:** The store may be empty, the query may be too narrow, or the memories exist but have not been embedded yet.
 
-**Solutions:**
-- Adjust in `~/.config/hyphae/config.toml`:
-  ```toml
-  [memory]
-  decay_rate = 0.98      # Slower (default: 0.95)
-  prune_threshold = 0.05 # Lower threshold (default: 0.1)
-  ```
-- Use `hyphae prune --dry-run --threshold 0.2` to preview
-- Mark important memories as `high` or `critical` to protect them
+**Fix:**
 
-### 9. Compact mode doesn't activate
+1. Check whether the store has any data at all:
+   ```bash
+   hyphae stats
+   hyphae topics
+   ```
+   If both are empty, there is nothing to recall yet.
 
-**Symptom:** MCP responses remain long despite the configuration.
+2. List stored items without the original query filters:
+   ```bash
+   hyphae list --all
+   ```
+   If results appear here but not in recall, the original query or filters were too narrow.
 
-**Solutions:**
-- Check `config.toml`:
-  ```toml
-  [mcp]
-  compact = true
-  ```
-- Or force via flag: change `hyphae serve` to `hyphae serve --compact` in the MCP config
-- Restart your AI tool after the change
+3. Regenerate embeddings if the text exists but similarity search is weak:
+   ```bash
+   hyphae embed
+   ```
 
-### 10. Error "memoir not found" despite creating it
+### Duplicate memories appear in one topic
+
+**Symptom:** You see multiple near-identical memories under the same topic.
+
+**Diagnosis:** CLI storage does not apply the same automatic dedup path as the MCP server with an active embedder, or embeddings were never backfilled after earlier writes.
+
+**Fix:**
+
+1. Backfill embeddings first:
+   ```bash
+   hyphae embed
+   ```
+
+2. Delete obvious duplicates:
+   ```bash
+   hyphae forget <id>
+   ```
+
+3. Consolidate the topic when the duplication is broader than one or two entries:
+   ```bash
+   hyphae consolidate --topic <topic>
+   ```
+
+### `hyphae memoir show` says the memoir is missing right after creation
 
 **Symptom:** `hyphae memoir show <name>` fails right after `hyphae memoir create`.
 
-**Solutions:**
-- Check the exact name: `hyphae memoir list`
-- Names are case-sensitive: `Arch` != `arch`
-- Verify that you're not using `--db` with a different path
+**Diagnosis:** The name does not match exactly, or the create and show commands are pointing at different databases.
 
-### 11. Degraded performance with many memories
+**Fix:**
 
-**Symptom:** `recall` becomes slow with >1000 memories.
+1. Confirm the memoir name exactly as stored:
+   ```bash
+   hyphae memoir list
+   ```
 
-**Solutions:**
-- Hybrid search takes ~1ms per query for 1000 memories — that's normal
-- Consolidate large topics: `hyphae consolidate -t <topic>`
-- Prune stale memories: `hyphae prune`
-- Reduce `limit` in searches
+2. Retry with the exact case-sensitive name:
+   ```bash
+   hyphae memoir show <exact-name>
+   ```
 
-### 12. Extraction detects nothing
+3. If the name is correct, check whether you are switching databases with config or `--db`:
+   ```bash
+   hyphae config
+   ```
 
-**Symptom:** `hyphae extract` returns "No facts extracted."
+### `hyphae extract` says no facts were extracted
 
-**Solutions:**
-- The text must contain recognized signals (architecture keywords, errors, decisions)
-- Test with explicit text:
-  ```bash
-  echo "We decided to use PostgreSQL instead of MySQL" | hyphae extract --dry-run
-  ```
-- Adjust the threshold in `config.toml`:
-  ```toml
-  [extraction]
-  min_score = 2.0  # Lower = more facts extracted (default: 3.0)
-  ```
+**Symptom:** `hyphae extract` returns `No facts extracted`.
 
----
+**Diagnosis:** The text does not contain strong enough decision, architecture, or error signals for the current extraction threshold.
 
-## FAQ
+**Fix:**
 
-### Q1: Does Hyphae send data over the internet?
+1. Test the extractor on a sentence that should clearly match:
+   ```bash
+   echo "We decided to use PostgreSQL instead of MySQL" | hyphae extract --dry-run
+   ```
+   If that works, the extractor is fine and the original text was just too weak.
 
-**No.** Hyphae stores everything locally in a SQLite file. The embedding model runs locally (via fastembed/ONNX Runtime). No data leaves your machine. The only network access is the initial download of the embedding model (~100MB, one time only).
+2. Lower the extraction threshold if you want more aggressive matching:
+   ```toml
+   [extraction]
+   min_score = 2.0
+   ```
 
-### Q2: Can I use Hyphae with multiple projects?
+3. Retry the original input after saving the config:
+   ```bash
+   hyphae extract --dry-run
+   ```
 
-**Yes.** All projects share the same SQLite database. Use project-prefixed topics (e.g., `decisions-api`, `decisions-frontend`) to separate them. You can also use `--db <path>` to completely isolate databases.
+## Embeddings, Database, and Performance
 
-### Q3: How do I backup/restore my memory?
+### Embeddings are slow on first launch
 
-Back up the SQLite file:
-```bash
-# macOS
-cp ~/Library/Application\ Support/dev.hyphae.hyphae/memories.db ~/backup-hyphae.db
+**Symptom:** The first `store`, `recall`, or `embed` takes much longer than later runs.
 
-# Restore
-cp ~/backup-hyphae.db ~/Library/Application\ Support/dev.hyphae.hyphae/memories.db
-```
+**Diagnosis:** Hyphae is downloading and warming the embedding model on first use.
 
-### Q4: Does Hyphae work with local models (ollama)?
-
-**Yes.** Hyphae is a standard MCP server. It works with any MCP client, including those using local models. Benchmarks show up to +93% recall with qwen2.5:14b via ollama.
-
-### Q5: What's the difference between `hyphae consolidate` (CLI) and `hyphae_memory_consolidate` (MCP)?
-
-The CLI automatically merges summaries by concatenating with ` | `. The MCP asks the agent to provide the summary, which produces a smarter result because the agent understands the content and can synthesize it.
-
-### Q6: Can I change the embedding model without losing my data?
-
-**Yes.** Memories (text) are always preserved. Only the vectors are cleared and recreated. After changing the model in `config.toml`, run `hyphae embed --force` to regenerate all vectors.
-
-### Q7: How many memories can Hyphae handle?
-
-The SQLite database handles millions of rows without issue. Benchmarks show ~34us per store and ~951us per hybrid search for 1000 memories. Performance degrades linearly, not exponentially.
-
-### Q8: How do I delete all my memory?
+This is expected behavior. The first run can take tens of seconds; later runs usually load from cache much faster.
 
 ```bash
-# macOS
-rm ~/Library/Application\ Support/dev.hyphae.hyphae/memories.db*
-
-# Linux
-rm ~/.local/share/dev.hyphae.hyphae/memories.db*
+hyphae doctor
 ```
 
-The database is automatically recreated on next launch.
+### `embeddings feature not enabled`
 
-### Q9: Does Hyphae consume LLM tokens?
+**Symptom:** `hyphae embed` fails with a message about embeddings not being enabled.
 
-No, not for storage and recall. Hyphae calls no LLM API. The only tokens consumed are those of the agent calling the MCP tools—exactly like any other MCP tool. Compact mode (`--compact`) reduces these tokens by ~40%.
+**Diagnosis:** The current binary was built without the default embeddings feature.
 
-Extraction (Layer 0) is purely rule-based—zero LLM cost. Layer 1 (PreCompact, planned) will use ~500 tokens per session.
+**Fix:**
 
-### Q10: Can I share my memory with my team?
+1. Rebuild with default features:
+   ```bash
+   cargo build --release
+   ```
 
-Not directly (it's a local SQLite file). However, **memoirs** are designed to capture structured knowledge that can be exported and shared. An import/export feature is planned.
+2. If you changed embedding settings and want a clean rebuild of vectors, re-embed:
+   ```bash
+   hyphae embed --force
+   ```
 
-### Q11: Is auto-dedup reliable?
+3. If you are using a release binary, replace the custom build with the normal shipped binary.
 
-Auto-dedup uses hybrid similarity (BM25 + cosine) with an 85% threshold. It catches close duplicates reliably but lets through very different reformulations of the same fact. This is intentional: a duplicate is better than data loss.
+### SQLite errors appear during recall or stats
 
-### Q12: How does the MCP server "store nudge" work?
+**Symptom:** `hyphae stats`, `hyphae recall`, or related commands fail with a SQLite error.
 
-The server counts consecutive tool calls without `hyphae_memory_store`. After 10 calls, it adds a hint to the response:
+**Diagnosis:** The configured database path is wrong, the file is damaged, or the current process is using a bad local state.
+
+**Fix:**
+
+1. Check the resolved configuration and database path:
+   ```bash
+   hyphae config
+   ```
+
+2. Back up the database before changing anything:
+   ```bash
+   cp ~/Library/Application\ Support/dev.hyphae.hyphae/memories.db ~/hyphae-backup.db
+   ```
+   On Linux, use `~/.local/share/dev.hyphae.hyphae/memories.db` instead.
+
+3. Test with a clean temporary database to separate corruption from config issues:
+   ```bash
+   hyphae --db /tmp/hyphae-test.db stats
+   ```
+   If the temporary database works, the original database or its location is the problem.
+
+### Recall gets slow with many memories
+
+**Symptom:** Recall feels noticeably slower once the store is large.
+
+**Diagnosis:** The store has grown, large topics are fragmented, or the command is returning more results than you actually need.
+
+**Fix:**
+
+1. Check overall size first:
+   ```bash
+   hyphae stats
+   ```
+
+2. Consolidate topics that have become cluttered:
+   ```bash
+   hyphae consolidate --topic <topic>
+   ```
+
+3. Prune stale memories or lower result counts on recall:
+   ```bash
+   hyphae prune
+   hyphae recall "<query>" --limit 10
+   ```
+
+## Configuration and Retention
+
+### Decay is too aggressive or not aggressive enough
+
+**Symptom:** Memories disappear sooner than you expect, or they never seem to decay at all.
+
+**Diagnosis:** The current decay settings do not match how often you want to prune and protect stored memory.
+
+**Fix:**
+
+1. Inspect the active configuration:
+   ```bash
+   hyphae config
+   ```
+
+2. Adjust the memory settings in `~/.config/hyphae/config.toml`:
+   ```toml
+   [memory]
+   decay_rate = 0.98
+   prune_threshold = 0.05
+   ```
+
+3. Preview pruning before deleting anything:
+   ```bash
+   hyphae prune --threshold 0.2 --dry-run
+   ```
+
+## Error Message Quick Reference
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `"No memories found"` | The store is empty, the query is too narrow, or embeddings are missing | Run `hyphae stats`, `hyphae list --all`, then `hyphae embed` if needed |
+| `"embeddings feature not enabled"` | The current binary was built without embeddings | Rebuild with `cargo build --release` |
+| `"memoir not found"` | The memoir name does not match or you are using a different database | Check `hyphae memoir list` and `hyphae config` |
+| `"No facts extracted"` | The text did not cross the extraction threshold | Retry with `hyphae extract --dry-run` and lower `min_score` if needed |
+| `SQLite error` | The database path is wrong, locked, or damaged | Check `hyphae config`, back up the DB, then test with `--db /tmp/hyphae-test.db` |
+
+## Diagnostic Commands
+
+**Enable debug logging:**
+```bash
+# All Hyphae debug output
+HYPHAE_LOG=debug hyphae doctor
+
+# Debug the MCP server directly
+HYPHAE_LOG=debug hyphae serve
 ```
-[Hyphae: 12 tool calls since last store. Consider saving important context.]
-```
-The counter resets on each `hyphae_memory_store`. It's a subtle reminder so the agent doesn't forget to store.
 
----
+**Check version:**
+```bash
+hyphae --version
+```
+
+**Inspect current configuration:**
+```bash
+hyphae config
+cat ~/.config/hyphae/config.toml
+```
+
+**Check state and health:**
+```bash
+hyphae doctor
+hyphae stats
+hyphae topics
+```
 
 ## See also
 
-- [GUIDE.md](GUIDE.md) — Core guide: memory models, MCP tools reference, benchmarking
-- [SETUP-BY-TOOL.md](SETUP-BY-TOOL.md) — Per-tool MCP configuration for Claude Code, Cursor, VS Code, and more
+- [GUIDE.md](GUIDE.md)
+- [SETUP-BY-TOOL.md](SETUP-BY-TOOL.md)
+- [CLI-REFERENCE.md](CLI-REFERENCE.md)

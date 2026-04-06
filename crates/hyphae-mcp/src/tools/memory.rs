@@ -10,7 +10,10 @@ use hyphae_store::{SqliteStore, collect_evaluation_window};
 
 use crate::protocol::ToolResult;
 
-use super::{get_bounded_i64, get_str, validate_max_length, validate_required_string};
+use super::{
+    get_bounded_i64, get_str, normalize_identity, scoped_worktree_root, validate_max_length,
+    validate_required_string,
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -286,6 +289,15 @@ pub(crate) fn tool_recall(
     let topic = get_str(args, "topic");
     let keyword = get_str(args, "keyword");
     let session_id = get_str(args, "session_id");
+    let raw_project_root = get_str(args, "project_root");
+    let raw_worktree_id = get_str(args, "worktree_id");
+    if raw_project_root.is_some() ^ raw_worktree_id.is_some() {
+        return ToolResult::error(
+            "project_root and worktree_id must be provided together".to_string(),
+        );
+    }
+    let (project_root, worktree_id) = normalize_identity(raw_project_root, raw_worktree_id);
+    let scoped_worktree = scoped_worktree_root(project_root, worktree_id);
     let code_context = args
         .get("code_context")
         .and_then(|v| v.as_bool())
@@ -305,7 +317,12 @@ pub(crate) fn tool_recall(
     // Compute auto-consolidation hint (if topic filter is used)
     // ─────────────────────────────────────────────────────────────────────────────
     let auto_consolidate_hint = if let Some(t) = topic {
-        if let Ok(memories) = store.get_by_topic(t, project) {
+        let memories = if let Some(worktree) = scoped_worktree {
+            store.get_by_topic_scoped(t, project, Some(worktree))
+        } else {
+            store.get_by_topic(t, project)
+        };
+        if let Ok(memories) = memories {
             if memories.len() > 20 {
                 // Check if span >7 days
                 let oldest = memories.iter().min_by_key(|m| m.created_at);
@@ -338,7 +355,19 @@ pub(crate) fn tool_recall(
     // Try hybrid search if embedder is available
     if let Some(emb) = embedder {
         if let Ok(query_emb) = emb.embed(query) {
-            if let Ok(results) = store.search_hybrid(query, &query_emb, limit, offset, project) {
+            let hybrid_results = if let Some(worktree) = scoped_worktree {
+                store.search_hybrid_scoped(
+                    query,
+                    &query_emb,
+                    limit,
+                    offset,
+                    project,
+                    Some(worktree),
+                )
+            } else {
+                store.search_hybrid(query, &query_emb, limit, offset, project)
+            };
+            if let Ok(results) = hybrid_results {
                 let mut scored_results = results;
 
                 // Merge _shared results when searching a specific project
@@ -349,6 +378,7 @@ pub(crate) fn tool_recall(
                     limit,
                     offset,
                     project,
+                    scoped_worktree,
                     scored_results,
                 );
 
@@ -417,27 +447,40 @@ pub(crate) fn tool_recall(
     }
 
     // Fallback: FTS then keywords
-    let mut results = match store.search_fts(query, limit, offset, project) {
+    let mut results = match if let Some(worktree) = scoped_worktree {
+        store.search_fts_scoped(query, limit, offset, project, Some(worktree))
+    } else {
+        store.search_fts(query, limit, offset, project)
+    } {
         Ok(r) => r,
         Err(e) => return ToolResult::error(format!("search error: {e}")),
     };
 
     if results.is_empty() {
         let keywords: Vec<&str> = query.split_whitespace().collect();
-        results = match store.search_by_keywords(&keywords, limit, offset, project) {
+        results = match if let Some(worktree) = scoped_worktree {
+            store.search_by_keywords_scoped(&keywords, limit, offset, project, Some(worktree))
+        } else {
+            store.search_by_keywords(&keywords, limit, offset, project)
+        } {
             Ok(r) => r,
             Err(e) => return ToolResult::error(format!("search error: {e}")),
         };
     }
 
     // Merge _shared results when searching a specific project
-    results = merge_shared_fts(store, query, limit, project, results);
+    results = merge_shared_fts(store, query, limit, project, scoped_worktree, results);
 
     // Session-aware recall boost: when the query mentions sessions,
     // prepend matching session/* memories so recent session context surfaces first.
     if is_session_query(query) {
         let session_limit = 5usize.min(limit);
-        if let Ok(session_hits) = store.search_fts(query, session_limit * 4, 0, project) {
+        let session_hits = if let Some(worktree) = scoped_worktree {
+            store.search_fts_scoped(query, session_limit * 4, 0, project, Some(worktree))
+        } else {
+            store.search_fts(query, session_limit * 4, 0, project)
+        };
+        if let Ok(session_hits) = session_hits {
             let existing_ids: std::collections::HashSet<String> =
                 results.iter().map(|m| m.id.to_string()).collect();
             let session_mems: Vec<_> = session_hits
@@ -502,9 +545,18 @@ pub(crate) fn tool_recall(
                         .join(" OR ");
 
                     if !expanded_query.is_empty() {
-                        if let Ok(expanded) =
+                        let expanded = if let Some(worktree) = scoped_worktree {
+                            store.search_fts_scoped(
+                                &expanded_query,
+                                limit,
+                                offset,
+                                project,
+                                Some(worktree),
+                            )
+                        } else {
                             store.search_fts(&expanded_query, limit, offset, project)
-                        {
+                        };
+                        if let Ok(expanded) = expanded {
                             // Merge: append expanded results not already present
                             let existing_ids: std::collections::HashSet<String> =
                                 results.iter().map(|m| m.id.to_string()).collect();
@@ -933,6 +985,7 @@ fn merge_shared_hybrid(
     limit: usize,
     offset: usize,
     project: Option<&str>,
+    _worktree: Option<&str>,
     mut scored_results: Vec<(Memory, f32)>,
 ) -> Vec<(Memory, f32)> {
     let should_merge = matches!(project, Some(p) if p != hyphae_store::SHARED_PROJECT);
@@ -970,6 +1023,7 @@ fn merge_shared_fts(
     query: &str,
     limit: usize,
     project: Option<&str>,
+    _worktree: Option<&str>,
     mut results: Vec<Memory>,
 ) -> Vec<Memory> {
     let should_merge = matches!(project, Some(p) if p != hyphae_store::SHARED_PROJECT);

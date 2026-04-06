@@ -48,6 +48,19 @@ pub(super) fn normalize_identity<'a>(
     }
 }
 
+/// The memory write path persists the Git worktree root path, so the
+/// `project_root` half of the identity pair is the value that can scope
+/// worktree-aware memory reads.
+pub(super) fn scoped_worktree_root<'a>(
+    project_root: Option<&'a str>,
+    worktree_id: Option<&'a str>,
+) -> Option<&'a str> {
+    match (project_root, worktree_id) {
+        (Some(project_root), Some(_worktree_id)) => Some(project_root),
+        _ => None,
+    }
+}
+
 pub(super) fn get_bounded_i64(args: &Value, key: &str, default: i64, min: i64, max: i64) -> i64 {
     args.get(key)
         .and_then(|v| v.as_i64())
@@ -257,6 +270,151 @@ mod tests {
         );
         assert!(!recall_result.is_error);
         assert!(recall_result.content[0].text.contains("Rust"));
+    }
+
+    #[test]
+    fn test_recall_scopes_to_worktree_when_identity_is_provided() {
+        let store = test_store();
+
+        let alpha = Memory::builder(
+            "architecture".into(),
+            "Alpha worktree recall target".into(),
+            Importance::Medium,
+        )
+        .project("demo".into())
+        .worktree("/repo/demo/wt-alpha".into())
+        .build();
+        let beta = Memory::builder(
+            "architecture".into(),
+            "Beta worktree recall target".into(),
+            Importance::Medium,
+        )
+        .project("demo".into())
+        .worktree("/repo/demo/wt-beta".into())
+        .build();
+        store.store(alpha).unwrap();
+        store.store(beta).unwrap();
+
+        let recall_result = call_tool(
+            &store,
+            None,
+            "hyphae_memory_recall",
+            &json!({
+                "query": "recall target",
+                "project_root": "/repo/demo/wt-alpha",
+                "worktree_id": "wt-alpha"
+            }),
+            false,
+            Some("demo"),
+            false,
+        );
+        assert!(!recall_result.is_error);
+        let text = &recall_result.content[0].text;
+        assert!(text.contains("Alpha worktree recall target"));
+        assert!(!text.contains("Beta worktree recall target"));
+    }
+
+    #[test]
+    fn test_recall_falls_back_without_identity_pair() {
+        let store = test_store();
+
+        let alpha = Memory::builder(
+            "architecture".into(),
+            "Alpha fallback recall target".into(),
+            Importance::Medium,
+        )
+        .project("demo".into())
+        .worktree("/repo/demo/wt-alpha".into())
+        .build();
+        let beta = Memory::builder(
+            "architecture".into(),
+            "Beta fallback recall target".into(),
+            Importance::Medium,
+        )
+        .project("demo".into())
+        .worktree("/repo/demo/wt-beta".into())
+        .build();
+        store.store(alpha).unwrap();
+        store.store(beta).unwrap();
+
+        let recall_result = call_tool(
+            &store,
+            None,
+            "hyphae_memory_recall",
+            &json!({"query": "fallback recall target"}),
+            false,
+            Some("demo"),
+            false,
+        );
+        assert!(!recall_result.is_error);
+        let text = &recall_result.content[0].text;
+        assert!(text.contains("Alpha fallback recall target"));
+        assert!(text.contains("Beta fallback recall target"));
+    }
+
+    #[test]
+    fn test_recall_rejects_partial_identity_pair() {
+        let store = test_store();
+
+        let recall_result = call_tool(
+            &store,
+            None,
+            "hyphae_memory_recall",
+            &json!({
+                "query": "partial identity recall target",
+                "project_root": "/repo/demo/wt-alpha"
+            }),
+            false,
+            Some("demo"),
+            false,
+        );
+        assert!(recall_result.is_error);
+        assert!(
+            recall_result.content[0]
+                .text
+                .contains("project_root and worktree_id must be provided together")
+        );
+    }
+
+    #[test]
+    fn test_recall_includes_shared_memories_when_identity_is_provided() {
+        let store = test_store();
+
+        let project_memory = Memory::builder(
+            "architecture".into(),
+            "Project worktree recall target".into(),
+            Importance::Medium,
+        )
+        .project("demo".into())
+        .worktree("/repo/demo/wt-alpha".into())
+        .build();
+        let shared_memory = Memory::builder(
+            "architecture".into(),
+            "Shared recall target".into(),
+            Importance::Medium,
+        )
+        .project(hyphae_store::SHARED_PROJECT.into())
+        .build();
+        store.store(project_memory).unwrap();
+        store.store(shared_memory).unwrap();
+
+        let recall_result = call_tool(
+            &store,
+            None,
+            "hyphae_memory_recall",
+            &json!({
+                "query": "recall target",
+                "project_root": "/repo/demo/wt-alpha",
+                "worktree_id": "wt-alpha"
+            }),
+            false,
+            Some("demo"),
+            false,
+        );
+        assert!(!recall_result.is_error);
+        let text = &recall_result.content[0].text;
+        assert!(text.contains("Project worktree recall target"));
+        assert!(text.contains("Shared recall target"));
     }
 
     #[test]

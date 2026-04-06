@@ -1,251 +1,328 @@
 # Changelog
 
-## Unreleased
+All notable changes to Hyphae are documented in this file.
+
+## [Unreleased]
 
 ### Changed
 
-- Updated documentation across all guides: README, architecture, CLI reference, embedding models, features, feedback loop design, guide, internals, MCP tools, product, setup-by-tool, training data, and troubleshooting
+- **Docs cleanup**: README, architecture, CLI reference, embedding-model docs,
+  feature docs, setup guides, and troubleshooting docs were refreshed to match
+  the current product surface.
 
-## v0.10.2 - 2026-04-01
+## [0.10.2] - 2026-04-01
 
 ### Fixed
 
-- **Release-gating for macOS binaries**: Apple release builds now fail fast on functional smoke-test or MCP initialize regressions instead of swallowing those failures during packaging.
-- **macOS build diagnostics**: Release workflows now capture verbose native C-build logs, pin a deterministic SDK/deployment target, re-sign the binary, and upload diagnostics when a macOS build fails.
+- **Release-gating for macOS binaries**: Apple release builds now fail fast on
+  functional smoke-test or MCP initialize regressions instead of swallowing
+  those failures during packaging.
+- **macOS build diagnostics**: Release workflows now capture verbose native
+  build logs, pin the SDK and deployment target, re-sign the binary, and upload
+  diagnostics when the Apple build path fails.
 
-## v0.10.0 - 2026-03-31
+## [0.10.0] - 2026-03-31
 
 ### Added
 
-- **Owned read surfaces**: Added explicit CLI surfaces for session list, session timeline, activity, and context gathering so downstream tools no longer need private store reads.
-- **Runtime session document metadata**: Command-output ingestion now persists `runtime_session_id` and returns it from chunk retrieval.
+- **Owned read surfaces**: Hyphae now exposes explicit CLI surfaces for session
+  list, session timeline, activity, and context gathering so downstream tools
+  no longer need private store reads.
+- **Runtime session document metadata**: Command-output ingestion now persists
+  `runtime_session_id` and returns it from chunk retrieval.
 
 ### Changed
 
-- **Identity v1 enforcement**: Session, context, and command-output flows now require the structured project identity contract instead of silently falling back to project-scoped legacy behavior.
-- **Versioned payloads**: Cap-facing CLI and MCP payloads now emit and validate explicit `schema_version` fields for session, memoir, memory, and command-output boundaries.
+- **Identity-v1 enforcement**: Session, context, and command-output flows now
+  require the structured project identity contract instead of falling back to
+  project-scoped legacy behavior.
+- **Versioned payloads**: Cap-facing CLI and MCP payloads now emit and validate
+  explicit `schema_version` fields for session, memoir, memory, and
+  command-output boundaries.
 
 ### Fixed
 
-- **Worktree-safe recall and context**: Identity-aware context gathering and session lookup no longer bleed through legacy `session/*` fallback memories.
-- **Cross-tool contract drift**: Hyphae import, command-output, and dashboard read paths now validate the real contract shapes instead of optimistic ad hoc parsing.
+- **Worktree-safe recall and context**: Identity-aware context gathering and
+  session lookup no longer bleed through legacy `session/*` fallback memories.
+- **Cross-tool contract drift**: Hyphae import, command-output, and dashboard
+  read paths now validate the real contract shapes instead of optimistic ad hoc
+  parsing.
 
-## v0.9.5 - 2026-03-27
+## [0.9.5] - 2026-03-27
 
 ### Added
 
-- **Explicit recall session identity**: `hyphae_memory_recall` now accepts `session_id` so scoped recall attribution can stay attached to the right parallel session.
-- **Structured session status**: `hyphae session status --id ...` now returns machine-readable session metadata for runtime integrations.
+- **Explicit recall session identity**: `hyphae_memory_recall` now accepts
+  `session_id` so scoped recall attribution stays attached to the right
+  parallel session.
+- **Structured session status**: `hyphae session status --id ...` now returns
+  machine-readable session metadata for runtime integrations.
 
 ### Fixed
 
-- **Scoped recall attribution**: explicit session-backed recall logging now validates session ownership, derives the correct project when needed, and avoids collapsing back to project-wide active-session inference.
-- **Parallel session context filtering**: CLI and MCP session context can now filter by scope so worker-specific session inspection does not bleed across active sessions.
+- **Scoped recall attribution**: Session-backed recall logging now validates
+  session ownership, derives the correct project when needed, and avoids
+  collapsing back to project-wide active-session inference.
+- **Parallel session context filtering**: CLI and MCP session context can now
+  filter by scope so worker-specific inspection does not bleed across active
+  sessions.
 
-## v0.9.4 - 2026-03-27
+## [0.9.4] - 2026-03-27
 
 ### Added
 
-- **Scoped session starts**: `hyphae session start` and `hyphae_session_start` now accept an optional scope so parallel workers in one project can keep distinct active sessions.
-- **Learned recall effectiveness**: structured outcome signals now roll up into `recall_effectiveness`, and hybrid recall ranking uses that learned feedback as a small bias.
+- **Scoped session starts**: `hyphae session start` and
+  `hyphae_session_start` now accept an optional scope so parallel workers in one
+  project can keep distinct active sessions.
+- **Learned recall effectiveness**: Structured outcome signals now roll up into
+  `recall_effectiveness`, and hybrid recall ranking uses that learned feedback
+  as a small bias.
+
+### Changed
+
+- **Session context visibility**: CLI and MCP session-context output now
+  surface scope when present so parallel session debugging is less opaque.
 
 ### Fixed
 
-- **Parallel session attribution**: scoped sessions stop Cortina and other runtimes from collapsing concurrent work in one project into a single active session.
-- **MCP session contract drift**: the MCP schema and session-context output now advertise session scope so schema-driven clients can use scoped sessions safely.
+- **Parallel session attribution**: Scoped sessions stop Cortina and other
+  runtimes from collapsing concurrent work in one project into a single active
+  session.
+- **MCP session contract drift**: The MCP schema and session-context output now
+  advertise session scope so schema-driven clients can use scoped sessions
+  safely.
 
-### Changed
-
-- **Session context visibility**: CLI and MCP session-context output now surface scope when present to make parallel session debugging less opaque.
-
-## v0.9.3 - 2026-03-27
+## [0.9.3] - 2026-03-27
 
 ### Added
 
-- **Feedback loop signals**: `hyphae session end` now records structured success and failure outcome signals, and recall paths can log structured recall events for later evaluation.
-- **Feedback CLI surface**: Added a `hyphae feedback signal` command for writing structured outcome signals against an existing session.
+- **Feedback loop signals**: `hyphae session end` now records structured
+  success and failure outcome signals, and recall paths can log structured
+  recall events for later evaluation.
+- **Feedback CLI surface**: Added `hyphae feedback signal` for writing
+  structured outcome signals against an existing session.
+
+### Changed
+
+- **Structured recall tracking**: Active-session recall calls, including
+  empty-result recalls, now emit structured recall events instead of relying on
+  inferred memory writes.
+- **Active session reuse**: Hyphae now reuses the current active session per
+  project instead of opening competing active sessions that make attribution
+  ambiguous.
+- **Host-neutral setup guidance**: Setup docs and `hyphae init` messaging now
+  describe supported editors and runtimes more generally.
 
 ### Fixed
 
-- **Feedback session integrity**: `recall_events` and `outcome_signals` now enforce real session foreign keys, with migration logic that preserves valid rows and nulls orphaned legacy session ids.
+- **Feedback session integrity**: `recall_events` and `outcome_signals` now
+  enforce real session foreign keys, with migration logic that preserves valid
+  rows and nulls orphaned legacy ids.
+
+## [0.9.2] - 2026-03-26
 
 ### Changed
 
-- **More platform-neutral setup guidance**: Setup docs and `hyphae init` messaging now describe supported editors and agent runtimes more generally, and clarify that `hyphae init` resolves the correct config path automatically for each integration.
-- **Structured recall tracking**: Active-session recall calls, including empty-result recalls, now emit structured recall events instead of leaving feedback analysis entirely to inferred memory writes.
-- **Active session reuse**: Hyphae now reuses the current active session per project instead of opening competing active sessions that make feedback attribution ambiguous.
-
-## v0.9.2 - 2026-03-26
+- **Host-neutral session sources**: Claude Code and Codex session-derived
+  memories now share one `agent_session` source model while older rows continue
+  to load correctly.
+- **Centralized path resolution**: CLI data and config path resolution now go
+  through one shared resolver instead of being recomputed across commands.
+- **Clearer import guidance**: `hyphae import-claude-memory` and
+  `hyphae ingest-sessions` now explain Claude memory import versus general agent
+  transcript ingestion more clearly.
 
 ### Fixed
 
-- **Configured DB path handling**: `hyphae doctor`, `backup`, `restore`, and normal startup now all honor `store.path` and CLI `--db` overrides consistently instead of silently falling back to the default database location.
-- **Embedding model cache portability**: FastEmbed model downloads now use the platform cache directory instead of a Unix-shaped `$HOME/.cache/hyphae/models` path.
+- **Configured DB path handling**: `hyphae doctor`, `backup`, `restore`, and
+  normal startup now all honor `store.path` and CLI `--db` overrides
+  consistently.
+- **Embedding model cache portability**: FastEmbed downloads now use the
+  platform cache directory instead of a Unix-shaped path.
 
-### Changed
-
-- **Host-neutral session sources**: Claude Code and Codex session-derived memories now share one `agent_session` source model, while older `claude_code` and `conversation` rows continue to load correctly.
-- **Centralized path resolution**: Hyphae CLI data/config path resolution now goes through one shared resolver instead of being recomputed across `main`, `doctor`, `backup`, and config loading.
-- **Clearer import guidance**: `hyphae import-claude-memory` and `hyphae ingest-sessions` now describe Claude memory import versus general agent transcript ingestion more clearly.
-
-## v0.9.1 - 2026-03-23
+## [0.9.1] - 2026-03-23
 
 ### Fixed
 
-- **Older DB migration failure**: Hyphae now adds new `memories` columns before creating related indexes, so older databases without `branch`, `worktree`, or invalidation columns no longer fail to open.
-- **Codex notify storage on existing installs**: `hyphae codex-notify` can now write memories into upgraded pre-0.8 databases instead of crashing during schema initialization.
+- **Older DB migration failure**: Hyphae now adds new `memories` columns before
+  creating related indexes, so older databases without `branch`, `worktree`, or
+  invalidation columns no longer fail to open.
+- **Codex notify storage on existing installs**: `hyphae codex-notify` can now
+  write memories into upgraded pre-0.8 databases instead of crashing during
+  schema initialization.
 
-## v0.9.0 - 2026-03-23
-
-### Added
-
-- **Codex lifecycle breadcrumbs**: `hyphae codex-notify` now stores lighter-weight lifecycle memories for non-`agent-turn-complete` Codex notifications instead of silently ignoring them.
-
-### Changed
-
-- **Richer Codex transcript reconciliation**: Codex session ingestion now preserves lifecycle payload context like approvals and status messages through the normalized session path.
-- **Codex integration docs**: CLI and setup docs now explain the notify adapter as a durable turn-summary path plus lighter lifecycle breadcrumb capture.
-
-## v0.8.0 - 2026-03-23
+## [0.9.0] - 2026-03-23
 
 ### Added
 
-- **Codex notify adapter**: Added `hyphae codex-notify` and `hyphae init` support for Codex `notify = ["hyphae", "codex-notify"]`, so Codex can emit turn-complete events into Hyphae without Claude-specific hooks.
-- **Codex session transcript ingestion**: `hyphae ingest-sessions` now understands real Codex session event streams in addition to Claude transcripts and legacy Codex text history.
+- **Codex lifecycle breadcrumbs**: `hyphae codex-notify` now stores
+  lighter-weight lifecycle memories for non-`agent-turn-complete` Codex
+  notifications.
 
 ### Changed
 
-- **Normalized host session ingestion**: Codex notify handling and transcript parsing now accumulate through a shared normalized session model instead of separate host-specific state paths.
-- **Codex integration docs**: CLI and setup docs now describe Codex as a first-class integration path alongside Claude Code.
+- **Richer Codex transcript reconciliation**: Codex session ingestion now
+  preserves lifecycle payload context such as approvals and status messages.
+- **Codex integration docs**: CLI and setup docs now explain the notify adapter
+  as a durable turn-summary path plus lighter lifecycle breadcrumb capture.
 
-## v0.7.1 - 2026-03-22
+## [0.8.0] - 2026-03-23
+
+### Added
+
+- **Codex notify adapter**: Added `hyphae codex-notify` and `hyphae init`
+  support for Codex `notify = ["hyphae", "codex-notify"]`.
+- **Codex session transcript ingestion**: `hyphae ingest-sessions` now
+  understands real Codex session event streams in addition to Claude transcripts
+  and legacy Codex text history.
+
+### Changed
+
+- **Normalized host session ingestion**: Codex notify handling and transcript
+  parsing now accumulate through a shared normalized session model.
+- **Codex integration docs**: CLI and setup docs now describe Codex as a
+  first-class integration path alongside Claude Code.
+
+## [0.7.1] - 2026-03-22
+
+### Added
+
+- **Unsafe transaction docs**: Added safety comments on all
+  `unchecked_transaction` sites to document why nested transactions cannot
+  occur.
 
 ### Fixed
 
-- **Tool definitions cache**: Removed OnceLock that cached stale `has_embedder` state on first call. Tool lists now reflect actual embedder availability.
-- **Vector search data loss**: Replaced `filter_map(|r| r.ok())` with proper error propagation in 4 KNN query sites. Corrupted rows now surface as errors instead of silently disappearing.
-- **Unicode panic**: String slicing in MCP server and memory tools now uses `truncate_str()` with UTF-8 boundary checking. Multi-byte characters in memory summaries no longer crash the server.
-- **Spore migration**: Updated for spore v0.4.0 `SporeError` return types.
+- **Tool definitions cache**: Removed an `OnceLock` path that cached stale
+  `has_embedder` state on first call.
+- **Vector search data loss**: KNN query sites now propagate errors instead of
+  silently dropping corrupted rows.
+- **Unicode panic**: String slicing in the MCP server and memory tools now uses
+  UTF-8-safe truncation.
+- **Spore migration**: Updated for the shared `SporeError` return surface.
+
+## [0.7.0] - 2026-03-21
 
 ### Added
 
-- SAFETY comments on all 11 `unchecked_transaction` sites documenting why nested transactions cannot occur.
-
-## v0.7.0 - 2026-03-21
-
-### Added
-
-- **`hyphae purge` command**: Delete data by project (`--project`) or age (`--before`). Supports `--dry-run` and `--force` flags. Covers memories, sessions, chunks, and documents.
-- **`hyphae audit-secrets` command**: Scans existing memories for API keys, tokens, passwords, and private keys. Reports matches by memory ID and pattern type.
-- **`hyphae changelog` command**: Summarizes activity since a given date. Aggregates sessions, memories by topic, resolved errors, and lessons. Supports `--since yesterday/today/last-week` or ISO dates.
-- **Secrets rejection mode**: `reject_secrets = true` in config blocks storage of memories containing detected secrets. Shared `detect_secrets()` in hyphae-core.
-- **Relation normalization**: Canonical relation types (calls, imports, implements, extends, contains, references, tests) with synonym mapping on write. Case-insensitive.
+- **Purge command**: Added `hyphae purge` for deleting data by project or age,
+  with `--dry-run` and `--force`.
+- **Secret audit command**: Added `hyphae audit-secrets` to scan stored memories
+  for API keys, tokens, passwords, and private keys.
+- **Changelog command**: Added `hyphae changelog` to summarize activity since a
+  relative or absolute date.
+- **Secrets rejection mode**: `reject_secrets = true` can now block storage of
+  memories that contain detected secrets.
+- **Relation normalization**: Canonical relation types now normalize synonyms on
+  write.
 
 ### Changed
 
-- **FTS5 project column**: Added `project UNINDEXED` to `memories_fts` virtual table. Project-scoped FTS queries no longer require a JOIN. Auto-migration for existing databases.
-- **search_all optimization**: Reduced overfetch multiplier from 4x to 1.5x in hybrid search, cutting intermediate memory allocation by ~50%.
-- **Sessions table**: Moved from lazy creation to main schema init. Removed `ensure_sessions_table()` calls.
-- **Spore v0.3.0**: Self-update, logging, and config now use shared spore modules.
+- **FTS5 project column**: Project-scoped FTS queries no longer require a join.
+- **Search-all optimization**: Hybrid search now overfetches less, cutting
+  intermediate allocation substantially.
+- **Sessions table initialization**: Session tables now initialize with the main
+  schema instead of lazy creation.
+- **Shared Spore runtime**: Self-update, logging, and config now use shared
+  Spore modules.
 
-## v0.3.7
+## [0.3.7] - 2026-03-18
+
+### Added
+
+- **Import and ingest commands**: Added `hyphae import-claude-memory`,
+  `hyphae ingest-sessions`, project-management commands, `hyphae doctor`, and
+  `hyphae prune`.
+- **Cross-project retrieval**: Added `hyphae_gather_context`,
+  `hyphae_recall_global`, and related session lifecycle MCP tools for broader
+  context work.
+- **Code graph intake**: Added `hyphae_import_code_graph` and
+  `hyphae_code_query` for Rhizome-driven code memoirs.
+- **Cross-project sharing**: Added the `_shared` memory pool for knowledge that
+  applies across projects.
+- **HTTP embedder option**: Added Ollama and OpenAI-compatible embedding
+  endpoints alongside local FastEmbed.
+- **Lazy embedding downloads**: FastEmbed model download now happens on first
+  use instead of startup.
+
+## [0.3.2] - 2026-03-16
 
 ### Added
 
-- **`hyphae import-claude-memory` CLI**: Imports Claude Code conversation memories from JSONL files, with `--watch` mode for continuous monitoring of new exports.
-- **`hyphae ingest-sessions` CLI**: Indexes Claude Code conversation transcripts for full-text search across past sessions.
-- **`hyphae project list/link/search/share` CLI**: Project management commands for listing linked projects, linking new ones, searching within project scope, and sharing memories across projects.
-- **`hyphae doctor` diagnostic command**: Health check that validates database integrity, embedder status, MCP connectivity, and configuration.
-- **`hyphae prune` CLI command**: Manual pruning of expired and low-importance memories with configurable thresholds.
-- **`hyphae_gather_context` MCP tool**: Aggregates relevant memories, code context, and session history for a given task description.
-- **`hyphae_recall_global` MCP tool**: Cross-project memory recall that searches the `_shared` pool for knowledge applicable across all projects.
-- **`hyphae_session_start/end/context` MCP tools**: Session lifecycle management for tracking conversation boundaries and retrieving session-scoped context.
-- **`hyphae_onboard` MCP tool**: Guided onboarding flow that detects the project environment and returns relevant memories and configuration hints.
-- **`hyphae_import_code_graph` and `hyphae_code_query` MCP tools**: Receive symbol graphs from Rhizome and query them with 5 query types (`symbols`, `callers`, `callees`, `implementors`, `structure`).
-- **Cross-project knowledge sharing**: `_shared` memory pool for facts and patterns that apply across all projects, with automatic promotion of frequently-accessed cross-project memories.
-- **Context-aware recall with code expansion**: `hyphae_memory_recall` expands queries with symbol names from code memoirs when the query appears code-related.
-- **HTTP embedder**: Ollama and OpenAI-compatible embedding endpoint support via configurable HTTP embedder, as an alternative to local FastEmbed.
-- **Lazy FastEmbed model download**: Embedding model is downloaded on first use rather than at startup, reducing cold-start time for non-embedding workflows.
+- **Code-context recall boost**: `hyphae_memory_recall` gained `code_context`
+  expansion so code-related queries can pull symbol names from code memoirs.
 
-## v0.3.2
+## [0.3.1] - 2026-03-16
 
 ### Added
-- `hyphae_memory_recall` gains `code_context` parameter: expands search queries with symbol names from code memoirs (0.5 RRF weight)
-- `is_code_related` heuristic detects CamelCase, snake_case, file extensions, and path separators to gate expansion
-- `expand_with_code_context` searches code memoirs for matching concepts and adds them as FTS boost terms
 
-## v0.3.1
+- **Code graph import tools**: Added `hyphae_import_code_graph`,
+  `hyphae_code_query`, and the supporting batch upsert and prune behavior on
+  `MemoirStore`.
 
-### Added
-- `hyphae_import_code_graph` MCP tool receives symbol graphs from Rhizome as memoirs with idempotent upsert (create/update/skip unchanged)
-- `hyphae_code_query` MCP tool with 5 query types: `symbols`, `callers`, `callees`, `implementors`, `structure` (BFS depth 2)
-- `upsert_concepts`, `upsert_links`, `prune_concepts` on `MemoirStore` for batch code graph imports with transactional atomicity
-- Symbol pruning: removes concepts and cascades link cleanup when symbols leave the codebase
-
-## v0.3.0
+## [0.3.0] - 2026-03-16
 
 ### Added
-- `hyphae completions <bash|zsh|fish|powershell>` generates shell completions via clap_complete
-- `hyphae init` auto-detects editors (Claude Code, Cursor, VS Code, Zed, Windsurf, Amp, Claude Desktop, Codex CLI) and writes MCP config with backup and merge
-- Multi-project support: namespace memories/documents by project via `--project` flag, `store.default_project` config, or git repo auto-detection
-- `hyphae watch <path>` monitors filesystem and auto-re-ingests changed files with debounced events and graceful shutdown
-- Project filtering on all search/list operations; `None` returns all (backward compatible)
-- `hyphae serve --project <name>` scopes MCP tool operations to a project namespace
-- `expires_at` field with auto-expiry for ephemeral importance (default 4 hours); `prune_expired()` cleans up
-- `Importance::Ephemeral` variant for short-lived context like sprint goals
-- `ByStructuredOutput` chunking strategy with auto-detection for test results, build errors, diffs, and log output
-- `hyphae_store_command_output` stores chunked command output with ephemeral TTL; `hyphae_get_command_chunks` retrieves chunks with pagination
-- `offset` parameter on all search methods for paginated retrieval
+
+- **CLI completions and init**: Added shell completions and a broader
+  `hyphae init` flow for supported editors and clients.
+- **Multi-project support**: Memories and documents can now be namespaced by
+  project, with repo auto-detection when possible.
+- **Watch mode**: Added `hyphae watch <path>` for debounced re-ingestion of
+  changed files.
+- **Ephemeral memories**: Added `Importance::Ephemeral`, `expires_at`, and
+  `prune_expired()` for short-lived context.
+- **Structured command-output storage**: Added `hyphae_store_command_output`
+  and `hyphae_get_command_chunks`.
+- **Pagination**: Added `offset` across search methods for paginated retrieval.
 
 ### Changed
-- CLI restructured: early-return commands (completions, config, init) skip store/embedder initialization
-- `MemoryStore` and `ChunkStore` traits now accept `project: Option<&str>` and `offset: usize` on search methods
-- Schema auto-migrates `project` and `expires_at` columns on `memories`, `project` on `documents`
-- Hybrid search FTS query includes all columns (`updated_at`, `project`, `expires_at`) for correct row mapping
-- Removed cargo audit workflow; unmaintained transitive deps from fastembed are not actionable
 
-### CI/CD
-- Concurrency groups on all workflows cancel stale runs on new pushes
-- MSRV (1.85) check job
-- Removed duplicate security-audit job from CI
-- Coverage workflow runs tests once via `--json` instead of twice
-- Binary-size and startup-time combined into single performance job
-- `taiki-e/install-action` replaces `cargo install` for hyperfine and cross
-- `rust-cache` and `--locked` on release builds
+- **Early-return CLI setup**: `completions`, `config`, and `init` now skip
+  store and embedder initialization when it is not needed.
+- **Project-aware traits**: Store traits now accept `project` and `offset`
+  parameters across search methods.
+- **Schema migrations**: The schema now auto-migrates `project` and
+  `expires_at` columns.
+- **Workflow cleanup**: Cargo audit was removed where transitive findings were
+  not actionable.
 
-## v0.2.0
+## [0.2.0] - 2026-03-11
 
 ### Added
-- `hyphae ingest <path>` ingests files/directories into a searchable vector store
-- Chunking: Sliding Window (text), By Heading (markdown), By Function (code)
-- `hyphae search-all <query>` searches memories and document chunks with Reciprocal Rank Fusion
-- MCP RAG tools: `hyphae_ingest_file`, `hyphae_search_docs`, `hyphae_list_sources`, `hyphae_forget_source`, `hyphae_search_all` (23 tools total)
-- `hyphae-ingest` crate: file readers + chunking logic, no database dependency
 
-## v0.1.0
+- **Document ingestion**: Added `hyphae ingest <path>` plus file and directory
+  ingestion into a searchable vector store.
+- **Chunking strategies**: Added sliding-window, heading-based, and
+  function-based chunking.
+- **Search-all surface**: Added `hyphae search-all <query>` with Reciprocal Rank
+  Fusion across memories and document chunks.
+- **RAG MCP tools**: Added document-ingest, search, list-source, forget-source,
+  and cross-store search tools.
+- **Ingest crate**: Added `hyphae-ingest` as a dedicated file-reader and
+  chunking crate.
+
+## [0.1.0] - 2026-03-11
 
 ### Added
-- Two memory models: episodic (temporal, decay-based) and semantic memoirs (permanent knowledge graphs)
-- 18 MCP tools over stdio: 9 memory + 9 memoir for any MCP-compatible agent
-- 29 CLI commands for storing, recalling, searching, and managing memories and memoirs
-- Hybrid search: 30% BM25 (FTS5) + 70% cosine similarity (sqlite-vec)
-- Local embeddings via BGE-small-en-v1.5 (fastembed). No API calls.
-- Rule-based fact extraction from conversation text. No LLM cost.
-- Importance-based decay: critical memories never fade, low-importance notes decay naturally
-- Permanent knowledge graphs with typed relations, labels, and BFS traversal
-- `hyphae init` auto-detects and configures Claude Code, Cursor, VS Code, Windsurf, Zed, Amp, and more
-- Single SQLite database: portable, backupable, no external services
 
-### Architecture
-- 4-crate workspace: hyphae-core (types/traits), hyphae-store (SQLite), hyphae-mcp (JSON-RPC), hyphae-cli (commands)
-- Feature-gated embeddings: `--no-default-features` for fast iteration without the embedding model
-- Auto-migrations on startup
-- Compact MCP mode saves ~40% tokens on recall output
-
-### Quality
-- 211 tests (28 core, 93 store, 69 MCP, 21 CLI)
-- Input validation on all MCP tool parameters
-- Transaction safety for multi-table operations
-- NaN-safe numeric types (Weight, Confidence)
-- CI: fmt, clippy, cross-platform tests (Linux/macOS/Windows), coverage, performance guards, security audit
-- Multi-target releases: linux musl, macOS, Windows
+- **Dual memory model**: Hyphae shipped with episodic memories and permanent
+  memoir knowledge graphs.
+- **MCP-first surface**: The initial release exposed 18 MCP tools over stdio
+  for memory and memoir operations.
+- **CLI surface**: Added 29 CLI commands for storing, recalling, searching, and
+  managing memories and memoirs.
+- **Hybrid search**: Shipped with BM25 plus cosine similarity over sqlite-vec.
+- **Local embeddings**: The initial release used local BGE-small embeddings
+  through FastEmbed, with no API calls.
+- **Rule-based extraction**: Added zero-LLM fact extraction from conversation
+  text.
+- **Importance-based decay**: Critical memories stay durable while lower-value
+  notes fade naturally.
+- **Typed relation graphs**: Memoirs shipped with typed relations, labels, and
+  BFS traversal.
+- **Local-first storage**: The first release ran from one portable SQLite
+  database with no external services.
+- **Quality baseline**: The initial release shipped with cross-platform tests,
+  input validation, transaction safety, NaN-safe numeric types, and multi-target
+  releases.

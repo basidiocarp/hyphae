@@ -1,21 +1,32 @@
-# Hyphae Technical Architecture
+# Hyphae Architecture
 
-## Overview
+Hyphae is a 5-crate Rust workspace that compiles into a single binary. It
+solves the context-loss problem with two memory models: decaying episodic
+memories for day-to-day work, and memoir graphs for durable concepts. This
+document covers the crate layout, storage pipeline, and the places where search
+and decay behavior matter.
 
-Hyphae is a Rust workspace of 5 crates that compile into a single binary. No runtime dependencies, no external services.
+---
 
-```
-hyphae (binary)
-├── hyphae-core      Types, traits, embedder
-├── hyphae-store     SQLite + FTS5 + sqlite-vec
-├── hyphae-ingest    File readers + chunking logic
-├── hyphae-mcp       MCP server (JSON-RPC 2.0 over stdio)
-└── hyphae-cli       CLI, config, extraction, benchmarks
-```
+## Design Principles
 
-## Crate Dependency Graph
+- **Two memory models, not one compromise** — decay-based memories and
+  permanent memoir graphs solve different problems and stay separate in code and
+  schema.
+- **Local-first retrieval** — SQLite, FTS5, sqlite-vec, and the default
+  embedding model all run on the machine where Hyphae is installed.
+- **Hybrid search over single-mode search** — keyword precision and semantic
+  recall are blended instead of forcing contributors to choose one.
+- **Graceful degradation** — if embeddings are unavailable, Hyphae still works
+  through FTS and keyword search.
+- **Durable interfaces** — CLI, MCP, and store traits all sit on shared core
+  types so behavior stays aligned across surfaces.
 
-```
+---
+
+## Workspace Structure
+
+```text
 hyphae-cli ──► hyphae-ingest ──► hyphae-core
    │               ▲
    ├──► hyphae-store ─────────► hyphae-core
@@ -25,456 +36,224 @@ hyphae-cli ──► hyphae-ingest ──► hyphae-core
             └──► hyphae-core
 ```
 
-## hyphae-core
+All five crates compile into the `hyphae` binary.
 
-Foundation crate. No I/O, no database — only types and traits.
+- **`hyphae-core`**: Domain types, traits, and embedder abstraction. No
+  database I/O. No transport code.
+- **`hyphae-store`**: SQLite implementation of `MemoryStore` and `MemoirStore`,
+  including FTS5, sqlite-vec, migrations, and decay bookkeeping.
+- **`hyphae-ingest`**: File readers and chunking strategies for Markdown, code,
+  and other indexed documents. Pure ingest logic, no persistence.
+- **`hyphae-mcp`**: JSON-RPC 2.0 over stdio. Tool definitions, dispatch, and
+  response shaping for agent clients.
+- **`hyphae-cli`**: Operator surface for store, recall, memoir, session, init,
+  benchmark, and server commands.
 
-### Data Types
+---
 
-#### Memory
-
-```rust
-pub struct Memory {
-    pub id: String,                     // ULID
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub last_accessed: DateTime<Utc>,
-    pub access_count: u32,
-    pub weight: f32,                    // 1.0 at creation, decays over time
-    pub topic: String,
-    pub summary: String,
-    pub raw_excerpt: Option<String>,
-    pub keywords: Vec<String>,
-    pub importance: Importance,         // Critical | High | Medium | Low
-    pub source: MemorySource,           // ClaudeCode | Conversation | Manual
-    pub related_ids: Vec<String>,
-    pub embedding: Option<Vec<f32>>,    // 384/768/1024d depending on model
-}
-```
-
-#### Importance
-
-```rust
-pub enum Importance {
-    Critical,   // decay: 0.0 (never), prune: never
-    High,       // decay: 0.5x rate, prune: never
-    Medium,     // decay: 1.0x rate, prune: when weight < threshold
-    Low,        // decay: 2.0x rate, prune: when weight < threshold
-    Ephemeral,  // decay: 5.0x rate, auto-expires (default 4h)
-}
-```
-
-#### Memoir (Knowledge Graph)
-
-```rust
-pub struct Memoir {
-    pub id: String,
-    pub name: String,                   // unique
-    pub description: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub consolidation_threshold: u32,   // default: 50
-}
-
-pub struct Concept {
-    pub id: String,
-    pub memoir_id: String,
-    pub name: String,                   // unique within memoir
-    pub definition: String,
-    pub labels: Vec<Label>,             // namespace:value pairs
-    pub confidence: f32,                // 0.0-1.0, grows with refinement
-    pub revision: u32,                  // incremented on refine
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub source_memory_ids: Vec<String>,
-}
-
-pub struct ConceptLink {
-    pub id: String,
-    pub source_id: String,
-    pub target_id: String,
-    pub relation: Relation,             // 9 types (see below)
-    pub weight: f32,
-    pub created_at: DateTime<Utc>,
-}
-```
-
-#### Relations
-
-```rust
-pub enum Relation {
-    PartOf,          // A is part of B
-    DependsOn,       // A requires B
-    RelatedTo,       // A is associated with B
-    Contradicts,     // A conflicts with B
-    Refines,         // A is a more precise version of B
-    AlternativeTo,   // A can replace B
-    CausedBy,        // A is caused by B
-    InstanceOf,      // A is an instance of B
-    SupersededBy,    // A is replaced by B (marks obsolescence)
-}
-```
-
-Parsing accepts both `snake_case` and `camelCase` (`depends_on` = `dependson`). Self-links (source == target) are rejected at the database level via CHECK constraint.
-
-### Traits
-
-#### MemoryStore
+## Core Abstraction
 
 ```rust
 pub trait MemoryStore {
     fn store(&self, memory: Memory) -> HyphaeResult<MemoryId>;
     fn get(&self, id: &MemoryId) -> HyphaeResult<Option<Memory>>;
-    fn update(&self, memory: &Memory) -> HyphaeResult<()>;
-    fn delete(&self, id: &MemoryId) -> HyphaeResult<()>;
-
-    fn search_by_keywords(&self, keywords: &[&str], limit: usize, offset: usize, project: Option<&str>) -> HyphaeResult<Vec<Memory>>;
-    fn search_fts(&self, query: &str, limit: usize, offset: usize, project: Option<&str>) -> HyphaeResult<Vec<Memory>>;
-    fn search_by_embedding(&self, embedding: &[f32], limit: usize, offset: usize, project: Option<&str>) -> HyphaeResult<Vec<(Memory, f32)>>;
-    fn search_hybrid(&self, query: &str, embedding: &[f32], limit: usize, offset: usize, project: Option<&str>) -> HyphaeResult<Vec<(Memory, f32)>>;
-
-    fn update_access(&self, id: &MemoryId) -> HyphaeResult<()>;
+    fn search_hybrid(
+        &self,
+        query: &str,
+        embedding: &[f32],
+        limit: usize,
+        offset: usize,
+        project: Option<&str>,
+    ) -> HyphaeResult<Vec<(Memory, f32)>>;
     fn apply_decay(&self, decay_factor: f32) -> HyphaeResult<usize>;
-    fn prune(&self, weight_threshold: f32) -> HyphaeResult<usize>;
     fn prune_expired(&self) -> HyphaeResult<usize>;
-
-    fn get_by_topic(&self, topic: &str, project: Option<&str>) -> HyphaeResult<Vec<Memory>>;
-    fn list_topics(&self, project: Option<&str>) -> HyphaeResult<Vec<(String, usize)>>;
-    fn consolidate_topic(&self, topic: &str, consolidated: Memory) -> HyphaeResult<()>;
-
-    fn count(&self, project: Option<&str>) -> HyphaeResult<usize>;
-    fn count_by_topic(&self, topic: &str, project: Option<&str>) -> HyphaeResult<usize>;
-    fn stats(&self, project: Option<&str>) -> HyphaeResult<StoreStats>;
-    fn topic_health(&self, topic: &str, project: Option<&str>) -> HyphaeResult<TopicHealth>;
 }
 ```
 
-#### MemoirStore
+`hyphae-store` implements this trait. The CLI and MCP layers consume it through
+shared core types. The invariant is simple but important: store and recall
+surfaces must agree on memory semantics even when embeddings are disabled or
+the caller uses compact mode.
+
+---
+
+## Request Flow
+
+When a CLI command or MCP tool call arrives:
+
+1. **Load configuration** (`hyphae_cli::config::load_config`)
+   Resolves config from `HYPHAE_CONFIG`, then the platform config path, then
+   built-in defaults.
+   Example: if no config file exists, Hyphae still boots with local defaults.
+
+2. **Open the store** (`SqliteStore::new` or `SqliteStore::with_dims`)
+   Opens SQLite, ensures the schema, and aligns vector dimensions with the
+   active embedding model.
+   Example: changing from a 384d model to a 768d model recreates vector
+   tables and clears stale embeddings.
+
+3. **Choose the retrieval path** (`search_hybrid`, `search_fts`,
+   keyword fallback)
+   Uses hybrid search when an embedder is available, FTS when it is not, and a
+   keyword fallback when the FTS path has no hits.
+   Example: `hyphae_memory_recall` can still return useful results without the
+   embeddings feature.
+
+4. **Apply maintenance behaviors** (`apply_decay`, dedup on store)
+   Recall may trigger decay if more than 24 hours have passed. Store may update
+   an existing memory instead of creating a near-duplicate.
+   Example: same-topic memories above the similarity threshold are merged.
+
+5. **Format the response** (`hyphae-mcp` tool handlers or CLI printers)
+   Returns verbose output for humans or compact output for LLM-heavy flows.
+   Example: `hyphae serve --compact` shortens recall and store responses to cut
+   token cost.
+
+---
+
+## Store and Search
+
+File: `crates/hyphae-store/src/`
+
+### How It Works
+
+1. **Persist entities** — memories, memoirs, concepts, links, documents, and
+   chunks are stored in regular SQLite tables.
+2. **Mirror searchable text** — FTS5 virtual tables index topic, summary,
+   keywords, concept text, and chunk content.
+3. **Mirror vectors** — sqlite-vec virtual tables hold normalized embeddings
+   for memories and chunks.
+4. **Blend scores** — BM25 contributes keyword precision and cosine similarity
+   contributes semantic recall.
+5. **Deduplicate or decay when needed** — store and recall operations keep the
+   database from filling with stale or redundant rows.
+
+### Search Matrix
+
+| Mode | Input | Behavior |
+|------|-------|----------|
+| Hybrid | Query plus embedding | 30% FTS and 70% cosine similarity, merged by memory ID |
+| FTS only | Query text | BM25 ranking through FTS5 tables |
+| Keyword fallback | Topic and keywords | Used when richer search paths are unavailable or empty |
+
+### Adding a New Stored Surface
+
+File: `crates/hyphae-store/src/`
+
+1. Add the core type or trait method in `hyphae-core`.
+2. Extend the SQLite schema and migration path in `hyphae-store`.
+3. Thread the behavior through CLI or MCP handlers.
+4. Add roundtrip and edge-case tests before shipping the new surface.
+
+---
+
+## Data Model
+
+### Memory
 
 ```rust
-pub trait MemoirStore {
-    fn create_memoir(&self, memoir: Memoir) -> HyphaeResult<String>;
-    fn get_memoir(&self, id: &str) -> HyphaeResult<Option<Memoir>>;
-    fn get_memoir_by_name(&self, name: &str) -> HyphaeResult<Option<Memoir>>;
-    fn update_memoir(&self, memoir: &Memoir) -> HyphaeResult<()>;
-    fn delete_memoir(&self, id: &str) -> HyphaeResult<()>;  // CASCADE: deletes concepts + links
-    fn list_memoirs(&self) -> HyphaeResult<Vec<Memoir>>;
-
-    fn add_concept(&self, concept: Concept) -> HyphaeResult<String>;
-    fn get_concept(&self, id: &str) -> HyphaeResult<Option<Concept>>;
-    fn get_concept_by_name(&self, memoir_id: &str, name: &str) -> HyphaeResult<Option<Concept>>;
-    fn update_concept(&self, concept: &Concept) -> HyphaeResult<()>;
-    fn delete_concept(&self, id: &str) -> HyphaeResult<()>;
-
-    fn list_concepts(&self, memoir_id: &str) -> HyphaeResult<Vec<Concept>>;
-    fn search_concepts_fts(&self, memoir_id: &str, query: &str, limit: usize) -> HyphaeResult<Vec<Concept>>;
-    fn search_concepts_by_label(&self, memoir_id: &str, label: &Label, limit: usize) -> HyphaeResult<Vec<Concept>>;
-    fn search_all_concepts_fts(&self, query: &str, limit: usize) -> HyphaeResult<Vec<Concept>>;
-
-    fn refine_concept(&self, id: &str, new_definition: &str, new_source_ids: &[String]) -> HyphaeResult<()>;
-
-    fn add_link(&self, link: ConceptLink) -> HyphaeResult<String>;
-    fn get_links_from(&self, concept_id: &str) -> HyphaeResult<Vec<ConceptLink>>;
-    fn get_links_to(&self, concept_id: &str) -> HyphaeResult<Vec<ConceptLink>>;
-    fn delete_link(&self, id: &str) -> HyphaeResult<()>;
-    fn get_neighbors(&self, concept_id: &str, relation: Option<Relation>) -> HyphaeResult<Vec<Concept>>;
-    fn get_neighborhood(&self, concept_id: &str, depth: usize) -> HyphaeResult<(Vec<Concept>, Vec<ConceptLink>)>;
-
-    fn memoir_stats(&self, memoir_id: &str) -> HyphaeResult<MemoirStats>;
+pub struct Memory {
+    pub id: String,                     // ULID
+    pub topic: String,
+    pub summary: String,
+    pub weight: f32,                    // decays over time
+    pub importance: Importance,         // decay and pruning behavior
+    pub keywords: Vec<String>,
+    pub embedding: Option<Vec<f32>>,    // 384d, 768d, or 1024d
 }
 ```
 
-#### Embedder
+### Importance
 
 ```rust
-pub trait Embedder: Send + Sync {
-    fn embed(&self, text: &str) -> HyphaeResult<Vec<f32>>;
-    fn embed_batch(&self, texts: &[&str]) -> HyphaeResult<Vec<Vec<f32>>>;
-    fn dimensions(&self) -> usize;
+pub enum Importance {
+    Critical,   // decay: 0.0, prune: never
+    High,       // decay: 0.5x rate, prune: never
+    Medium,     // decay: 1.0x rate, prune below threshold
+    Low,        // decay: 2.0x rate, prune below threshold
+    Ephemeral,  // decay: 5.0x rate, auto-expires
 }
 ```
 
-Feature-gated (`embeddings`). Uses fastembed v4 with lazy initialization via `OnceLock` + `Mutex` double-check pattern (because `OnceLock::get_or_try_init` is unstable).
+### Schema
 
-Default model: `BAAI/bge-small-en-v1.5` (384d, English-only). Configurable via `config.toml`.
+12 tables. Key invariants:
 
-### Error Types
+- Deleting a memoir cascades to its concepts and links.
+- Concept names are unique within a memoir, not globally.
+- Self-links are rejected with a database check constraint.
+- FTS tables stay synchronized through triggers.
+- Vector tables are rebuilt when embedding dimensions change.
 
-```rust
-pub enum HyphaeError {
-    NotFound(String),                   // get/delete with unknown ID
-    Database(String),                   // SQLite errors
-    Serialization(serde_json::Error),   // JSON serialization
-    Config(String),                     // Configuration errors
-    Embedding(String),                  // Embedding model errors
-}
+---
 
-pub type HyphaeResult<T> = Result<T, HyphaeError>;
+## Configuration
+
+Config file: `~/.config/hyphae/config.toml`
+
+```toml
+[memory]
+default_importance = "medium"
+decay_rate = 0.95
+prune_threshold = 0.1
+
+[embeddings]
+model = "BAAI/bge-small-en-v1.5"
+
+[recall]
+enabled = true
+limit = 15
+
+[mcp]
+transport = "stdio"
+compact = true
 ```
 
-## hyphae-store
+Environment variables override config:
 
-SQLite implementation of `MemoryStore` + `MemoirStore` via rusqlite 0.34 (synchronous, not async).
+- `HYPHAE_CONFIG` — use a non-default config file path
+- `HYPHAE_DB` — point Hyphae at a different SQLite database
+- `HYPHAE_LOG` — raise or lower log verbosity
 
-### Constructors
+---
 
-```rust
-SqliteStore::new(path: &Path) -> HyphaeResult<Self>                // default 384d
-SqliteStore::with_dims(path: &Path, dims: usize) -> HyphaeResult<Self>  // custom dimensions
-SqliteStore::in_memory() -> HyphaeResult<Self>                     // for tests
-```
+## Security
 
-### Schema (12 tables)
+- FTS queries are sanitized before they reach SQLite search syntax.
+- Store queries use parameterized statements instead of string-built SQL.
+- Storage stays local by default: no database server, no remote vector store.
+- The default embedding model runs locally through `fastembed`.
+- Tested against SQL injection, FTS injection, null bytes, unicode boundaries,
+  and large payloads.
 
-| Table | Type | Purpose |
-|-------|------|---------|
-| `memories` | regular | Main memory storage (id, topic, summary, weight, embedding, ...) |
-| `memories_fts` | FTS5 virtual | Full-text search on id, topic, summary, keywords |
-| `vec_memories` | vec0 virtual | Cosine similarity search via sqlite-vec |
-| `memoirs` | regular | Named knowledge containers |
-| `concepts` | regular | Knowledge graph nodes with UNIQUE(memoir_id, name) |
-| `concepts_fts` | FTS5 virtual | Full-text search on concept id, name, definition, labels |
-| `concept_links` | regular | Typed edges with CHECK(source_id != target_id) |
-| `hyphae_metadata` | regular | Key-value store (embedding_dims, last_decay_at) |
-| `documents` | regular | Ingested file metadata (source_path, source_type, chunk_count) |
-| `chunks` | regular | Text chunks with line numbers, headings, language metadata |
-| `chunks_fts` | FTS5 virtual | Full-text search on chunk content |
-| `vec_chunks` | vec0 virtual | Cosine similarity search for chunk embeddings |
-
-FTS tables are synchronized via AFTER INSERT/UPDATE/DELETE triggers.
-
-### Auto-Migrations
-
-On startup, the schema is checked and migrated if needed:
-
-1. Missing columns (`updated_at`, `embedding`) → `ALTER TABLE ADD COLUMN`
-2. Missing FTS/vec tables → created if absent
-3. Dimension change (model switch) → drops `vec_memories`, clears all embeddings, recreates with new dimensions, stores new dim in `hyphae_metadata`
-
-### Search Pipeline
-
-```
-Query arrives
-    │
-    ├─ Has embedder? ──► Hybrid search
-    │                      ├─ FTS5 BM25 (30% weight)
-    │                      ├─ Cosine similarity via sqlite-vec (70% weight)
-    │                      └─ Merge + deduplicate by memory ID
-    │
-    └─ No embedder ──► FTS5 search
-                          │
-                          └─ No FTS results? ──► Keyword LIKE fallback
-```
-
-FTS queries are sanitized: special characters (`-`, `*`, `:`, etc.) are stripped and each token is quoted to prevent FTS5 syntax injection.
-
-### Decay Model
-
-Decay runs automatically on recall if >24h since last run. Stored in `hyphae_metadata.last_decay_at`.
-
-```
-effective_rate = base_decay × importance_multiplier / (1 + access_count × 0.1)
-
-importance_multiplier:
-  Critical = 0.0 (no decay ever)
-  High     = 0.5 (half speed)
-  Medium   = 1.0 (normal)
-  Low      = 2.0 (double speed)
-
-new_weight = weight × (1 - effective_rate)
-```
-
-Prune: only Medium and Low importance memories with `weight < threshold` are deleted.
-
-### sqlite-vec
-
-Loaded via `sqlite3_auto_extension` with `transmute` (required by C extension API). Initialization runs once per process via `std::sync::Once`.
-
-Vector table: `distance_metric=cosine` (L2 is the default but gives negative similarities for normalized vectors).
-
-### Dedup
-
-On store via MCP, if an existing memory in the same topic has >85% hybrid search similarity, the existing memory is updated instead of creating a duplicate.
-
-### Cascade Delete
-
-`DELETE memoir` → cascades to all concepts → cascades to all links (via `ON DELETE CASCADE`).
-
-## hyphae-ingest
-
-File readers and chunking logic. Pure logic — no database I/O.
-
-### Entry Points
-
-```rust
-pub fn ingest_file(path: &Path, options: &IngestOptions) -> HyphaeResult<Vec<Chunk>>;
-pub fn ingest_directory(path: &Path, options: &IngestOptions) -> HyphaeResult<Vec<Chunk>>;
-pub fn should_skip(path: &Path) -> bool;
-```
-
-### Chunking Strategies
-
-| Strategy | Description |
-|----------|-------------|
-| `SlidingWindow` | Fixed-size overlapping windows by token/character count |
-| `ByHeading` | Split on Markdown headings (`#`, `##`, etc.) |
-| `ByFunction` | Split on function/method boundaries (language-aware) |
-
-## hyphae-mcp
-
-MCP server implementing JSON-RPC 2.0 over stdio. 18 tools.
-
-### Protocol Flow
-
-```
-Client                              Hyphae Server
-  │                                      │
-  ├── initialize ───────────────────────►│
-  │◄── capabilities + instructions ──────┤
-  │                                      │
-  ├── tools/list ───────────────────────►│
-  │◄── 18 tool definitions ─────────────┤
-  │                                      │
-  ├── tools/call {name, arguments} ─────►│
-  │◄── ToolResult {content, isError} ───┤
-  │                                      │
-  └── (stdin closes) ──────────────────►│ exit
-```
-
-### Tool Dispatch
-
-| Tool | Required args | Optional args |
-|------|--------------|---------------|
-| `hyphae_memory_store` | `topic`, `content` | `importance`, `keywords[]`, `raw_excerpt` |
-| `hyphae_memory_recall` | `query` | `topic`, `keyword`, `limit` |
-| `hyphae_memory_update` | `id`, `content` | `importance`, `keywords[]` |
-| `hyphae_memory_forget` | `id` | — |
-| `hyphae_memory_consolidate` | `topic`, `summary` | — |
-| `hyphae_memory_list_topics` | — | — |
-| `hyphae_memory_stats` | — | — |
-| `hyphae_memory_health` | — | `topic` |
-| `hyphae_memory_embed_all` | — | `topic` |
-| `hyphae_memoir_create` | `name` | `description` |
-| `hyphae_memoir_list` | — | — |
-| `hyphae_memoir_show` | `name` | — |
-| `hyphae_memoir_add_concept` | `memoir`, `name`, `definition` | `labels` |
-| `hyphae_memoir_refine` | `memoir`, `name`, `definition` | — |
-| `hyphae_memoir_search` | `memoir`, `query` | `label`, `limit` |
-| `hyphae_memoir_search_all` | `query` | `limit` |
-| `hyphae_memoir_link` | `memoir`, `from`, `to`, `relation` | — |
-| `hyphae_memoir_inspect` | `memoir`, `name` | `depth` |
-
-### Store Nudge
-
-The server tracks consecutive non-store tool calls. After 10 calls without `hyphae_memory_store`, it appends a hint to the response:
-
-```
-[Hyphae: 12 tool calls since last store. Consider saving important context.]
-```
-
-Counter resets on every `hyphae_memory_store`.
-
-### Compact Mode
-
-`hyphae serve --compact` produces shorter responses:
-- Store: `ok:<id>` instead of `Stored memory: <id>`
-- Recall: `[topic] summary\n` per line instead of multi-line verbose format
-
-Saves ~40% tokens on recall output.
-
-### Auto-behaviors
-
-- Auto-dedup: `hyphae_memory_store` checks hybrid similarity >85% in same topic → updates existing instead of duplicating
-- Auto-decay: `hyphae_memory_recall` runs decay if >24h since last run
-- Consolidation hint: `hyphae_memory_store` warns when topic has >7 entries
-- Auto-embed: if embedder is available, memories are embedded on store/update
-
-## hyphae-cli
-
-Binary entrypoint. All commands:
-
-```
-hyphae store         Store a memory
-hyphae recall        Search memories
-hyphae forget        Delete a memory by ID
-hyphae topics        List all topics
-hyphae stats         Global statistics
-hyphae health        Per-topic hygiene report
-hyphae decay         Apply temporal decay
-hyphae prune         Delete low-weight memories
-hyphae consolidate   Merge topic into single summary
-hyphae embed         Backfill embeddings
-hyphae extract       Rule-based fact extraction from stdin/text
-hyphae recall-context  Format recalled memories for prompt injection
-hyphae memoir        Subcommands: create, show, add-concept, refine, search, search-all, link, inspect, list
-hyphae init          Auto-configure 14 AI tools (mcp, cli, skill, hook modes)
-hyphae serve         Start MCP server (--compact for shorter output)
-hyphae config        Show active configuration
-hyphae bench         Storage performance benchmark
-hyphae bench-recall  Knowledge retention benchmark
-hyphae bench-agent   Multi-session agent efficiency benchmark
-```
-
-### Extraction (Layer 0)
-
-Pattern-based scoring. Each sentence gets a score from keyword matches:
-
-| Signal | Example keywords | Score boost |
-|--------|-----------------|-------------|
-| Architecture | `uses`, `architecture`, `pattern`, `algorithm` | +3 |
-| Error/Fix | `error`, `fixed`, `bug`, `workaround` | +3 |
-| Decision | `decided`, `chose`, `prefer`, `switched to` | +4 |
-| Config | `configured`, `setup`, `installed`, `enabled` | +2 |
-| Dev signals | `commit`, `deploy`, `migrate`, `refactor` | +2 |
-
-Sentences below threshold are dropped. Dedup via Jaccard similarity (>0.6 = skip).
-
-## Build
-
-```bash
-cargo build --release                           # Full build with embeddings
-cargo build --release --no-default-features     # Without embeddings (fast, small)
-```
-
-The `embeddings` feature adds fastembed + ort (~2GB debug build). Use `--no-default-features` for fast iteration on non-embedding code.
+---
 
 ## Testing
 
 ```bash
-cargo test          # 110 tests across all crates
-cargo clippy        # Lint (CI uses -D warnings)
-cargo fmt --check   # Format check
+cargo test --all
+cargo test -p hyphae-store
+cargo test --ignored
 ```
 
-Test categories:
-
-| Category | Count | What's tested |
+| Category | Count | What's Tested |
 |----------|-------|---------------|
-| Unit | ~50 | Core CRUD, FTS, vector search, schema migrations, memoirs, concepts, links, graph traversal |
-| Security | ~10 | SQL injection (topic, summary, keywords, FTS), null bytes, unicode, XSS via MCP, large inputs |
-| Performance | 7 | 1000 stores, 100 FTS/vector/hybrid searches, decay on 1000 memories, 1000 gets (all with time assertions) |
-| UX | ~15 | Missing params, unknown tools, empty states, compact output, protocol serialization |
-| Integration | ~28 | MCP tool dispatch, store+recall roundtrip, consolidation, topic filtering, dedup |
+| Unit | 300+ | CRUD, schema migrations, decay math, memoir graph behavior, chunking helpers |
+| Integration | 100+ | CLI roundtrips, MCP tool dispatch, store and recall flows, dedup behavior |
+| Security and edge cases | 50+ | Injection attempts, null bytes, unicode, empty states, oversized payloads |
+| Performance | 10+ | Store, search, decay, and benchmark thresholds on larger in-memory datasets |
 
-## Configuration
+Fixtures are mostly synthetic and live beside crate tests. The important review
+step is to keep benchmark and search assertions aligned with the current schema
+and embedding dimensions.
 
-```toml
-# ~/.config/hyphae/config.toml
+---
 
-[embeddings]
-model = "BAAI/bge-small-en-v1.5"    # Any fastembed model code
-```
+## Key Dependencies
 
-Environment variables:
-- `HYPHAE_CONFIG` — override config file path
-- `HYPHAE_DB` — override database file path
-- `HYPHAE_LOG` — set log level (debug, info, warn, error)
-
-## Security
-
-- All SQL queries use parameterized statements (no string interpolation)
-- FTS5 queries are sanitized (special chars stripped, tokens quoted)
-- No network access for storage (local SQLite only)
-- Embedding model runs locally (no API calls unless explicitly configured)
-- Self-links rejected via SQL CHECK constraint
-- Tested against: SQL injection, FTS injection, null bytes, unicode boundaries, 500KB payloads
+- **`rusqlite`** — local relational storage with bundled SQLite support.
+- **`sqlite-vec`** — vector similarity search without introducing an external
+  vector database.
+- **`fastembed`** — local embedding generation behind the optional
+  `embeddings` feature.
+- **`spore`** — shared ecosystem transport and config-loading helpers.

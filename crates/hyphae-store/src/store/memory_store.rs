@@ -86,6 +86,51 @@ impl SqliteStore {
         Ok(results)
     }
 
+    pub fn search_fts_scoped(
+        &self,
+        query: &str,
+        limit: usize,
+        offset: usize,
+        project: Option<&str>,
+        worktree: Option<&str>,
+    ) -> HyphaeResult<Vec<Memory>> {
+        let sanitized = sanitize_fts_query(query);
+        if sanitized.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let sql = format!(
+            "SELECT {SELECT_COLS} FROM memories m
+             WHERE m.id IN (
+                 SELECT id FROM memories_fts
+                 WHERE memories_fts MATCH ?1
+                 AND (project = ?2 OR ?2 IS NULL)
+                 AND (worktree = ?3 OR ?3 IS NULL)
+             )
+             AND m.{ACTIVE_MEMORY_CLAUSE}
+             ORDER BY m.weight DESC
+             LIMIT ?4 OFFSET ?5"
+        );
+
+        let mut stmt = self
+            .conn
+            .prepare_cached(&sql)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(
+                params![sanitized, project, worktree, limit as i64, offset as i64],
+                row_to_memory,
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| HyphaeError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
     pub fn search_fts_count_with_options(
         &self,
         query: &str,
@@ -121,6 +166,69 @@ impl SqliteStore {
             .map_err(|e| HyphaeError::Database(e.to_string()))
     }
 
+    pub fn search_by_keywords_scoped(
+        &self,
+        keywords: &[&str],
+        limit: usize,
+        offset: usize,
+        project: Option<&str>,
+        worktree: Option<&str>,
+    ) -> HyphaeResult<Vec<Memory>> {
+        if keywords.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let where_parts: Vec<String> = (0..keywords.len())
+            .map(|i| {
+                let p = i + 1;
+                format!("(keywords LIKE ?{p} OR summary LIKE ?{p} OR topic LIKE ?{p})")
+            })
+            .collect();
+        let where_clause = where_parts.join(" OR ");
+        let limit_pos = keywords.len() + 1;
+        let offset_pos = keywords.len() + 2;
+        let project_pos = keywords.len() + 3;
+        let worktree_pos = keywords.len() + 4;
+
+        let query = format!(
+            "SELECT {SELECT_COLS}
+             FROM memories
+             WHERE ({where_clause})
+               AND {ACTIVE_MEMORY_CLAUSE}
+               AND (project = ?{project_pos} OR ?{project_pos} IS NULL)
+               AND (worktree = ?{worktree_pos} OR ?{worktree_pos} IS NULL)
+             ORDER BY weight DESC
+             LIMIT ?{limit_pos} OFFSET ?{offset_pos}"
+        );
+
+        let mut stmt = self
+            .conn
+            .prepare(&query)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = keywords
+            .iter()
+            .map(|k| Box::new(format!("%{k}%")) as Box<dyn rusqlite::types::ToSql>)
+            .collect();
+        param_values.push(Box::new(limit as i64));
+        param_values.push(Box::new(offset as i64));
+        param_values.push(Box::new(project.map(|s| s.to_string())));
+        param_values.push(Box::new(worktree.map(|s| s.to_string())));
+
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            param_values.iter().map(|p| p.as_ref()).collect();
+
+        let rows = stmt
+            .query_map(params_ref.as_slice(), row_to_memory)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| HyphaeError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
     pub fn get_by_topic_with_options(
         &self,
         topic: &str,
@@ -152,6 +260,37 @@ impl SqliteStore {
 
         let rows = stmt
             .query_map(params![topic, project], row_to_memory)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| HyphaeError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
+    pub fn get_by_topic_scoped(
+        &self,
+        topic: &str,
+        project: Option<&str>,
+        worktree: Option<&str>,
+    ) -> HyphaeResult<Vec<Memory>> {
+        let sql = format!(
+            "SELECT {SELECT_COLS}
+             FROM memories
+             WHERE topic = ?1
+               AND {ACTIVE_MEMORY_CLAUSE}
+               AND (project = ?2 OR ?2 IS NULL)
+               AND (worktree = ?3 OR ?3 IS NULL)
+             ORDER BY weight DESC"
+        );
+        let mut stmt = self
+            .conn
+            .prepare_cached(&sql)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![topic, project, worktree], row_to_memory)
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         let mut results = Vec::new();
@@ -203,6 +342,187 @@ impl SqliteStore {
             results.push(row.map_err(|e| HyphaeError::Database(e.to_string()))?);
         }
         Ok(results)
+    }
+
+    pub fn search_hybrid_scoped(
+        &self,
+        query: &str,
+        embedding: &[f32],
+        limit: usize,
+        offset: usize,
+        project: Option<&str>,
+        worktree: Option<&str>,
+    ) -> HyphaeResult<Vec<(Memory, f32)>> {
+        let pool_size = limit + offset;
+        let sanitized = sanitize_fts_query(query);
+
+        let fts_sql = "SELECT m.id, m.created_at, m.updated_at, m.last_accessed, m.access_count, m.weight, \
+                    m.topic, m.summary, m.raw_excerpt, m.keywords, \
+                    m.importance, m.source_type, m.source_data, m.related_ids, m.embedding, \
+                    m.project, m.branch, m.worktree, m.expires_at, m.invalidated_at, \
+                    m.invalidation_reason, m.superseded_by, fts.rank \
+             FROM memories_fts fts \
+             JOIN memories m ON m.id = fts.id \
+             WHERE memories_fts MATCH ?1 \
+             AND m.invalidated_at IS NULL \
+             AND (fts.project = ?3 OR ?3 IS NULL) \
+             AND (fts.worktree = ?4 OR ?4 IS NULL) \
+             ORDER BY fts.rank \
+             LIMIT ?2";
+
+        let mut fts_scores: HashMap<String, f32> = HashMap::new();
+        let mut all_memories: HashMap<String, Memory> = HashMap::new();
+
+        if !sanitized.is_empty() {
+            match self.conn.prepare_cached(fts_sql) {
+                Ok(mut stmt) => {
+                    match stmt.query_map(
+                        params![sanitized, pool_size as i64, project, worktree],
+                        |row| {
+                            let memory = row_to_memory(row)?;
+                            let rank: f32 = row.get(22)?;
+                            Ok((memory, rank))
+                        },
+                    ) {
+                        Ok(rows) => {
+                            for row in rows.flatten() {
+                                let (memory, rank) = row;
+                                let score = 1.0 / (1.0 + rank.abs());
+                                fts_scores.insert(memory.id.to_string(), score);
+                                all_memories.insert(memory.id.to_string(), memory);
+                            }
+                        }
+                        Err(e) => tracing::warn!("hybrid search FTS query failed: {e}"),
+                    }
+                }
+                Err(e) => tracing::warn!("hybrid search FTS prepare failed: {e}"),
+            }
+        }
+
+        let vec_results =
+            self.search_by_embedding_scoped(embedding, pool_size, 0, project, worktree)?;
+        let mut vec_scores: HashMap<String, f32> = HashMap::new();
+        for (memory, similarity) in vec_results {
+            vec_scores.insert(memory.id.to_string(), similarity);
+            all_memories.entry(memory.id.to_string()).or_insert(memory);
+        }
+
+        let candidate_ids: Vec<String> = all_memories.keys().cloned().collect();
+        let learned_scores = match self.recall_effectiveness_for_memory_ids(&candidate_ids) {
+            Ok(scores) => scores,
+            Err(e) => {
+                tracing::warn!("recall_effectiveness lookup failed: {e}");
+                HashMap::new()
+            }
+        };
+
+        let mut scored: Vec<(String, f32)> = Vec::new();
+        for id in candidate_ids {
+            let fts_score = fts_scores.get(&id).copied().unwrap_or(0.0);
+            let vec_score = vec_scores.get(&id).copied().unwrap_or(0.0);
+            let learned_score = learned_scores.get(&id).copied().unwrap_or(0.0);
+            let static_weight_bias = all_memories
+                .get(&id)
+                .map(|memory| (memory.weight.value() - 0.5) * 0.05)
+                .unwrap_or(0.0);
+            let combined =
+                0.3 * fts_score + 0.7 * vec_score + static_weight_bias + 0.12 * learned_score;
+            scored.push((id, combined.clamp(0.0, 1.5)));
+        }
+
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        let results: Vec<(Memory, f32)> = scored
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .filter_map(|(id, score)| all_memories.remove(&id).map(|mem| (mem, score)))
+            .collect();
+
+        Ok(results)
+    }
+
+    fn search_by_embedding_scoped(
+        &self,
+        embedding: &[f32],
+        limit: usize,
+        offset: usize,
+        project: Option<&str>,
+        worktree: Option<&str>,
+    ) -> HyphaeResult<Vec<(Memory, f32)>> {
+        let query_blob = embedding_to_blob(embedding);
+        let knn_limit = limit + offset;
+
+        let mut knn_stmt = self
+            .conn
+            .prepare_cached(
+                "SELECT memory_id, distance
+                 FROM vec_memories
+                 WHERE embedding MATCH ?1
+                 ORDER BY distance
+                 LIMIT ?2",
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let knn_rows: Vec<(String, f32)> = knn_stmt
+            .query_map(params![query_blob, knn_limit as i64], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, f32>(1)?))
+            })
+            .map_err(|e| HyphaeError::Database(e.to_string()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        if knn_rows.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let placeholders: Vec<String> = (1..=knn_rows.len()).map(|i| format!("?{i}")).collect();
+        let in_clause = placeholders.join(",");
+        let project_pos = knn_rows.len() + 1;
+        let worktree_pos = knn_rows.len() + 2;
+        let sql = format!(
+            "SELECT {SELECT_COLS}
+             FROM memories
+             WHERE id IN ({in_clause})
+               AND {ACTIVE_MEMORY_CLAUSE}
+               AND (project = ?{project_pos} OR ?{project_pos} IS NULL)
+               AND (worktree = ?{worktree_pos} OR ?{worktree_pos} IS NULL)"
+        );
+
+        let mut stmt = self
+            .conn
+            .prepare(&sql)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = knn_rows
+            .iter()
+            .map(|(id, _)| Box::new(id.clone()) as Box<dyn rusqlite::types::ToSql>)
+            .collect();
+        param_values.push(Box::new(project.map(|s| s.to_string())));
+        param_values.push(Box::new(worktree.map(|s| s.to_string())));
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            param_values.iter().map(|p| p.as_ref()).collect();
+
+        let memories: Vec<Memory> = stmt
+            .query_map(params_ref.as_slice(), row_to_memory)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let mut memory_map: HashMap<String, Memory> = memories
+            .into_iter()
+            .map(|m| (m.id.to_string(), m))
+            .collect();
+
+        let mut results = Vec::new();
+        for (id, distance) in &knn_rows {
+            if let Some(memory) = memory_map.remove(id) {
+                let similarity = 1.0 - distance;
+                results.push((memory, similarity));
+            }
+        }
+
+        Ok(results.into_iter().skip(offset).take(limit).collect())
     }
 
     pub fn topic_health_with_options(

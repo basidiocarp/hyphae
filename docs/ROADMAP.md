@@ -1,113 +1,68 @@
 # Hyphae Roadmap
 
-This page is the Hyphae-specific backlog. The root [ROADMAP.md](../../ROADMAP.md) keeps the cross-system priorities and sequencing.
+This page is the Hyphae-specific backlog. The workspace [ROADMAP.md](../../docs/ROADMAP.md) keeps the ecosystem sequencing and cross-repo priorities.
 
 ## Recently Shipped
 
-- Shared path resolution for config and database locations instead of scattered path handling.
-- More portable transcript, Codex notify, Claude import, and embedding-cache path discovery.
-- Normalized `agent_session` source handling so Claude and Codex session-derived memories land in one shared model.
-- Broader `hyphae init` and `doctor` host/config handling via shared editor registration helpers.
-- Structured feedback-loop foundations:
-  - session-linked recall events
-  - session-linked outcome signals
-  - active-session reuse per project
-  - stronger feedback/session foreign-key integrity
+- Path handling is much more consistent than the early releases. Config, database, transcript, notify, import, and embedding-cache locations now resolve through shared logic instead of scattered per-command code.
+- Hyphae now treats Claude and Codex session-derived memories as one normalized `agent_session` model. That gives the ecosystem a shared source of truth instead of separate host-specific ingestion paths.
+- `hyphae init` and `doctor` now ride the shared editor-registration and host-discovery work. The result is better config handling and fewer host-specific edge cases.
+- The feedback-loop foundation is in place. Recalls and outcomes can now link back to scoped sessions with stronger integrity checks instead of living as loosely related events.
 
 ## Next
 
-These items should stay aligned with the ecosystem roadmap because they affect other tools or change cross-system sequencing.
-
 ### Recall effectiveness and outcome ranking
 
-Implement recall effectiveness scoring from [FEEDBACK-LOOP-DESIGN.md](FEEDBACK-LOOP-DESIGN.md) so Hyphae can rank recalled context by observed usefulness instead of similarity alone.
+Hyphae should rank recalled context by observed usefulness, not just similarity. The work in [FEEDBACK-LOOP-DESIGN.md](FEEDBACK-LOOP-DESIGN.md) is the immediate path to making memory selection smarter across the ecosystem.
 
 ### Context-aware recall
 
-Infer useful memories from current repo state, open files, diffs, and active failures so agents do not need to guess the exact search query before recall becomes helpful.
+Agents should not need to guess the perfect query before Hyphae becomes helpful. The next step is using repo state, open files, diffs, and active failures to infer which memories matter before the next tool call.
 
 ### Multi-project memory quality
 
-Deepen project and workspace separation, then add semantic deduplication, conflict detection, and stronger provenance so one Hyphae store can support multiple repos and agents without muddying recall.
+One Hyphae store needs stronger project and workspace separation than it has today. Better deduplication, conflict detection, and provenance are the difference between a shared memory surface and a noisy pile of vaguely related notes.
 
 ### Auto-ingestion watcher
 
-Add a watcher-driven ingest mode so long-lived worktrees stay fresh without repeated manual ingest commands.
+Long-lived worktrees should stay fresh without repeated manual ingest commands. A watcher-driven mode matters because the ecosystem is moving toward persistent local context, not one-shot imports.
 
 ### Shared and remote memory
 
-Add remote encrypted sync and shared-memory modes for multi-machine and multi-agent setups.
+Remote encrypted sync and shared-memory modes are the next step once the local single-machine path is reliable. This work needs to stay aligned with the ecosystem roadmap because it changes how multiple hosts and agents share context.
 
 ### Training and export surfaces
 
-Keep refining `export-training` and other structured export paths so stored recall and outcome data can be turned into reusable evaluation input.
+Hyphae is accumulating useful outcome data. The next priority is turning that stored history into structured export paths that can feed evaluation, training, and review workflows without custom one-off scripts.
 
 ## Later
 
-These are valuable Hyphae capabilities, but they do not need to drive ecosystem order.
+### Memory consolidation
 
-### Memory consolidation via LLM
+Optional LLM-assisted consolidation should merge related memories into better summaries once the ranking and provenance layers are stronger. Doing it earlier would polish recall output before the underlying trust signals are ready.
 
-Add optional LLM-assisted consolidation that merges related memories into higher-level summaries.
+### Search ergonomics
 
-### Cross-memory linking
+Query expansion, faceted search, and a reranking pipeline all belong here. They matter, but they should follow the higher-leverage recall and provenance work that improves the base quality of what Hyphae stores and returns.
 
-Detect and link related memories, memoirs, and document chunks so recall can surface adjacent knowledge without requiring an exact repeated query.
+### Provenance and lineage tools
 
-### Temporal queries
+Hyphae should eventually make it easy to trace where a memory came from, how it changed, and what conversation, file, or commit produced it. That is valuable once the store has enough history to make lineage worth inspecting.
 
-Support point-in-time questions such as “what did I know about auth last week?”
+### Local operations
 
-### Conversation summarization quality
+Export and import, structured output modes, tags, TTL controls, and bulk cleanup all improve day-to-day operations. They are useful, but they do not need to drive ecosystem order ahead of ranking and retrieval quality.
 
-Keep improving transcript and notify summarization so session-derived memories become more structured and more useful than raw transcript import.
-
-### Memory provenance tools
-
-Add `trace`-style lineage views that show which conversation, file, or commit produced a given memory and how it changed over time.
-
-## Search and Retrieval
-
-These are retrieval-quality improvements that mostly live inside Hyphae itself.
-
-### Query expansion
-
-Expand search queries with related terms and memoir graph context.
-
-### Faceted search
-
-Support combined filters such as topic, importance, source type, and date range in one search flow.
-
-### Reranking pipeline
-
-Add a second-stage reranker for top-k retrieval quality.
+## Research
 
 ### Graph-powered retrieval
 
-Traverse memoir relationships during search so linked concepts can influence recall.
+Hyphae can probably get better by traversing memoir relationships during search, but the open question is how much graph context improves retrieval before it starts surfacing loosely related noise.
 
-## Local UX and Operations
+### Temporal queries
 
-### Export/import
-
-Provide explicit export and import commands for backup, migration, and local sharing.
-
-### Structured output modes
-
-Expose consistent `json`, `table`, and compact formats across CLI commands.
-
-### Memory tags
-
-Add lightweight tagging that cuts across topic boundaries.
-
-### TTL and expiry
-
-Support explicit expiration dates beyond the existing decay model.
-
-### Bulk cleanup operations
-
-Add batch forget, archive, and cleanup flows for large stores.
+Point-in-time questions such as "what did I know about this last week?" are clearly useful. The unresolved part is how to answer them cleanly when memories decay, merge, or get superseded over time.
 
 ### IDE surfaces and hooks
 
-Consider webhook/event hooks and IDE-side memory surfaces once the underlying ranking and provenance models are stronger.
+IDE-side memory surfaces and event hooks may become valuable once ranking, provenance, and session attribution are solid. Until then, they risk exposing a rough backend through a polished shell.

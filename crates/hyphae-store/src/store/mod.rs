@@ -54,8 +54,10 @@ impl SqliteStore {
         }
         let conn = Connection::open(path)
             .map_err(|e| HyphaeError::Database(format!("cannot open database: {e}")))?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;",
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
         init_db_with_dims(&conn, embedding_dims)?;
         Ok(Self { conn })
     }
@@ -176,6 +178,7 @@ mod tests {
         Concept, ConceptLink, Confidence, Importance, Memoir, MemoirId, MemoirStore, Memory,
         MemoryId, Relation, Weight,
     };
+    use tempfile::tempdir;
 
     fn test_store() -> SqliteStore {
         SqliteStore::in_memory().unwrap()
@@ -244,6 +247,30 @@ mod tests {
         let store = test_store();
         let result = store.delete(&MemoryId::from("nonexistent"));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_with_dims_applies_sqlite_pragmas() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("hyphae-store-pragmas.db");
+        let store = SqliteStore::with_dims(&db_path, 384).unwrap();
+
+        let journal_mode: String = store
+            .conn
+            .query_row("PRAGMA journal_mode;", [], |row| row.get(0))
+            .unwrap();
+        let busy_timeout: i64 = store
+            .conn
+            .query_row("PRAGMA busy_timeout;", [], |row| row.get(0))
+            .unwrap();
+        let foreign_keys: i64 = store
+            .conn
+            .query_row("PRAGMA foreign_keys;", [], |row| row.get(0))
+            .unwrap();
+
+        assert_eq!(journal_mode.to_lowercase(), "wal");
+        assert_eq!(busy_timeout, 5000);
+        assert_eq!(foreign_keys, 1);
     }
 
     #[test]
