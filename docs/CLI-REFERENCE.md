@@ -818,21 +818,24 @@ hyphae embed --topic "decisions-api"
 ### `hyphae export-training` -- Export memories as training JSONL
 
 ```
-hyphae export-training --format <sft|dpo|alpaca> [-t <topic>] [-o <output>]
+hyphae export-training --format <sft|dpo|alpaca> [-t <topic>] [--min-weight <f>] [--min-recalls <n>] [--min-effectiveness <f>] [-o <output>]
 ```
 
 | Option | Short | Required | Default | Description |
 |--------|-------|----------|---------|-------------|
 | `--format` | `-f` | yes | -- | Output format: `sft`, `dpo`, `alpaca` |
 | `--topic` | `-t` | no | -- | Limit export to a topic |
+| `--min-weight` | -- | no | `0.5` | Only export memories with weight at or above this threshold |
+| `--min-recalls` | -- | no | `1` | Only export memories recalled at least this many times |
+| `--min-effectiveness` | -- | no | -- | Only export memories with effectiveness at or above this threshold |
 | `--output` | `-o` | no | stdout | Write to file instead of stdout |
 
-Exports memories as training JSONL for supervised fine-tuning (SFT), direct preference optimization (DPO), or Alpaca format. `hyphae export-training-data` is kept as a compatibility alias.
+Exports memories as training JSONL for supervised fine-tuning (SFT), direct preference optimization (DPO), or Alpaca format. `hyphae export-training-data` is kept as a compatibility alias. The default quality filter is `--min-weight 0.5 --min-recalls 1`; pass `--min-weight 0 --min-recalls 0` to restore the previous unfiltered behavior.
 
 **Format details:**
 
 - `sft`: `{"instruction": "...", "response": "..."}` pairs from memories
-- `dpo`: `{"prompt": "...", "chosen": "...", "rejected": "..."}` from corrections and errors
+- `dpo`: `{"prompt": "...", "chosen": "...", "rejected": "..."}` from corrections and errors, ordered by recall effectiveness when available
 - `alpaca`: `{"instruction": "...", "input": "...", "output": "..."}` format
 
 ```bash

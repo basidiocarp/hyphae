@@ -1,8 +1,9 @@
 use anyhow::Result;
 use clap::{Args, Subcommand};
-use serde_json::{Value, json};
+use serde_json::json;
 
 use hyphae_core::Embedder;
+use hyphae_mcp::tools::normalize_identity;
 use hyphae_store::SqliteStore;
 
 const SESSION_STATUS_SCHEMA_VERSION: &str = "1.0";
@@ -494,16 +495,6 @@ fn format_session_context_entry(session: &hyphae_store::Session) -> String {
         task,
         crate::display::truncate(summary, 100)
     )
-}
-
-fn normalize_identity<'a>(
-    project_root: Option<&'a str>,
-    worktree_id: Option<&'a str>,
-) -> (Option<&'a str>, Option<&'a str>) {
-    match (project_root, worktree_id) {
-        (Some(project_root), Some(worktree_id)) => (Some(project_root), Some(worktree_id)),
-        _ => (None, None),
-    }
 }
 
 #[cfg(test)]

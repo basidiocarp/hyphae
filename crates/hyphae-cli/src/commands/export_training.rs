@@ -61,6 +61,9 @@ struct TrainingExample {
     topic: String,
     summary: String,
     weight: f32,
+    access_count: Option<u32>,
+    effectiveness: Option<f32>,
+    source_id: Option<String>,
 }
 
 fn default_memory_topics(store: &SqliteStore, project: Option<&str>) -> Result<Vec<String>> {
@@ -121,6 +124,9 @@ fn structured_session_example(session: Session) -> Option<TrainingExample> {
         topic,
         summary: text,
         weight: 1.0,
+        access_count: None,
+        effectiveness: None,
+        source_id: None,
     })
 }
 
@@ -148,6 +154,9 @@ fn memory_examples_for_topics(
                     topic: mem.topic,
                     summary: mem.summary,
                     weight: mem.weight.value(),
+                    access_count: Some(mem.access_count),
+                    effectiveness: None,
+                    source_id: Some(mem.id.to_string()),
                 }));
             }
             Err(e) => tracing::warn!("failed to read topic {}: {}", topic, e),
@@ -203,6 +212,9 @@ fn merged_session_examples(
                         topic: legacy.topic,
                         summary: legacy.summary,
                         weight: legacy.weight.value(),
+                        access_count: Some(legacy.access_count),
+                        effectiveness: None,
+                        source_id: Some(legacy.id.to_string()),
                     });
                 }
             }
@@ -211,12 +223,68 @@ fn merged_session_examples(
                     topic: legacy.topic,
                     summary: legacy.summary,
                     weight: legacy.weight.value(),
+                    access_count: Some(legacy.access_count),
+                    effectiveness: None,
+                    source_id: Some(legacy.id.to_string()),
                 });
             }
         }
     }
 
     Ok(merged)
+}
+
+fn load_effectiveness_scores(store: &SqliteStore, examples: &mut [TrainingExample]) {
+    let source_ids: Vec<String> = examples
+        .iter()
+        .filter_map(|example| example.source_id.clone())
+        .collect();
+
+    if source_ids.is_empty() {
+        return;
+    }
+
+    let scores = match store.recall_effectiveness_for_memory_ids(&source_ids) {
+        Ok(scores) => scores,
+        Err(e) => {
+            tracing::warn!("recall_effectiveness lookup failed: {e}");
+            return;
+        }
+    };
+
+    for example in examples.iter_mut() {
+        if let Some(source_id) = &example.source_id {
+            example.effectiveness = scores.get(source_id).copied();
+        }
+    }
+}
+
+fn example_passes_quality_filters(
+    example: &TrainingExample,
+    min_weight: f32,
+    min_recalls: usize,
+    min_effectiveness: Option<f32>,
+) -> bool {
+    if example.weight < min_weight {
+        return false;
+    }
+
+    if let Some(access_count) = example.access_count
+        && (access_count as usize) < min_recalls
+    {
+        return false;
+    }
+
+    if let Some(min_effectiveness) = min_effectiveness
+        && example.source_id.is_some()
+    {
+        match example.effectiveness {
+            Some(effectiveness) if effectiveness >= min_effectiveness => {}
+            _ => return false,
+        }
+    }
+
+    true
 }
 
 fn collect_training_examples(
@@ -247,13 +315,33 @@ pub(crate) fn cmd_export_training(
     store: &SqliteStore,
     format: TrainingFormat,
     topic: Option<String>,
-    min_weight: Option<f32>,
+    min_weight: f32,
+    min_recalls: usize,
+    min_effectiveness: Option<f32>,
     output: Option<PathBuf>,
     project: Option<String>,
 ) -> Result<()> {
-    let min_weight = min_weight.unwrap_or(0.0);
     let project_ref = project.as_deref();
-    let examples = collect_training_examples(store, topic, project_ref)?;
+    let mut examples = collect_training_examples(store, topic, project_ref)?;
+    load_effectiveness_scores(store, &mut examples);
+
+    if matches!(format, TrainingFormat::Dpo) {
+        examples.sort_by(|a, b| {
+            let a_effectiveness = a.effectiveness.unwrap_or(f32::NEG_INFINITY);
+            let b_effectiveness = b.effectiveness.unwrap_or(f32::NEG_INFINITY);
+            b_effectiveness
+                .partial_cmp(&a_effectiveness)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| {
+                    b.weight
+                        .partial_cmp(&a.weight)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .then_with(|| a.topic.cmp(&b.topic))
+                .then_with(|| a.summary.cmp(&b.summary))
+        });
+    }
+
     use std::io::Write;
     let mut handle: Box<dyn Write> = if let Some(path) = output {
         Box::new(std::fs::File::create(path)?)
@@ -262,7 +350,7 @@ pub(crate) fn cmd_export_training(
     };
 
     for example in examples {
-        if example.weight < min_weight {
+        if !example_passes_quality_filters(&example, min_weight, min_recalls, min_effectiveness) {
             continue;
         }
 
@@ -341,7 +429,7 @@ fn parse_correction(text: &str) -> Option<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hyphae_core::{Importance, Memory};
+    use hyphae_core::{Importance, Memory, MemoryStore};
     use tempfile::TempDir;
 
     fn test_store() -> SqliteStore {
@@ -543,6 +631,8 @@ mod tests {
             &store,
             TrainingFormat::Sft,
             None,
+            0.0,
+            0,
             None,
             Some(output.clone()),
             Some("myapp".to_string()),
@@ -552,5 +642,143 @@ mod tests {
         let content = std::fs::read_to_string(output).unwrap();
         assert!(content.contains("\"instruction\""));
         assert!(content.contains("Use gRPC for internal services"));
+    }
+
+    #[test]
+    fn test_cmd_export_training_applies_quality_filters() {
+        let store = test_store();
+        let dir = TempDir::new().unwrap();
+        let output = dir.path().join("filtered.jsonl");
+
+        let good = Memory::builder(
+            "decisions/myapp".to_string(),
+            "Use gRPC for internal services".to_string(),
+            Importance::High,
+        )
+        .project("myapp".to_string())
+        .weight(0.8)
+        .build();
+        let good_id = store.store(good).unwrap();
+        store.update_access(&good_id).unwrap();
+
+        let low_weight = Memory::builder(
+            "decisions/myapp".to_string(),
+            "Use XML for internal services".to_string(),
+            Importance::Medium,
+        )
+        .project("myapp".to_string())
+        .weight(0.2)
+        .build();
+        let low_weight_id = store.store(low_weight).unwrap();
+        store.update_access(&low_weight_id).unwrap();
+
+        let never_recalled = Memory::builder(
+            "decisions/myapp".to_string(),
+            "Use JSON for internal services".to_string(),
+            Importance::High,
+        )
+        .project("myapp".to_string())
+        .weight(0.9)
+        .build();
+        store.store(never_recalled).unwrap();
+
+        cmd_export_training(
+            &store,
+            TrainingFormat::Sft,
+            None,
+            0.5,
+            1,
+            None,
+            Some(output.clone()),
+            Some("myapp".to_string()),
+        )
+        .unwrap();
+
+        let content = std::fs::read_to_string(output).unwrap();
+        assert!(content.contains("Use gRPC for internal services"));
+        assert!(!content.contains("Use XML for internal services"));
+        assert!(!content.contains("Use JSON for internal services"));
+    }
+
+    #[test]
+    fn test_cmd_export_training_orders_dpo_by_effectiveness() {
+        let store = test_store();
+        let dir = TempDir::new().unwrap();
+        let output = dir.path().join("dpo.jsonl");
+
+        let positive = Memory::builder(
+            "corrections".to_string(),
+            "File: auth.rs\nOriginal: fn validate(token: &str) { token.len() > 0 }\nCorrection: fn validate(token: &str) -> Result<Claims> { decode(token)? }"
+                .to_string(),
+            Importance::High,
+        )
+        .project("myapp".to_string())
+        .weight(0.8)
+        .build();
+        let positive_id = store.store(positive).unwrap();
+        store.update_access(&positive_id).unwrap();
+
+        let negative = Memory::builder(
+            "corrections".to_string(),
+            "File: auth.rs\nOriginal: fn validate(token: &str) { token.len() > 0 }\nCorrection: fn validate(token: &str) -> Result<Claims> { token.parse()? }"
+                .to_string(),
+            Importance::High,
+        )
+        .project("myapp".to_string())
+        .weight(0.8)
+        .build();
+        let negative_id = store.store(negative).unwrap();
+        store.update_access(&negative_id).unwrap();
+
+        let (session_id, _) = store.session_start("myapp", Some("validate auth")).unwrap();
+        store
+            .log_recall_event(
+                Some(&session_id),
+                "validate auth",
+                &[positive_id.to_string()],
+                Some("myapp"),
+            )
+            .unwrap();
+        store
+            .session_end(&session_id, Some("done"), None, Some("0"))
+            .unwrap();
+
+        let (session_id, _) = store.session_start("myapp", Some("validate auth")).unwrap();
+        store
+            .log_recall_event(
+                Some(&session_id),
+                "validate auth",
+                &[negative_id.to_string()],
+                Some("myapp"),
+            )
+            .unwrap();
+        store
+            .session_end(&session_id, Some("done"), None, Some("1"))
+            .unwrap();
+
+        cmd_export_training(
+            &store,
+            TrainingFormat::Dpo,
+            Some("corrections".to_string()),
+            0.5,
+            1,
+            None,
+            Some(output.clone()),
+            Some("myapp".to_string()),
+        )
+        .unwrap();
+
+        let content = std::fs::read_to_string(output).unwrap();
+        let mut lines = content.lines();
+        let first: serde_json::Value = serde_json::from_str(lines.next().unwrap()).unwrap();
+        let second: serde_json::Value = serde_json::from_str(lines.next().unwrap()).unwrap();
+
+        assert!(first["chosen"].as_str().unwrap().contains("decode(token)?"));
+        assert!(
+            second["chosen"]
+                .as_str()
+                .unwrap()
+                .contains("token.parse()?")
+        );
     }
 }

@@ -359,9 +359,15 @@ pub(crate) enum Commands {
         /// Only export specific topic
         #[arg(short, long)]
         topic: Option<String>,
-        /// Only export memories with weight above this threshold
+        /// Only export memories with weight at or above this threshold
+        #[arg(long, default_value_t = 0.5)]
+        min_weight: f32,
+        /// Only export memories recalled at least this many times
+        #[arg(long, default_value_t = 1)]
+        min_recalls: usize,
+        /// Only export memories with effectiveness at or above this threshold
         #[arg(long)]
-        min_weight: Option<f32>,
+        min_effectiveness: Option<f32>,
         /// Write output to a file instead of stdout
         #[arg(short, long)]
         output: Option<PathBuf>,
@@ -433,17 +439,46 @@ mod tests {
         let cli = Cli::try_parse_from(["hyphae", "export-training", "--format", "sft"]).unwrap();
         assert!(matches!(
             cli.command,
-            Commands::ExportTraining { format, .. } if format == "sft"
+            Commands::ExportTraining {
+                format,
+                min_weight,
+                min_recalls,
+                min_effectiveness,
+                ..
+            } if format == "sft"
+                && (min_weight - 0.5).abs() < f32::EPSILON
+                && min_recalls == 1
+                && min_effectiveness.is_none()
         ));
     }
 
     #[test]
     fn test_export_training_legacy_alias_parses() {
-        let cli =
-            Cli::try_parse_from(["hyphae", "export-training-data", "--format", "alpaca"]).unwrap();
+        let cli = Cli::try_parse_from([
+            "hyphae",
+            "export-training-data",
+            "--format",
+            "alpaca",
+            "--min-weight",
+            "0.8",
+            "--min-recalls",
+            "3",
+            "--min-effectiveness",
+            "0.2",
+        ])
+        .unwrap();
         assert!(matches!(
             cli.command,
-            Commands::ExportTraining { format, .. } if format == "alpaca"
+            Commands::ExportTraining {
+                format,
+                min_weight,
+                min_recalls,
+                min_effectiveness,
+                ..
+            } if format == "alpaca"
+                && (min_weight - 0.8).abs() < f32::EPSILON
+                && min_recalls == 3
+                && min_effectiveness == Some(0.2)
         ));
     }
 

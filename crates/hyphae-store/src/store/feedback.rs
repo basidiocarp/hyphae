@@ -679,7 +679,7 @@ impl SqliteStore {
         Ok(written)
     }
 
-    pub(crate) fn recall_effectiveness_for_memory_ids(
+    pub fn recall_effectiveness_for_memory_ids(
         &self,
         memory_ids: &[String],
     ) -> HyphaeResult<HashMap<String, f32>> {

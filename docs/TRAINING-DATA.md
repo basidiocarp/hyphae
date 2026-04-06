@@ -147,7 +147,7 @@ A useful fine-tune requires roughly 1,000 SFT pairs and 500 DPO pairs for prefer
 
 ## Export Format
 
-The `hyphae export-training` command produces. `hyphae export-training-data` remains available as a compatibility alias:
+The `hyphae export-training` command applies a default quality filter of `--min-weight 0.5 --min-recalls 1` before writing JSONL. `hyphae export-training-data` remains available as a compatibility alias:
 
 **SFT format (JSONL):**
 ```jsonl
@@ -163,6 +163,8 @@ The `hyphae export-training` command produces. `hyphae export-training-data` rem
 ```jsonl
 {"instruction": "...", "input": "", "output": "..."}
 ```
+
+For DPO exports, Hyphae now prefers higher-effectiveness memories first when ranking the output pairs. If you need the old behavior, set `--min-weight 0 --min-recalls 0`.
 
 If you need bespoke exports beyond `hyphae export-training`, you can query the database directly:
 

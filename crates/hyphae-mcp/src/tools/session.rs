@@ -10,7 +10,7 @@ use hyphae_store::SqliteStore;
 
 use crate::protocol::ToolResult;
 
-use super::{get_bounded_i64, get_str, validate_required_string};
+use super::{get_bounded_i64, get_str, normalize_identity, validate_required_string};
 
 /// `hyphae_session_start` — begin a new coding session.
 pub(crate) fn tool_session_start(
@@ -140,16 +140,6 @@ pub(crate) fn tool_session_context(store: &SqliteStore, args: &Value) -> ToolRes
             )
         }
         Err(e) => ToolResult::error(format!("failed to query sessions: {e}")),
-    }
-}
-
-fn normalize_identity<'a>(
-    project_root: Option<&'a str>,
-    worktree_id: Option<&'a str>,
-) -> (Option<&'a str>, Option<&'a str>) {
-    match (project_root, worktree_id) {
-        (Some(project_root), Some(worktree_id)) => (Some(project_root), Some(worktree_id)),
-        _ => (None, None),
     }
 }
 

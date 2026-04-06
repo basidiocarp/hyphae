@@ -38,7 +38,9 @@ pub(super) fn get_str<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
     args.get(key).and_then(|v| v.as_str())
 }
 
-pub(super) fn normalize_identity<'a>(
+/// Normalize the identity-v1 pair so partial identity input collapses back to
+/// legacy project-scoped behavior.
+pub fn normalize_identity<'a>(
     project_root: Option<&'a str>,
     worktree_id: Option<&'a str>,
 ) -> (Option<&'a str>, Option<&'a str>) {

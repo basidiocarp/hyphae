@@ -461,6 +461,8 @@ fn main() -> Result<()> {
             format,
             topic,
             min_weight,
+            min_recalls,
+            min_effectiveness,
             output,
         } => {
             let fmt = format
@@ -471,6 +473,8 @@ fn main() -> Result<()> {
                 fmt,
                 topic.clone(),
                 min_weight,
+                min_recalls,
+                min_effectiveness,
                 output.clone(),
                 resolved_project,
             )?;
