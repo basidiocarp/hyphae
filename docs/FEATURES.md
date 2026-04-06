@@ -167,8 +167,8 @@ Agent: (applies the known solution directly without re-debugging)
 `hyphae_memory_recall` now makes a few query-context decisions explicitly:
 
 - Session/history queries such as "previous session login flow" boost `session/*` memories ahead of general matches.
-- When `code_context: true` and the query looks code-related, recall expands through matching concepts in `code:{project}` using extracted code terms before finalizing results.
-- Identity-v1 worktree scoping still applies to both the primary recall pass and any code-context expansion.
+- When `code_context: true` and the query looks code-related, recall gathers matching concepts in `code:{project}` using extracted code terms before finalizing results, then merges globally visible `_shared` memories as fallback.
+- Identity-v1 worktree scoping still applies to the primary recall pass and any code-context expansion, while `_shared` fallback memories remain visible.
 
 ---
 

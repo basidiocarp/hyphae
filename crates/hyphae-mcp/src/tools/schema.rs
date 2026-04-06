@@ -50,7 +50,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }),
         json!({
             "name": "hyphae_memory_recall",
-            "description": "Search Hyphae long-term memory with context-aware recall. Use to find past decisions, project context, preferences, or solutions to previously encountered problems. Session-shaped queries boost session memories first, code-shaped queries can expand through code memoirs, and project-scoped recall also includes the '_shared' knowledge pool.",
+            "description": "Search Hyphae long-term memory with context-aware recall. Use to find past decisions, project context, preferences, or solutions to previously encountered problems. Session-shaped queries boost session memories first, code-shaped queries can expand through code memoirs, and project-scoped recall merges the globally visible '_shared' knowledge pool after those context-specific hits.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -94,7 +94,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     "code_context": {
                         "type": "boolean",
                         "default": false,
-                        "description": "When true, code-shaped queries can expand through the project's code memoir (code:{project}) before recall results are finalized. Only effective when a project is configured."
+                        "description": "When true, code-shaped queries can gather matching concepts from the project's code memoir (code:{project}) using extracted code terms before recall results are finalized. Only effective when a project is configured, and the expanded hits are merged ahead of the globally visible '_shared' fallback results."
                     }
                 },
                 "required": ["query"],

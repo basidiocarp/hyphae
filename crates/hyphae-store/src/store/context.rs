@@ -93,6 +93,16 @@ fn has_snake_case(s: &str) -> bool {
 }
 
 const MAX_CODE_TERMS: usize = 8;
+const MAX_CODE_CONTEXT_CONCEPTS: usize = 5;
+const MIN_STRUCTURAL_FRAGMENT_LEN: usize = 3;
+const WRAPPER_WORDS: &[&str] = &["service", "manager", "controller", "handler", "impl"];
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+enum StructuralMatchKind {
+    Exact,
+    Prefix,
+    Contains,
+}
 
 fn push_code_term(
     term: &str,
@@ -174,6 +184,197 @@ fn extract_code_terms(query: &str) -> Vec<String> {
     terms
 }
 
+fn normalize_structural_fragment(fragment: &str) -> Option<String> {
+    let normalized: String = fragment
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+
+    if normalized.len() >= MIN_STRUCTURAL_FRAGMENT_LEN {
+        return Some(normalized);
+    }
+
+    if normalized.len() >= 2
+        && fragment
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+    {
+        return Some(normalized);
+    }
+
+    None
+}
+
+fn is_wrapper_word(fragment: &str) -> bool {
+    let normalized: String = fragment
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+
+    WRAPPER_WORDS.contains(&normalized.as_str())
+}
+
+fn split_camel_case(segment: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let chars: Vec<(usize, char)> = segment.char_indices().collect();
+
+    if chars.len() < 2 {
+        return parts;
+    }
+
+    let mut saw_boundary = false;
+    for i in 1..chars.len() {
+        let prev = chars[i - 1].1;
+        let curr = chars[i].1;
+        let next = chars.get(i + 1).map(|(_, c)| *c);
+
+        let boundary = (prev.is_ascii_lowercase() && curr.is_ascii_uppercase())
+            || (prev.is_ascii_uppercase()
+                && curr.is_ascii_uppercase()
+                && next.is_some_and(|c| c.is_ascii_lowercase()));
+
+        if boundary {
+            parts.push(&segment[start..chars[i].0]);
+            start = chars[i].0;
+            saw_boundary = true;
+        }
+    }
+
+    if saw_boundary {
+        parts.push(&segment[start..]);
+    }
+
+    parts
+}
+
+fn collect_structural_fragments(
+    fragment: &str,
+    seen: &mut HashSet<String>,
+    fragments: &mut Vec<String>,
+) {
+    if fragments.len() >= MAX_CODE_CONTEXT_CONCEPTS {
+        return;
+    }
+
+    let trimmed = fragment.trim_matches(|c: char| {
+        !c.is_ascii_alphanumeric() && c != '_' && c != '/' && c != '.' && c != ':'
+    });
+    if trimmed.is_empty() {
+        return;
+    }
+
+    if trimmed.contains('/') || trimmed.contains(':') {
+        for segment in trimmed
+            .split(['/', ':'])
+            .filter(|segment| !segment.is_empty())
+        {
+            collect_structural_fragments(segment, seen, fragments);
+            if fragments.len() >= MAX_CODE_CONTEXT_CONCEPTS {
+                return;
+            }
+        }
+        return;
+    }
+
+    if let Some((stem, ext)) = trimmed.rsplit_once('.') {
+        if !stem.is_empty() && !ext.is_empty() {
+            collect_structural_fragments(stem, seen, fragments);
+            if fragments.len() >= MAX_CODE_CONTEXT_CONCEPTS {
+                return;
+            }
+        }
+    }
+
+    let mut pieces = Vec::new();
+    let mut saw_split = false;
+    for segment in trimmed.split('_').filter(|segment| !segment.is_empty()) {
+        let camel_parts = split_camel_case(segment);
+        if !camel_parts.is_empty() {
+            saw_split = true;
+            pieces.extend(camel_parts);
+        } else if trimmed.contains('_') {
+            saw_split = true;
+            pieces.push(segment);
+        }
+    }
+
+    if !saw_split {
+        return;
+    }
+
+    let pieces: Vec<&str> = pieces
+        .into_iter()
+        .filter(|piece| !is_wrapper_word(piece))
+        .collect();
+
+    if pieces.is_empty() {
+        return;
+    }
+
+    for piece in pieces {
+        if fragments.len() >= MAX_CODE_CONTEXT_CONCEPTS {
+            return;
+        }
+
+        if let Some(normalized) = normalize_structural_fragment(piece) {
+            if seen.insert(normalized.clone()) {
+                fragments.push(normalized);
+            }
+        }
+    }
+}
+
+fn structural_fallback_fragments(terms: &[String]) -> Vec<String> {
+    let mut fragments = Vec::new();
+    let mut seen = HashSet::new();
+
+    for term in terms {
+        collect_structural_fragments(term, &mut seen, &mut fragments);
+        if fragments.len() >= MAX_CODE_CONTEXT_CONCEPTS {
+            break;
+        }
+    }
+
+    fragments
+}
+
+fn structural_match_kind(normalized_name: &str, fragment: &str) -> Option<StructuralMatchKind> {
+    if normalized_name == fragment {
+        Some(StructuralMatchKind::Exact)
+    } else if normalized_name.starts_with(fragment) {
+        Some(StructuralMatchKind::Prefix)
+    } else if normalized_name.contains(fragment) {
+        Some(StructuralMatchKind::Contains)
+    } else {
+        None
+    }
+}
+
+fn best_structural_match(
+    concept_name: &str,
+    fragments: &[String],
+) -> Option<(StructuralMatchKind, usize)> {
+    let normalized_name = normalize_structural_fragment(concept_name)
+        .unwrap_or_else(|| concept_name.to_ascii_lowercase());
+    let mut best: Option<(StructuralMatchKind, usize)> = None;
+
+    for (fragment_index, fragment) in fragments.iter().enumerate() {
+        let Some(kind) = structural_match_kind(&normalized_name, fragment) else {
+            continue;
+        };
+
+        let candidate = (kind, fragment_index);
+        if best.is_none() || candidate < best.unwrap() {
+            best = Some(candidate);
+        }
+    }
+
+    best
+}
+
 // ---------------------------------------------------------------------------
 // Code-context expansion
 // ---------------------------------------------------------------------------
@@ -204,7 +405,7 @@ pub fn expand_with_code_context(store: &SqliteStore, query: &str, project: &str)
     let mut seen = HashSet::new();
 
     for term in &terms {
-        if concepts.len() >= 5 {
+        if concepts.len() >= MAX_CODE_CONTEXT_CONCEPTS {
             break;
         }
         if let Ok(Some(concept)) = store.get_concept_by_name(&memoir.id, term) {
@@ -215,19 +416,61 @@ pub fn expand_with_code_context(store: &SqliteStore, query: &str, project: &str)
     }
 
     for term in &terms {
-        if concepts.len() >= 5 {
+        if concepts.len() >= MAX_CODE_CONTEXT_CONCEPTS {
             break;
         }
-        let matches = match store.search_concepts_fts(&memoir.id, term, 5) {
+        let matches = match store.search_concepts_fts(&memoir.id, term, MAX_CODE_CONTEXT_CONCEPTS) {
             Ok(c) => c,
             Err(_) => break,
         };
         for concept in matches {
-            if concepts.len() >= 5 {
+            if concepts.len() >= MAX_CODE_CONTEXT_CONCEPTS {
                 break;
             }
             if seen.insert(concept.name.clone()) {
                 concepts.push(concept);
+            }
+        }
+    }
+
+    if concepts.len() < MAX_CODE_CONTEXT_CONCEPTS {
+        let fallback_fragments = structural_fallback_fragments(&terms);
+        if !fallback_fragments.is_empty() {
+            let memoir_concepts = match store.list_concepts(&memoir.id) {
+                Ok(concepts) => concepts,
+                Err(_) => return concepts.into_iter().map(|c| c.name).collect(),
+            };
+
+            let mut ranked_matches: Vec<(
+                StructuralMatchKind,
+                usize,
+                hyphae_core::memoir::Concept,
+            )> = memoir_concepts
+                .into_iter()
+                .filter_map(|concept| {
+                    if seen.contains(&concept.name) {
+                        return None;
+                    }
+
+                    best_structural_match(&concept.name, &fallback_fragments)
+                        .map(|(kind, fragment_index)| (kind, fragment_index, concept))
+                })
+                .collect();
+
+            ranked_matches.sort_by(|left, right| {
+                left.0
+                    .cmp(&right.0)
+                    .then(left.1.cmp(&right.1))
+                    .then(left.2.name.cmp(&right.2.name))
+            });
+
+            for (_, _, concept) in ranked_matches {
+                if concepts.len() >= MAX_CODE_CONTEXT_CONCEPTS {
+                    break;
+                }
+                if seen.insert(concept.name.clone()) {
+                    concepts.push(concept);
+                }
             }
         }
     }
@@ -350,6 +593,94 @@ mod tests {
             terms.contains(&"TokenValidator".to_string()),
             "should include TokenValidator in expanded terms, got: {terms:?}"
         );
+    }
+
+    #[test]
+    fn test_expand_uses_structural_fallback_for_compound_terms() {
+        let store = make_store();
+        let memoir_id = make_memoir(&store, "code:myproject");
+
+        add_concept(
+            &store,
+            &memoir_id,
+            "TokenValidator",
+            "Validates auth tokens",
+        );
+        add_concept(
+            &store,
+            &memoir_id,
+            "DatabasePool",
+            "Manages database connection pooling",
+        );
+
+        let terms = expand_with_code_context(
+            &store,
+            "previous src/TokenValidatorService.rs failure",
+            "myproject",
+        );
+
+        assert!(
+            terms.contains(&"TokenValidator".to_string()),
+            "structural fallback should recover TokenValidator from a compound path term, got: {terms:?}"
+        );
+    }
+
+    #[test]
+    fn test_expand_strips_wrapper_words_before_fallback() {
+        let store = make_store();
+        let memoir_id = make_memoir(&store, "code:myproject");
+
+        add_concept(&store, &memoir_id, "Foo", "Primary structural match");
+        add_concept(&store, &memoir_id, "Service", "Wrapper noise");
+        add_concept(&store, &memoir_id, "Manager", "Wrapper noise");
+        add_concept(&store, &memoir_id, "Controller", "Wrapper noise");
+        add_concept(&store, &memoir_id, "Impl", "Wrapper noise");
+
+        let terms = expand_with_code_context(
+            &store,
+            "src/FooServiceManagerControllerImpl.rs",
+            "myproject",
+        );
+
+        assert_eq!(terms, vec!["Foo".to_string()]);
+    }
+
+    #[test]
+    fn test_expand_ranks_exact_prefix_and_contains_matches() {
+        let store = make_store();
+        let memoir_id = make_memoir(&store, "code:myproject");
+
+        add_concept(&store, &memoir_id, "Foo", "Exact structural match");
+        add_concept(&store, &memoir_id, "FooRunner", "Prefix structural match");
+        add_concept(
+            &store,
+            &memoir_id,
+            "MyFooThing",
+            "Contains-only structural match",
+        );
+
+        let terms = expand_with_code_context(&store, "src/FooService.rs", "myproject");
+
+        assert_eq!(
+            terms,
+            vec![
+                "Foo".to_string(),
+                "FooRunner".to_string(),
+                "MyFooThing".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_expand_keeps_short_acronym_fragments() {
+        let store = make_store();
+        let memoir_id = make_memoir(&store, "code:myproject");
+
+        add_concept(&store, &memoir_id, "IOManager", "Handles IO resources");
+
+        let terms = expand_with_code_context(&store, "src/IOManagerService.rs", "myproject");
+
+        assert_eq!(terms, vec!["IOManager".to_string()]);
     }
 
     #[test]

@@ -96,14 +96,14 @@ ok:01HWXYZ123456789ABCDEF
 | `session_id` | string | no | -- | Explicit session id from `hyphae_session_start`; use this for scoped attribution when one project has parallel sessions |
 | `project_root` | string | no | -- | Repository root for identity-v1 worktree scoping; must be paired with `worktree_id` |
 | `worktree_id` | string | no | -- | Worktree identifier for identity-v1 scoping; must be paired with `project_root` |
-| `code_context` | boolean | no | `false` | For code-shaped queries, expand through `code:{project}` memoir concepts using extracted code terms before finalizing recall |
+| `code_context` | boolean | no | `false` | For code-shaped queries, gather `code:{project}` memoir concepts using extracted code terms and merge those hits ahead of the globally visible `_shared` fallback results |
 
 Automatic behaviors:
 - Auto-decay: applies decay if >24h since last run
 - Access update: increments the access counter for each result
 - Context-aware recall: session-shaped queries boost `session/*` memories first
-- Context-aware recall: when `code_context: true` and the query looks code-related, recall expands with matching `code:{project}` concepts using extracted code terms
-- Context-aware recall: identity-v1 worktree scoping still applies to the primary query and any code-context expansion
+- Context-aware recall: when `code_context: true` and the query looks code-related, recall gathers matching `code:{project}` concepts using extracted code terms before merging the globally visible `_shared` fallback pool
+- Context-aware recall: identity-v1 worktree scoping applies to the primary query and any code-context expansion, while `_shared` fallback results remain visible
 
 **Example request:**
 ```json

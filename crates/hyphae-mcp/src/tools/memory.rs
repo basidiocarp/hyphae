@@ -138,64 +138,54 @@ fn search_primary_fts(
     Ok(results)
 }
 
-fn boost_session_results(
+fn collect_session_candidates(
     store: &SqliteStore,
     query: &str,
     limit: usize,
     project: Option<&str>,
     scoped_worktree: Option<&str>,
-    mut results: Vec<Memory>,
 ) -> Vec<Memory> {
-    let session_limit = 5usize.min(limit);
+    let session_limit = 5usize.min(limit.max(1));
     let session_hits = if let Some(worktree) = scoped_worktree {
         store.search_fts_scoped(query, session_limit * 4, 0, project, Some(worktree))
     } else {
         store.search_fts(query, session_limit * 4, 0, project)
     };
-    if let Ok(session_hits) = session_hits {
-        let existing_ids: std::collections::HashSet<String> =
-            results.iter().map(|m| m.id.to_string()).collect();
-        let session_mems: Vec<_> = session_hits
+
+    match session_hits {
+        Ok(session_hits) => session_hits
             .into_iter()
-            .filter(|m| {
-                m.topic.starts_with("session/") && !existing_ids.contains(&m.id.to_string())
-            })
+            .filter(|m| m.topic.starts_with("session/"))
             .take(session_limit)
-            .collect();
-        if !session_mems.is_empty() {
-            let mut boosted = session_mems;
-            boosted.append(&mut results);
-            boosted.truncate(limit);
-            return boosted;
+            .collect(),
+        Err(e) => {
+            tracing::warn!("context-aware recall session search failed: {e}");
+            Vec::new()
         }
     }
-    results
 }
 
-fn expand_code_context_results(
+fn collect_code_context_candidates(
     store: &SqliteStore,
     extra_terms: &[String],
     limit: usize,
     offset: usize,
     project: Option<&str>,
     scoped_worktree: Option<&str>,
-    mut results: Vec<Memory>,
 ) -> Vec<Memory> {
     if extra_terms.is_empty() {
-        return results;
+        return Vec::new();
     }
 
-    let mut existing_ids: std::collections::HashSet<String> =
-        results.iter().map(|m| m.id.to_string()).collect();
+    let branch_limit = limit.saturating_mul(4).max(4);
+    let mut results = Vec::new();
+    let mut existing_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for term in extra_terms {
-        if results.len() >= limit {
-            break;
-        }
         let expanded = if let Some(worktree) = scoped_worktree {
-            store.search_fts_scoped(term, limit, offset, project, Some(worktree))
+            store.search_fts_scoped(term, branch_limit, offset, project, Some(worktree))
         } else {
-            store.search_fts(term, limit, offset, project)
+            store.search_fts(term, branch_limit, offset, project)
         };
 
         if let Ok(expanded) = expanded {
@@ -204,9 +194,56 @@ fn expand_code_context_results(
                 if existing_ids.insert(mem_id) {
                     results.push(mem);
                 }
-                if results.len() >= limit {
+                if results.len() >= branch_limit {
                     break;
                 }
+            }
+        }
+
+        if results.len() >= branch_limit {
+            break;
+        }
+    }
+
+    results.truncate(branch_limit);
+    results
+}
+
+fn collect_shared_candidates(
+    store: &SqliteStore,
+    query: &str,
+    limit: usize,
+    project: Option<&str>,
+    _scoped_worktree: Option<&str>,
+) -> Vec<Memory> {
+    let should_merge = matches!(project, Some(p) if p != hyphae_store::SHARED_PROJECT);
+    if !should_merge {
+        return Vec::new();
+    }
+
+    let shared = store.search_fts(
+        query,
+        limit.saturating_mul(4).max(4),
+        0,
+        Some(hyphae_store::SHARED_PROJECT),
+    );
+    match shared {
+        Ok(shared_results) => shared_results,
+        Err(e) => {
+            tracing::warn!("context-aware recall shared search failed: {e}");
+            Vec::new()
+        }
+    }
+}
+
+fn merge_prioritized_candidates(branches: Vec<Vec<Memory>>, limit: usize) -> Vec<Memory> {
+    let mut results = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for branch in branches {
+        for mem in branch {
+            if seen.insert(mem.id.to_string()) {
+                results.push(mem);
             }
         }
     }
@@ -224,26 +261,49 @@ fn run_context_aware_recall(
     scoped_worktree: Option<&str>,
     heuristics: &RecallHeuristics,
 ) -> Result<Vec<Memory>, ToolResult> {
-    let mut results = search_primary_fts(store, query, limit, offset, project, scoped_worktree)?;
-    results = merge_shared_fts(store, query, limit, project, scoped_worktree, results);
+    let mut branches = Vec::new();
 
     if heuristics.session_query {
-        results = boost_session_results(store, query, limit, project, scoped_worktree, results);
+        branches.push(collect_session_candidates(
+            store,
+            query,
+            limit,
+            project,
+            scoped_worktree,
+        ));
     }
 
     if !heuristics.code_expansion_terms.is_empty() {
-        results = expand_code_context_results(
+        branches.push(collect_code_context_candidates(
             store,
             &heuristics.code_expansion_terms,
             limit,
             offset,
             project,
             scoped_worktree,
-            results,
-        );
+        ));
     }
 
-    Ok(results)
+    branches.push(search_primary_fts(
+        store,
+        query,
+        limit,
+        offset,
+        project,
+        scoped_worktree,
+    )?);
+
+    if matches!(project, Some(p) if p != hyphae_store::SHARED_PROJECT) {
+        branches.push(collect_shared_candidates(
+            store,
+            query,
+            limit,
+            project,
+            scoped_worktree,
+        ));
+    }
+
+    Ok(merge_prioritized_candidates(branches, limit))
 }
 
 pub(crate) fn tool_store(
@@ -1078,35 +1138,6 @@ fn merge_shared_hybrid(
     scored_results
 }
 
-/// Merge _shared results into FTS search results when the caller is
-/// searching a specific project (not `_shared` itself, not global).
-fn merge_shared_fts(
-    store: &SqliteStore,
-    query: &str,
-    limit: usize,
-    project: Option<&str>,
-    _worktree: Option<&str>,
-    mut results: Vec<Memory>,
-) -> Vec<Memory> {
-    let should_merge = matches!(project, Some(p) if p != hyphae_store::SHARED_PROJECT);
-    if !should_merge {
-        return results;
-    }
-
-    let shared = store.search_fts(query, limit, 0, Some(hyphae_store::SHARED_PROJECT));
-    if let Ok(shared_results) = shared {
-        let existing_ids: std::collections::HashSet<String> =
-            results.iter().map(|m| m.id.to_string()).collect();
-        for mem in shared_results {
-            if !existing_ids.contains(&mem.id.to_string()) {
-                results.push(mem);
-            }
-        }
-        results.truncate(limit);
-    }
-    results
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // hyphae_recall_global MCP tool
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1784,14 +1815,14 @@ mod tests {
         store_memory(
             &store,
             "notes",
-            "login flow login flow login flow root cause summary",
+            "login flow root cause summary",
             Some("demo"),
             None,
         );
         store_memory(
             &store,
             "session/demo",
-            "previous login flow fix applied to the auth redirect",
+            "previous session login flow fix applied to the auth redirect",
             Some("demo"),
             None,
         );
@@ -1799,7 +1830,7 @@ mod tests {
         let result = tool_recall(
             &store,
             None,
-            &json!({"query": "previous session login flow", "limit": 5}),
+            &json!({"query": "previous session login flow", "limit": 1}),
             true,
             Some("demo"),
         );
@@ -1846,6 +1877,110 @@ mod tests {
                 .contains("TokenValidator panic on expired token"),
             "code-context expansion should surface the related memory, got: {}",
             result.content[0].text
+        );
+    }
+
+    #[test]
+    fn test_tool_recall_prioritizes_code_context_hits_over_primary_results() {
+        let store = test_store();
+        let memoir_id = make_code_memoir(&store, "demo");
+        add_concept(
+            &store,
+            &memoir_id,
+            "TokenValidator",
+            "verify_token auth validation path",
+        );
+        store_memory(
+            &store,
+            "errors/resolved",
+            "TokenValidator panic on expired token",
+            Some("demo"),
+            None,
+        );
+        store_memory(
+            &store,
+            "notes",
+            "verify_token failure root cause review",
+            Some("demo"),
+            None,
+        );
+
+        let result = tool_recall(
+            &store,
+            None,
+            &json!({"query": "verify_token failure", "code_context": true, "limit": 1}),
+            true,
+            Some("demo"),
+        );
+
+        assert!(!result.is_error);
+        let output = &result.content[0].text;
+        let first_line = output.lines().next().unwrap_or_default();
+        assert!(
+            first_line.contains("TokenValidator panic on expired token"),
+            "code-context expansion should beat primary results at the limit, got: {output}"
+        );
+        assert!(!output.contains("verify_token failure root cause review"));
+    }
+
+    #[test]
+    fn test_tool_recall_keeps_shared_fallback_last_when_specific_hits_exist() {
+        let store = test_store();
+        let memoir_id = make_code_memoir(&store, "demo");
+        add_concept(
+            &store,
+            &memoir_id,
+            "TokenValidator",
+            "verify_token auth validation path",
+        );
+        store_memory(
+            &store,
+            "errors/resolved",
+            "TokenValidator panic on expired token",
+            Some("demo"),
+            None,
+        );
+        store_memory(
+            &store,
+            "notes",
+            "verify_token failure root cause review",
+            Some("demo"),
+            None,
+        );
+        store_memory(
+            &store,
+            "shared-notes",
+            "verify_token failure was tracked in shared notes",
+            Some(hyphae_store::SHARED_PROJECT),
+            None,
+        );
+
+        let result = tool_recall(
+            &store,
+            None,
+            &json!({"query": "verify_token failure", "code_context": true, "limit": 3}),
+            true,
+            Some("demo"),
+        );
+
+        assert!(!result.is_error);
+        let lines: Vec<&str> = result.content[0].text.lines().collect();
+        assert_eq!(
+            lines.len(),
+            3,
+            "expected three prioritized results, got: {lines:?}"
+        );
+        assert!(
+            lines[0].contains("TokenValidator panic on expired token"),
+            "code-context hit should come first, got: {lines:?}"
+        );
+        assert!(
+            lines[1].contains("verify_token failure root cause review"),
+            "primary project hit should come after code-context hits, got: {lines:?}"
+        );
+        assert!(
+            lines[2].contains("verify_token failure was tracked in shared notes"),
+            "shared fallback should come last, got: {lines:?}"
         );
     }
 
