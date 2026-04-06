@@ -4,7 +4,8 @@ use chrono::Utc;
 use rusqlite::{OptionalExtension, params};
 
 use hyphae_core::{
-    HyphaeError, HyphaeResult, Memory, MemoryId, MemoryStore, StoreStats, TopicHealth,
+    DEFAULT_CONSOLIDATION_THRESHOLD, HyphaeError, HyphaeResult, Memory, MemoryId, MemoryStore,
+    StoreStats, TopicHealth,
 };
 
 use super::SqliteStore;
@@ -604,7 +605,7 @@ impl SqliteStore {
             oldest: parse_opt_dt(oldest_str),
             newest: parse_opt_dt(newest_str),
             last_accessed: parse_opt_dt(last_accessed_str),
-            needs_consolidation: entry_count > 5,
+            needs_consolidation: entry_count >= DEFAULT_CONSOLIDATION_THRESHOLD,
             stale_count,
         })
     }
@@ -1514,7 +1515,7 @@ impl MemoryStore for SqliteStore {
             oldest: parse_opt_dt(oldest_str),
             newest: parse_opt_dt(newest_str),
             last_accessed: parse_opt_dt(last_accessed_str),
-            needs_consolidation: entry_count > 5,
+            needs_consolidation: entry_count >= DEFAULT_CONSOLIDATION_THRESHOLD,
             stale_count,
         })
     }

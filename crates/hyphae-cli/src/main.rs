@@ -73,6 +73,7 @@ fn all_projects_allowed(command: &Commands) -> bool {
         | Commands::Memoir(_)
         | Commands::Feedback(_)
         | Commands::Prune { .. }
+        | Commands::Consolidate { .. }
         | Commands::ImportClaudeMemory { .. }
         | Commands::CodexNotify { .. }
         | Commands::IngestSessions { .. }
@@ -271,6 +272,7 @@ fn main() -> Result<()> {
         } => {
             commands::memory::cmd_health(
                 &store,
+                &cfg.consolidation,
                 topic,
                 include_invalidated,
                 json,
@@ -304,6 +306,7 @@ fn main() -> Result<()> {
             hyphae_mcp::run_server(
                 &store,
                 embedder_ref,
+                &cfg.consolidation,
                 compact || cfg.mcp.compact,
                 resolved_project,
                 cfg.memory.reject_secrets,
@@ -383,7 +386,7 @@ fn main() -> Result<()> {
         }
 
         Commands::Session(args) => {
-            commands::session::dispatch(&store, args)?;
+            commands::session::dispatch(&store, embedder_ref, args)?;
         }
 
         Commands::Feedback(args) => {
@@ -408,6 +411,25 @@ fn main() -> Result<()> {
 
         Commands::Prune { threshold, dry_run } => {
             commands::prune::cmd_prune(&store, threshold, dry_run)?;
+        }
+
+        Commands::Consolidate {
+            topic,
+            all,
+            above_threshold,
+            dry_run,
+            yes,
+        } => {
+            commands::consolidate::cmd_consolidate(
+                &store,
+                &cfg.consolidation,
+                topic,
+                all,
+                above_threshold,
+                dry_run,
+                yes,
+                resolved_project,
+            )?;
         }
 
         Commands::ImportClaudeMemory {
@@ -569,6 +591,9 @@ mod tests {
                 worktree_id: None,
                 scope: None,
                 runtime_session_id: None,
+                recent_files: Vec::new(),
+                active_errors: Vec::new(),
+                git_branch: None,
             },
         })));
         assert!(!all_projects_allowed(&Commands::Project(ProjectArgs {

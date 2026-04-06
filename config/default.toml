@@ -15,6 +15,15 @@ decay_rate = 0.95
 # Weight threshold for automatic pruning
 prune_threshold = 0.1
 
+[consolidation]
+# Default topic consolidation threshold
+default_threshold = 15
+
+[consolidation.topics]
+# "errors/active" = "exempt"
+# "errors/resolved" = "exempt"
+# "exploration" = 8
+
 [embeddings]
 # Embedding model (fastembed model_code). Default: bge-small-en-v1.5 (384d, English, fast)
 # Other options:

@@ -288,6 +288,25 @@ pub(crate) enum Commands {
         dry_run: bool,
     },
 
+    /// Consolidate memories in a topic or bulk consolidate topics above threshold
+    Consolidate {
+        /// Topic to consolidate
+        #[arg(short, long, conflicts_with_all = ["all", "above_threshold"])]
+        topic: Option<String>,
+        /// Consolidate all topics above their configured threshold
+        #[arg(long, conflicts_with = "topic")]
+        all: bool,
+        /// Consolidate topics with at least this many memories
+        #[arg(long = "above-threshold", conflicts_with_all = ["topic", "all"])]
+        above_threshold: Option<usize>,
+        /// Show what would be consolidated without changing anything
+        #[arg(long)]
+        dry_run: bool,
+        /// Skip confirmation when consolidating multiple topics
+        #[arg(long)]
+        yes: bool,
+    },
+
     /// Import Claude Code auto-memory files into hyphae
     ImportClaudeMemory {
         /// Path to a specific Claude Code project memory directory

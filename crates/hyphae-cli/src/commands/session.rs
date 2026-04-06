@@ -1,6 +1,8 @@
 use anyhow::Result;
 use clap::{Args, Subcommand};
+use serde_json::{Value, json};
 
+use hyphae_core::Embedder;
 use hyphae_store::SqliteStore;
 
 const SESSION_STATUS_SCHEMA_VERSION: &str = "1.0";
@@ -35,6 +37,15 @@ pub(crate) enum SessionCommand {
         /// Optional external runtime session id for cross-tool correlation
         #[arg(long)]
         runtime_session_id: Option<String>,
+        /// Recent files that should influence recall
+        #[arg(long, value_delimiter = ',')]
+        recent_files: Vec<String>,
+        /// Active errors that should influence recall
+        #[arg(long, value_delimiter = ',')]
+        active_errors: Vec<String>,
+        /// Git branch to include in recall signals
+        #[arg(long)]
+        git_branch: Option<String>,
     },
 
     /// End an active coding session
@@ -118,7 +129,11 @@ pub(crate) enum SessionCommand {
     },
 }
 
-pub(crate) fn dispatch(store: &SqliteStore, args: SessionArgs) -> Result<()> {
+pub(crate) fn dispatch(
+    store: &SqliteStore,
+    embedder: Option<&dyn Embedder>,
+    args: SessionArgs,
+) -> Result<()> {
     match args.command {
         SessionCommand::Start {
             project,
@@ -127,14 +142,21 @@ pub(crate) fn dispatch(store: &SqliteStore, args: SessionArgs) -> Result<()> {
             worktree_id,
             scope,
             runtime_session_id,
+            recent_files,
+            active_errors,
+            git_branch,
         } => cmd_start(
             store,
+            embedder,
             &project,
             task.as_deref(),
             project_root.as_deref(),
             worktree_id.as_deref(),
             scope.as_deref(),
             runtime_session_id.as_deref(),
+            &recent_files,
+            &active_errors,
+            git_branch.as_deref(),
         ),
         SessionCommand::End {
             id,
@@ -190,22 +212,39 @@ pub(crate) fn dispatch(store: &SqliteStore, args: SessionArgs) -> Result<()> {
 
 fn cmd_start(
     store: &SqliteStore,
+    embedder: Option<&dyn Embedder>,
     project: &str,
     task: Option<&str>,
     project_root: Option<&str>,
     worktree_id: Option<&str>,
     scope: Option<&str>,
     runtime_session_id: Option<&str>,
+    recent_files: &[String],
+    active_errors: &[String],
+    git_branch: Option<&str>,
 ) -> Result<()> {
     let (project_root, worktree_id) = normalize_identity(project_root, worktree_id);
-    let (session_id, _started_at) = store.session_start_identity_with_runtime(
-        project,
-        task,
-        project_root,
-        worktree_id,
-        scope,
-        runtime_session_id,
-    )?;
+    let context_signals =
+        if recent_files.is_empty() && active_errors.is_empty() && git_branch.is_none() {
+            None
+        } else {
+            Some(json!({
+                "recent_files": recent_files,
+                "active_errors": active_errors,
+                "git_branch": git_branch,
+            }))
+        };
+    let (session_id, _started_at, _recalled_context) = store
+        .session_start_identity_with_runtime_and_context_signals(
+            project,
+            task,
+            project_root,
+            worktree_id,
+            scope,
+            runtime_session_id,
+            context_signals.as_ref(),
+            embedder,
+        )?;
     println!("{session_id}");
     Ok(())
 }
@@ -470,6 +509,7 @@ fn normalize_identity<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
     use hyphae_core::MemoryStore;
 
     fn test_store() -> SqliteStore {
@@ -482,11 +522,15 @@ mod tests {
 
         cmd_start(
             &store,
+            None,
             "demo-project",
             Some("implement feedback loop"),
             None,
             None,
             None,
+            None,
+            &[],
+            &[],
             None,
         )
         .unwrap();
@@ -498,26 +542,69 @@ mod tests {
     }
 
     #[test]
+    fn test_session_start_cli_flags_parse_into_context_signals() {
+        let cli = crate::cli::Cli::parse_from([
+            "hyphae",
+            "session",
+            "start",
+            "--project",
+            "demo-project",
+            "--recent-files",
+            "src/main.rs,src/lib.rs",
+            "--active-errors",
+            "failed build,missing context",
+            "--git-branch",
+            "feat/context-aware-recall",
+        ]);
+
+        let crate::cli::Commands::Session(args) = cli.command else {
+            panic!("expected session command");
+        };
+
+        let SessionCommand::Start {
+            recent_files,
+            active_errors,
+            git_branch,
+            ..
+        } = args.command
+        else {
+            panic!("expected session start");
+        };
+
+        assert_eq!(recent_files, vec!["src/main.rs", "src/lib.rs"]);
+        assert_eq!(active_errors, vec!["failed build", "missing context"]);
+        assert_eq!(git_branch.as_deref(), Some("feat/context-aware-recall"));
+    }
+
+    #[test]
     fn test_session_start_with_identity_v1_and_scope_keeps_parallel_sessions_distinct() {
         let store = test_store();
 
         cmd_start(
             &store,
+            None,
             "demo-project",
             Some("worker one"),
             Some("/repo/demo"),
             Some("wt-alpha"),
             Some("worker-a"),
             None,
+            &[],
+            &[],
+            None,
         )
         .unwrap();
         cmd_start(
             &store,
+            None,
             "demo-project",
             Some("worker two"),
             Some("/repo/demo"),
             Some("wt-alpha"),
             Some("worker-b"),
+            None,
+            &[],
+            &[],
             None,
         )
         .unwrap();
@@ -603,21 +690,29 @@ mod tests {
 
         cmd_start(
             &store,
+            None,
             "demo-project",
             Some("worker one"),
             None,
             None,
             Some("worker-a"),
             None,
+            &[],
+            &[],
+            None,
         )
         .unwrap();
         cmd_start(
             &store,
+            None,
             "demo-project",
             Some("worker two"),
             None,
             None,
             Some("worker-b"),
+            None,
+            &[],
+            &[],
             None,
         )
         .unwrap();
@@ -636,11 +731,15 @@ mod tests {
 
         cmd_start(
             &store,
+            None,
             "demo-project",
             Some("worker one"),
             None,
             None,
             Some("worker-a"),
+            None,
+            &[],
+            &[],
             None,
         )
         .unwrap();
@@ -655,7 +754,7 @@ mod tests {
             },
         };
 
-        let result = dispatch(&store, args);
+        let result = dispatch(&store, None, args);
         assert!(result.is_ok());
     }
 
@@ -683,11 +782,15 @@ mod tests {
 
         cmd_start(
             &store,
+            None,
             "demo-project",
             Some("worker one"),
             Some("/repo/demo"),
             Some("wt-alpha"),
             Some("worker-a"),
+            None,
+            &[],
+            &[],
             None,
         )
         .unwrap();
@@ -712,11 +815,15 @@ mod tests {
 
         cmd_start(
             &store,
+            None,
             "demo-project",
             Some("worker one"),
             Some("/repo/demo"),
             None,
             Some("worker-a"),
+            None,
+            &[],
+            &[],
             None,
         )
         .unwrap();

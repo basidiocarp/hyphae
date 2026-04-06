@@ -5,6 +5,7 @@ pub mod backup;
 pub mod bench;
 pub mod changelog;
 pub mod codex_notify;
+pub mod consolidate;
 pub mod context;
 pub mod docs;
 pub mod doctor;
@@ -32,6 +33,14 @@ pub(crate) fn cmd_config(cfg: &Config) {
     println!("    Default Importance: {}", cfg.memory.default_importance);
     println!("    Decay Rate: {}", cfg.memory.decay_rate);
     println!("    Prune Threshold: {}", cfg.memory.prune_threshold);
+    println!(
+        "    Consolidation Default Threshold: {}",
+        cfg.consolidation.default_threshold
+    );
+    println!(
+        "    Consolidation Topic Rules: {}",
+        cfg.consolidation.topics.len()
+    );
     println!();
     println!("  Extraction Settings:");
     println!("    Enabled: {}", cfg.extraction.enabled);

@@ -14,7 +14,7 @@ mod onboard;
 mod schema;
 mod session;
 
-pub use dispatch::call_tool;
+pub use dispatch::{call_tool, call_tool_with_consolidation};
 
 // ===========================================================================
 // Tool schemas for tools/list
@@ -2312,7 +2312,15 @@ mod tests {
             "content": "api_key = sk1234567890abcdefghij",
             "importance": "medium"
         });
-        let result = memory::tool_store(&store, None, &args, false, None, true);
+        let result = memory::tool_store(
+            &store,
+            None,
+            &hyphae_core::ConsolidationConfig::default(),
+            &args,
+            false,
+            None,
+            true,
+        );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("Storing blocked"));
         assert!(result.content[0].text.contains("secrets detected"));
@@ -2326,7 +2334,15 @@ mod tests {
             "content": "ghp_1234567890abcdefghijklmnopqrstuvwxyz",
             "importance": "high"
         });
-        let result = memory::tool_store(&store, None, &args, false, None, true);
+        let result = memory::tool_store(
+            &store,
+            None,
+            &hyphae_core::ConsolidationConfig::default(),
+            &args,
+            false,
+            None,
+            true,
+        );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("Storing blocked"));
     }
@@ -2339,7 +2355,15 @@ mod tests {
             "content": "api_key = sk1234567890abcdefghij",
             "importance": "medium"
         });
-        let result = memory::tool_store(&store, None, &args, false, None, false);
+        let result = memory::tool_store(
+            &store,
+            None,
+            &hyphae_core::ConsolidationConfig::default(),
+            &args,
+            false,
+            None,
+            false,
+        );
         // Should store successfully (though it warns about secrets)
         assert!(!result.is_error);
     }
@@ -2352,7 +2376,15 @@ mod tests {
             "content": "How to debug memory issues in Rust",
             "importance": "medium"
         });
-        let result = memory::tool_store(&store, None, &args, false, None, true);
+        let result = memory::tool_store(
+            &store,
+            None,
+            &hyphae_core::ConsolidationConfig::default(),
+            &args,
+            false,
+            None,
+            true,
+        );
         assert!(!result.is_error);
     }
 
@@ -2364,7 +2396,15 @@ mod tests {
             "content": "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA...",
             "importance": "critical"
         });
-        let result = memory::tool_store(&store, None, &args, false, None, true);
+        let result = memory::tool_store(
+            &store,
+            None,
+            &hyphae_core::ConsolidationConfig::default(),
+            &args,
+            false,
+            None,
+            true,
+        );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("Storing blocked"));
         assert!(result.content[0].text.contains("private key"));
@@ -2378,7 +2418,15 @@ mod tests {
             "content": "AWS_ACCESS_KEY_ID = AKIAIOSFODNN7EXAMPLE",
             "importance": "high"
         });
-        let result = memory::tool_store(&store, None, &args, false, None, true);
+        let result = memory::tool_store(
+            &store,
+            None,
+            &hyphae_core::ConsolidationConfig::default(),
+            &args,
+            false,
+            None,
+            true,
+        );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("Storing blocked"));
         assert!(result.content[0].text.contains("AWS"));

@@ -11,6 +11,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 
 use crate::paths::default_config_path;
+use hyphae_core::ConsolidationConfig as MemoryConsolidationConfig;
 
 /// Top-level configuration.
 #[derive(Debug, Default, Deserialize)]
@@ -18,6 +19,7 @@ use crate::paths::default_config_path;
 pub struct Config {
     pub store: StoreConfig,
     pub memory: MemoryConfig,
+    pub consolidation: MemoryConsolidationConfig,
     pub embeddings: EmbeddingsConfig,
     pub extraction: ExtractionConfig,
     pub recall: RecallConfig,
@@ -179,6 +181,18 @@ impl Config {
             );
         }
 
+        if self.consolidation.default_threshold == 0 {
+            anyhow::bail!("invalid consolidation.default_threshold: must be > 0");
+        }
+
+        for (topic, rule) in &self.consolidation.topics {
+            if let hyphae_core::ConsolidationTopicRule::Threshold(value) = rule {
+                if *value == 0 {
+                    anyhow::bail!("invalid consolidation.topics.{topic}: thresholds must be > 0");
+                }
+            }
+        }
+
         if self.extraction.min_score <= 0.0 {
             anyhow::bail!(
                 "invalid extraction.min_score {}: must be > 0.0",
@@ -242,6 +256,8 @@ mod tests {
         assert_eq!(config.memory.decay_rate, 0.95);
         assert_eq!(config.recall.limit, 15);
         assert!(config.mcp.compact);
+        assert_eq!(config.consolidation.default_threshold, 15);
+        assert!(config.consolidation.topics.is_empty());
     }
 
     #[test]
@@ -254,6 +270,39 @@ decay_rate = 0.90
         assert_eq!(config.memory.decay_rate, 0.90);
         // Other fields should be defaults
         assert!(config.extraction.enabled);
+        assert_eq!(config.consolidation.default_threshold, 15);
+    }
+
+    #[test]
+    fn test_parse_consolidation_toml() {
+        let toml_str = r#"
+[consolidation]
+default_threshold = 15
+
+[consolidation.topics]
+"errors/active" = "exempt"
+"exploration" = 8
+"decisions/canopy" = 20
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+
+        assert_eq!(config.consolidation.default_threshold, 15);
+        assert_eq!(
+            config.consolidation.threshold_for_topic("errors/active"),
+            None
+        );
+        assert_eq!(
+            config.consolidation.threshold_for_topic("exploration"),
+            Some(8)
+        );
+        assert_eq!(
+            config.consolidation.threshold_for_topic("decisions/canopy"),
+            Some(20)
+        );
+        assert_eq!(
+            config.consolidation.threshold_for_topic("unlisted/topic"),
+            Some(15)
+        );
     }
 
     #[test]

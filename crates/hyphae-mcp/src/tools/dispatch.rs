@@ -4,7 +4,7 @@
 
 use serde_json::Value;
 
-use hyphae_core::Embedder;
+use hyphae_core::{ConsolidationConfig, Embedder};
 use hyphae_store::SqliteStore;
 
 use crate::protocol::ToolResult;
@@ -20,11 +20,39 @@ pub fn call_tool(
     project: Option<&str>,
     reject_secrets: bool,
 ) -> ToolResult {
+    call_tool_with_consolidation(
+        store,
+        embedder,
+        &ConsolidationConfig::default(),
+        name,
+        args,
+        compact,
+        project,
+        reject_secrets,
+    )
+}
+
+pub fn call_tool_with_consolidation(
+    store: &SqliteStore,
+    embedder: Option<&dyn Embedder>,
+    consolidation: &ConsolidationConfig,
+    name: &str,
+    args: &Value,
+    compact: bool,
+    project: Option<&str>,
+    reject_secrets: bool,
+) -> ToolResult {
     match name {
         // Memory tools
-        "hyphae_memory_store" => {
-            memory::tool_store(store, embedder, args, compact, project, reject_secrets)
-        }
+        "hyphae_memory_store" => memory::tool_store(
+            store,
+            embedder,
+            consolidation,
+            args,
+            compact,
+            project,
+            reject_secrets,
+        ),
         "hyphae_memory_recall" => memory::tool_recall(store, embedder, args, compact, project),
         "hyphae_memory_forget" => memory::tool_forget(store, args),
         "hyphae_memory_invalidate" => memory::tool_invalidate(store, args),
@@ -33,7 +61,9 @@ pub fn call_tool(
         "hyphae_memory_consolidate" => memory::tool_consolidate(store, args),
         "hyphae_memory_list_topics" => memory::tool_list_topics(store, project),
         "hyphae_memory_stats" => memory::tool_stats(store, project),
-        "hyphae_memory_health" => memory::tool_health(store, args, project),
+        "hyphae_memory_health" => {
+            memory::tool_health_with_rules(store, consolidation, args, project)
+        }
         "hyphae_memory_embed_all" => memory::tool_embed_all(store, embedder, args, project),
         "hyphae_extract_lessons" => memory::tool_extract_lessons(store, args, project),
         "hyphae_evaluate" => memory::tool_evaluate(store, args, project),
@@ -66,7 +96,7 @@ pub fn call_tool(
         // Context gathering
         "hyphae_gather_context" => context::tool_gather_context(store, args, project),
         // Session lifecycle tools
-        "hyphae_session_start" => session::tool_session_start(store, args),
+        "hyphae_session_start" => session::tool_session_start(store, embedder, args),
         "hyphae_session_end" => session::tool_session_end(store, args),
         "hyphae_session_context" => session::tool_session_context(store, args),
         // Onboarding

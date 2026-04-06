@@ -1,5 +1,7 @@
 use chrono::{DateTime, Duration, Utc};
+use serde::de::{self, Deserializer, Visitor};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt;
 
 use crate::ids::MemoryId;
@@ -7,6 +9,8 @@ use crate::ids::MemoryId;
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Weight(f32);
+
+pub const DEFAULT_CONSOLIDATION_THRESHOLD: usize = 15;
 
 impl Weight {
     pub fn new(v: f32) -> Option<Self> {
@@ -112,6 +116,101 @@ pub struct MemoryBuilder {
     invalidated_at: Option<DateTime<Utc>>,
     invalidation_reason: Option<String>,
     superseded_by: Option<MemoryId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConsolidationTopicRule {
+    Exempt,
+    Threshold(usize),
+}
+
+impl<'de> Deserialize<'de> for ConsolidationTopicRule {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ConsolidationTopicRuleVisitor;
+
+        impl<'de> Visitor<'de> for ConsolidationTopicRuleVisitor {
+            type Value = ConsolidationTopicRule;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("an integer threshold or the string \"exempt\"")
+            }
+
+            fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                if value == 0 {
+                    return Err(E::custom("consolidation threshold must be greater than 0"));
+                }
+                Ok(ConsolidationTopicRule::Threshold(value as usize))
+            }
+
+            fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                if value <= 0 {
+                    return Err(E::custom("consolidation threshold must be greater than 0"));
+                }
+                Ok(ConsolidationTopicRule::Threshold(value as usize))
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                match value.trim().to_ascii_lowercase().as_str() {
+                    "exempt" => Ok(ConsolidationTopicRule::Exempt),
+                    other => Err(E::custom(format!(
+                        "invalid consolidation rule {other:?}: expected a positive integer or \"exempt\""
+                    ))),
+                }
+            }
+
+            fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                self.visit_str(&value)
+            }
+        }
+
+        deserializer.deserialize_any(ConsolidationTopicRuleVisitor)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ConsolidationConfig {
+    pub default_threshold: usize,
+    #[serde(default)]
+    pub topics: HashMap<String, ConsolidationTopicRule>,
+}
+
+impl Default for ConsolidationConfig {
+    fn default() -> Self {
+        Self {
+            default_threshold: DEFAULT_CONSOLIDATION_THRESHOLD,
+            topics: HashMap::new(),
+        }
+    }
+}
+
+impl ConsolidationConfig {
+    pub fn threshold_for_topic(&self, topic: &str) -> Option<usize> {
+        match self.topics.get(topic) {
+            Some(ConsolidationTopicRule::Exempt) => None,
+            Some(ConsolidationTopicRule::Threshold(value)) => Some(*value),
+            None => Some(self.default_threshold),
+        }
+    }
+
+    pub fn is_exempt(&self, topic: &str) -> bool {
+        matches!(self.topics.get(topic), Some(ConsolidationTopicRule::Exempt))
+    }
 }
 
 impl MemoryBuilder {

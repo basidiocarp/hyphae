@@ -3,8 +3,10 @@
 use chrono::Utc;
 use rusqlite::{OptionalExtension, params};
 use serde::Serialize;
+use serde_json::Value;
+use std::path::Path;
 
-use hyphae_core::{HyphaeError, HyphaeResult};
+use hyphae_core::{Embedder, HyphaeError, HyphaeResult, Memory, MemoryStore};
 
 use super::SqliteStore;
 
@@ -109,14 +111,17 @@ impl SqliteStore {
         scope: Option<&str>,
         runtime_session_id: Option<&str>,
     ) -> HyphaeResult<(String, String)> {
-        self.session_start_identity_with_runtime(
+        self.session_start_identity_with_runtime_and_context_signals(
             project,
             task,
             None,
             None,
             scope,
             runtime_session_id,
+            None,
+            None,
         )
+        .map(|(session_id, started_at, _)| (session_id, started_at))
     }
 
     /// Start a new session with additive identity fields.
@@ -134,14 +139,17 @@ impl SqliteStore {
         worktree_id: Option<&str>,
         scope: Option<&str>,
     ) -> HyphaeResult<(String, String)> {
-        self.session_start_identity_with_runtime(
+        self.session_start_identity_with_runtime_and_context_signals(
             project,
             task,
             project_root,
             worktree_id,
             scope,
             None,
+            None,
+            None,
         )
+        .map(|(session_id, started_at, _)| (session_id, started_at))
     }
 
     /// Start a new session with additive identity fields and external session metadata.
@@ -154,12 +162,45 @@ impl SqliteStore {
         scope: Option<&str>,
         runtime_session_id: Option<&str>,
     ) -> HyphaeResult<(String, String)> {
+        self.session_start_identity_with_runtime_and_context_signals(
+            project,
+            task,
+            project_root,
+            worktree_id,
+            scope,
+            runtime_session_id,
+            None,
+            None,
+        )
+        .map(|(session_id, started_at, _)| (session_id, started_at))
+    }
+
+    /// Start a new session with additive identity fields, external session metadata,
+    /// and optional context-aware recall signals.
+    pub fn session_start_identity_with_runtime_and_context_signals(
+        &self,
+        project: &str,
+        task: Option<&str>,
+        project_root: Option<&str>,
+        worktree_id: Option<&str>,
+        scope: Option<&str>,
+        runtime_session_id: Option<&str>,
+        context_signals: Option<&Value>,
+        embedder: Option<&dyn Embedder>,
+    ) -> HyphaeResult<(String, String, Vec<(Memory, f32)>)> {
         let (project_root, worktree_id) = normalized_identity(project_root, worktree_id);
+        let recalled_context = self.recalled_context_from_signals(
+            project,
+            project_root,
+            worktree_id,
+            context_signals,
+            embedder,
+        );
 
         if let Some(existing) =
             self.find_active_session(project, project_root, worktree_id, scope)?
         {
-            return Ok(existing);
+            return Ok((existing.0, existing.1, recalled_context));
         }
 
         let session_id = format!("ses_{}", ulid::Ulid::new());
@@ -182,7 +223,7 @@ impl SqliteStore {
             )
             .map_err(|e| HyphaeError::Database(format!("failed to insert session: {e}")))?;
 
-        Ok((session_id, started_at))
+        Ok((session_id, started_at, recalled_context))
     }
 
     /// End an active session. Returns (project, started_at, task, ended_at, duration_minutes).
@@ -450,6 +491,50 @@ impl SqliteStore {
         self.query_active_legacy_session(project, scope)
     }
 
+    fn recalled_context_from_signals(
+        &self,
+        project: &str,
+        project_root: Option<&str>,
+        worktree_id: Option<&str>,
+        context_signals: Option<&Value>,
+        embedder: Option<&dyn Embedder>,
+    ) -> Vec<(Memory, f32)> {
+        let Some(signals) = context_signals else {
+            return Vec::new();
+        };
+        let Some(query) = signals_to_query(signals) else {
+            return Vec::new();
+        };
+
+        let scoped_worktree = project_root.or(worktree_id);
+        if let Some(embedder) = embedder
+            && let Ok(embedding) = embedder.embed(&query)
+        {
+            let results = if let Some(worktree) = scoped_worktree {
+                self.search_hybrid_scoped(&query, &embedding, 5, 0, Some(project), Some(worktree))
+            } else {
+                self.search_hybrid(&query, &embedding, 5, 0, Some(project))
+            };
+
+            if let Ok(results) = results {
+                return results;
+            }
+        }
+
+        let results = if let Some(worktree) = scoped_worktree {
+            self.search_fts_scoped(&query, 5, 0, Some(project), Some(worktree))
+        } else {
+            self.search_fts(&query, 5, 0, Some(project))
+        };
+
+        results
+            .unwrap_or_default()
+            .into_iter()
+            .enumerate()
+            .map(|(idx, memory)| (memory, 1.0 / (idx as f32 + 1.0)))
+            .collect::<Vec<(Memory, f32)>>()
+    }
+
     fn query_active_session_by_identity(
         &self,
         project: &str,
@@ -680,6 +765,41 @@ impl SqliteStore {
     }
 }
 
+fn signals_to_query(signals: &Value) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+
+    if let Some(files) = signals.get("recent_files").and_then(Value::as_array) {
+        let names: Vec<&str> = files
+            .iter()
+            .filter_map(Value::as_str)
+            .filter_map(|path| Path::new(path).file_stem()?.to_str())
+            .take(5)
+            .collect();
+        if !names.is_empty() {
+            parts.push(names.join(" "));
+        }
+    }
+
+    if let Some(errors) = signals.get("active_errors").and_then(Value::as_array) {
+        let error_text: Vec<&str> = errors.iter().filter_map(Value::as_str).take(3).collect();
+        if !error_text.is_empty() {
+            parts.push(error_text.join(" "));
+        }
+    }
+
+    if let Some(branch) = signals.get("git_branch").and_then(Value::as_str) {
+        if !matches!(branch, "main" | "master" | "develop") {
+            parts.push(branch.replace(['-', '/'], " "));
+        }
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" "))
+    }
+}
+
 fn normalized_identity<'a>(
     project_root: Option<&'a str>,
     worktree_id: Option<&'a str>,
@@ -768,9 +888,30 @@ fn timestamp_sort_key(timestamp: &str) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn test_store() -> SqliteStore {
         SqliteStore::in_memory().expect("in-memory store")
+    }
+
+    #[test]
+    fn test_signals_to_query_uses_files_errors_and_branch() {
+        let query = signals_to_query(&json!({
+            "recent_files": [
+                "/repo/demo/src/session_scope.rs",
+                "/repo/demo/src/lib.rs"
+            ],
+            "active_errors": [
+                "failed to compile session start",
+                "missing recalled context"
+            ],
+            "git_branch": "feat/context-aware-recall"
+        }))
+        .expect("query");
+
+        assert!(query.contains("session_scope"));
+        assert!(query.contains("failed to compile session start"));
+        assert!(query.contains("feat context aware recall"));
     }
 
     #[test]

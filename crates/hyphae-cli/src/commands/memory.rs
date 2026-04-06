@@ -1,6 +1,9 @@
 use anyhow::Result;
 use clap::{Args, Subcommand, ValueEnum};
-use hyphae_core::{Embedder, GitContext, Memory, MemoryId, MemorySource, MemoryStore, SessionHost};
+use hyphae_core::{
+    ConsolidationConfig, Embedder, GitContext, Memory, MemoryId, MemorySource, MemoryStore,
+    SessionHost,
+};
 use hyphae_store::{SearchOrder as StoreSearchOrder, SqliteStore, TopicMemoryOrder};
 use regex::Regex;
 use serde::Serialize;
@@ -374,6 +377,7 @@ pub(crate) fn cmd_topics(
 
 pub(crate) fn cmd_health(
     store: &SqliteStore,
+    consolidation: &ConsolidationConfig,
     topic: Option<String>,
     include_invalidated: bool,
     json: bool,
@@ -381,6 +385,7 @@ pub(crate) fn cmd_health(
 ) -> Result<()> {
     let payload = health_payload(
         store,
+        consolidation,
         topic.as_deref(),
         project.as_deref(),
         include_invalidated,
@@ -680,6 +685,7 @@ fn search_payload(
 
 fn health_payload(
     store: &SqliteStore,
+    consolidation: &ConsolidationConfig,
     requested_topic: Option<&str>,
     project: Option<&str>,
     include_invalidated: bool,
@@ -693,6 +699,7 @@ fn health_payload(
                 include_invalidated,
                 TopicMemoryOrder::CreatedAtDesc,
             )?,
+            consolidation,
         )]
     } else {
         let topic_names = store.list_topics_with_options(project, include_invalidated)?;
@@ -707,7 +714,7 @@ fn health_payload(
                 )?;
                 store
                     .topic_health_with_options(&topic, project, include_invalidated)
-                    .map(|health| to_topic_health_payload(&health, &memories))
+                    .map(|health| to_topic_health_payload(&health, &memories, consolidation))
             })
             .collect::<Result<Vec<_>, _>>()?
     };
@@ -731,6 +738,7 @@ fn health_payload(
 fn to_topic_health_payload(
     health: &hyphae_core::TopicHealth,
     memories: &[Memory],
+    consolidation: &ConsolidationConfig,
 ) -> TopicHealthPayload {
     let low_weight_count = memories
         .iter()
@@ -753,6 +761,11 @@ fn to_topic_health_payload(
         .filter(|memory| matches!(memory.importance, hyphae_core::Importance::Low))
         .count();
 
+    let needs_consolidation = match consolidation.threshold_for_topic(&health.topic) {
+        Some(threshold) => memories.len() >= threshold,
+        None => false,
+    };
+
     TopicHealthPayload {
         topic: health.topic.clone(),
         entry_count: health.entry_count,
@@ -761,7 +774,7 @@ fn to_topic_health_payload(
         oldest: health.oldest,
         newest: health.newest,
         last_accessed: health.last_accessed,
-        needs_consolidation: health.needs_consolidation,
+        needs_consolidation,
         stale_count: health.stale_count,
         low_weight_count,
         critical_count,
@@ -1152,7 +1165,7 @@ mod tests {
     #[test]
     fn test_health_payload_includes_summary_and_filter() {
         let store = test_store();
-        for idx in 0..6 {
+        for idx in 0..16 {
             store_memory(
                 &store,
                 "decisions/api",
@@ -1171,13 +1184,27 @@ mod tests {
             Some("demo-project"),
         );
 
-        let all_payload = health_payload(&store, None, Some("demo-project"), false).unwrap();
+        let all_payload = health_payload(
+            &store,
+            &ConsolidationConfig::default(),
+            None,
+            Some("demo-project"),
+            false,
+        )
+        .unwrap();
         let all_value = serde_json::to_value(&all_payload).unwrap();
         assert_eq!(all_value["project"].as_str(), Some("demo-project"));
         assert_eq!(all_value["total_topics"].as_u64(), Some(2));
         assert_eq!(all_value["topics_needing_consolidation"].as_u64(), Some(1));
 
-        let filtered_payload = health_payload(&store, Some("decisions/api"), None, false).unwrap();
+        let filtered_payload = health_payload(
+            &store,
+            &ConsolidationConfig::default(),
+            Some("decisions/api"),
+            None,
+            false,
+        )
+        .unwrap();
         let filtered_value = serde_json::to_value(&filtered_payload).unwrap();
         assert_eq!(
             filtered_value["requested_topic"].as_str(),
@@ -1192,7 +1219,7 @@ mod tests {
             filtered_value["topics"][0]["medium_count"].as_u64(),
             Some(0)
         );
-        assert_eq!(filtered_value["topics"][0]["high_count"].as_u64(), Some(6));
+        assert_eq!(filtered_value["topics"][0]["high_count"].as_u64(), Some(16));
         assert_eq!(
             filtered_value["topics"][0]["low_weight_count"].as_u64(),
             Some(0)

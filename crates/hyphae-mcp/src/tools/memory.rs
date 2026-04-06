@@ -2,7 +2,7 @@ use chrono::Utc;
 use serde_json::Value;
 
 use hyphae_core::{
-    Embedder, Importance, MemoirStore, Memory, MemoryId, MemoryStore, Weight,
+    ConsolidationConfig, Embedder, Importance, MemoirStore, Memory, MemoryId, MemoryStore, Weight,
     detect_git_context_from, detect_secrets,
 };
 use hyphae_store::context;
@@ -252,6 +252,48 @@ fn merge_prioritized_candidates(branches: Vec<Vec<Memory>>, limit: usize) -> Vec
     results
 }
 
+fn topic_needs_consolidation(
+    store: &SqliteStore,
+    consolidation: &ConsolidationConfig,
+    topic: &str,
+    project: Option<&str>,
+) -> bool {
+    let Some(threshold) = consolidation.threshold_for_topic(topic) else {
+        return false;
+    };
+
+    match store.count_by_topic(topic, project) {
+        Ok(count) => count >= threshold,
+        Err(e) => {
+            tracing::warn!("count_by_topic failed for consolidation check: {e}");
+            false
+        }
+    }
+}
+
+fn consolidation_hint(
+    store: &SqliteStore,
+    consolidation: &ConsolidationConfig,
+    topic: &str,
+    project: Option<&str>,
+) -> String {
+    if consolidation.is_exempt(topic) {
+        return String::new();
+    }
+
+    let Some(threshold) = consolidation.threshold_for_topic(topic) else {
+        return String::new();
+    };
+
+    match store.count_by_topic(topic, project) {
+        Ok(count) if count >= threshold => format!(
+            "\n⚠ Topic '{topic}' has {count} entries — consider consolidating with hyphae_memory_consolidate."
+        ),
+        Ok(_) => String::new(),
+        Err(_) => String::new(),
+    }
+}
+
 fn run_context_aware_recall(
     store: &SqliteStore,
     query: &str,
@@ -309,6 +351,7 @@ fn run_context_aware_recall(
 pub(crate) fn tool_store(
     store: &SqliteStore,
     embedder: Option<&dyn Embedder>,
+    consolidation: &ConsolidationConfig,
     args: &Value,
     compact: bool,
     project: Option<&str>,
@@ -476,17 +519,7 @@ pub(crate) fn tool_store(
                 }
             } else {
                 // Check if topic needs consolidation
-                let mut hint = if let Ok(count) = store.count_by_topic(topic, project) {
-                    if count > 7 {
-                        format!(
-                            "\n⚠ Topic '{topic}' has {count} entries — consider consolidating with hyphae_memory_consolidate."
-                        )
-                    } else {
-                        String::new()
-                    }
-                } else {
-                    String::new()
-                };
+                let mut hint = consolidation_hint(store, consolidation, topic, project);
 
                 // Add secrets warning if detected
                 if !warnings.is_empty() {
@@ -955,6 +988,16 @@ pub(crate) fn tool_update(
 }
 
 pub(crate) fn tool_health(store: &SqliteStore, args: &Value, project: Option<&str>) -> ToolResult {
+    let consolidation = ConsolidationConfig::default();
+    tool_health_with_rules(store, &consolidation, args, project)
+}
+
+pub(crate) fn tool_health_with_rules(
+    store: &SqliteStore,
+    consolidation: &ConsolidationConfig,
+    args: &Value,
+    project: Option<&str>,
+) -> ToolResult {
     let specific_topic = get_str(args, "topic");
 
     let topics = if let Some(t) = specific_topic {
@@ -977,9 +1020,11 @@ pub(crate) fn tool_health(store: &SqliteStore, args: &Value, project: Option<&st
     for (topic, _) in &topics {
         match store.topic_health(topic, project) {
             Ok(health) => {
-                let status = if health.needs_consolidation && health.stale_count > 0 {
+                let needs_consolidation =
+                    topic_needs_consolidation(store, consolidation, topic, project);
+                let status = if needs_consolidation && health.stale_count > 0 {
                     "⚠ NEEDS ATTENTION"
-                } else if health.needs_consolidation {
+                } else if needs_consolidation {
                     "⚠ consolidate"
                 } else if health.stale_count > 0 {
                     "○ has stale entries"
@@ -992,7 +1037,7 @@ pub(crate) fn tool_health(store: &SqliteStore, args: &Value, project: Option<&st
                     health.entry_count, health.avg_weight, health.stale_count, health.avg_access_count
                 ));
 
-                if health.needs_consolidation {
+                if needs_consolidation {
                     topics_needing_consolidation += 1;
                 }
                 total_stale += health.stale_count;

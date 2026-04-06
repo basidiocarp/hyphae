@@ -3,7 +3,7 @@ use std::io::{self, BufRead, Write};
 use serde_json::{Value, json};
 use tracing::{debug, error};
 
-use hyphae_core::{Embedder, MemoryStore};
+use hyphae_core::{ConsolidationConfig, Embedder, MemoryStore};
 use hyphae_store::SqliteStore;
 
 use crate::protocol::{JsonRpcMessage, JsonRpcResponse};
@@ -35,14 +35,12 @@ const NUDGE_WARN: u32 = 20;
 const NUDGE_STRONG: u32 = 30;
 /// After strong nudge, back off for this many calls before nudging again.
 const NUDGE_BACKOFF: u32 = 50;
-/// Topic memory count threshold for suggesting consolidation.
-const CONSOLIDATION_THRESHOLD: usize = 15;
-
 /// Bundled context passed to [`handle_tools_call`] to stay within argument limits.
 struct ToolCallCtx<'a> {
     params: &'a Option<Value>,
     store: &'a SqliteStore,
     embedder: Option<&'a dyn Embedder>,
+    consolidation: &'a ConsolidationConfig,
     compact: bool,
     project: Option<&'a str>,
     calls_since_store: &'a mut u32,
@@ -136,6 +134,7 @@ fn initial_context(store: &SqliteStore, project: Option<&str>) -> String {
 pub fn run_server(
     store: &SqliteStore,
     embedder: Option<&dyn Embedder>,
+    consolidation: &ConsolidationConfig,
     compact: bool,
     project: Option<String>,
     reject_secrets: bool,
@@ -201,6 +200,7 @@ pub fn run_server(
                     params: &msg.params,
                     store,
                     embedder,
+                    consolidation,
                     compact,
                     project: project.as_deref(),
                     calls_since_store: &mut calls_since_store,
@@ -294,6 +294,7 @@ fn handle_tools_call(id: Value, ctx: ToolCallCtx<'_>) -> JsonRpcResponse {
         params,
         store,
         embedder,
+        consolidation,
         compact,
         project,
         calls_since_store,
@@ -322,9 +323,10 @@ fn handle_tools_call(id: Value, ctx: ToolCallCtx<'_>) -> JsonRpcResponse {
         *calls_since_store += 1;
     }
 
-    let mut result = tools::call_tool(
+    let mut result = tools::call_tool_with_consolidation(
         store,
         embedder,
+        consolidation,
         tool_name,
         &args,
         compact,
@@ -363,12 +365,14 @@ fn handle_tools_call(id: Value, ctx: ToolCallCtx<'_>) -> JsonRpcResponse {
         if let Some(topic) = args.get("topic").and_then(|v| v.as_str()) {
             if let Ok(memories) = <SqliteStore as MemoryStore>::get_by_topic(store, topic, project)
             {
-                if memories.len() >= CONSOLIDATION_THRESHOLD {
-                    result = result.with_hint(&format!(
-                        "\n[Hyphae: Topic \"{topic}\" has {} memories. Consider running \
-                         hyphae_memory_consolidate(topic: \"{topic}\") to merge redundant entries.]",
-                        memories.len()
-                    ));
+                if let Some(threshold) = consolidation.threshold_for_topic(topic) {
+                    if memories.len() >= threshold {
+                        result = result.with_hint(&format!(
+                            "\n[Hyphae: Topic \"{topic}\" has {} memories. Consider running \
+                             hyphae_memory_consolidate(topic: \"{topic}\") to merge redundant entries.]",
+                            memories.len()
+                        ));
+                    }
                 }
             }
         }
@@ -466,6 +470,7 @@ mod tests {
                 params: &None,
                 store: &store,
                 embedder: None,
+                consolidation: &ConsolidationConfig::default(),
                 compact: false,
                 project: None,
                 calls_since_store: &mut counter,
@@ -487,6 +492,7 @@ mod tests {
                 params: &params,
                 store: &store,
                 embedder: None,
+                consolidation: &ConsolidationConfig::default(),
                 compact: false,
                 project: None,
                 calls_since_store: &mut counter,
@@ -508,6 +514,7 @@ mod tests {
                 params: &params,
                 store: &store,
                 embedder: None,
+                consolidation: &ConsolidationConfig::default(),
                 compact: false,
                 project: None,
                 calls_since_store: &mut counter,
@@ -537,6 +544,7 @@ mod tests {
                 params: &params,
                 store: &store,
                 embedder: None,
+                consolidation: &ConsolidationConfig::default(),
                 compact: false,
                 project: None,
                 calls_since_store: &mut counter,
@@ -562,6 +570,7 @@ mod tests {
                 params: &params,
                 store: &store,
                 embedder: None,
+                consolidation: &ConsolidationConfig::default(),
                 compact: false,
                 project: None,
                 calls_since_store: &mut counter,
@@ -587,6 +596,7 @@ mod tests {
                 params: &params,
                 store: &store,
                 embedder: None,
+                consolidation: &ConsolidationConfig::default(),
                 compact: false,
                 project: None,
                 calls_since_store: &mut counter,
@@ -612,6 +622,7 @@ mod tests {
                 params: &params,
                 store: &store,
                 embedder: None,
+                consolidation: &ConsolidationConfig::default(),
                 compact: false,
                 project: None,
                 calls_since_store: &mut counter,
@@ -625,6 +636,7 @@ mod tests {
                 params: &params,
                 store: &store,
                 embedder: None,
+                consolidation: &ConsolidationConfig::default(),
                 compact: false,
                 project: None,
                 calls_since_store: &mut counter,

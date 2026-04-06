@@ -5,6 +5,7 @@
 
 use serde_json::{Value, json};
 
+use hyphae_core::Embedder;
 use hyphae_store::SqliteStore;
 
 use crate::protocol::ToolResult;
@@ -12,7 +13,11 @@ use crate::protocol::ToolResult;
 use super::{get_bounded_i64, get_str, validate_required_string};
 
 /// `hyphae_session_start` — begin a new coding session.
-pub(crate) fn tool_session_start(store: &SqliteStore, args: &Value) -> ToolResult {
+pub(crate) fn tool_session_start(
+    store: &SqliteStore,
+    embedder: Option<&dyn Embedder>,
+    args: &Value,
+) -> ToolResult {
     let project = match validate_required_string(args, "project") {
         Ok(p) => p,
         Err(e) => return e,
@@ -22,19 +27,30 @@ pub(crate) fn tool_session_start(store: &SqliteStore, args: &Value) -> ToolResul
         normalize_identity(get_str(args, "project_root"), get_str(args, "worktree_id"));
     let scope = get_str(args, "scope");
     let runtime_session_id = get_str(args, "runtime_session_id");
+    let context_signals = args.get("context_signals");
 
-    match store.session_start_identity_with_runtime(
+    match store.session_start_identity_with_runtime_and_context_signals(
         project,
         task,
         project_root,
         worktree_id,
         scope,
         runtime_session_id,
+        context_signals,
+        embedder,
     ) {
-        Ok((session_id, started_at)) => ToolResult::text(
+        Ok((session_id, started_at, recalled_context)) => ToolResult::text(
             json!({
                 "session_id": session_id,
                 "started_at": started_at,
+                "recalled_context": recalled_context
+                    .iter()
+                    .map(|(memory, score)| json!({
+                        "content": memory.summary.clone(),
+                        "topic": memory.topic.clone(),
+                        "score": score,
+                    }))
+                    .collect::<Vec<_>>(),
             })
             .to_string(),
         ),
@@ -140,7 +156,7 @@ fn normalize_identity<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hyphae_core::MemoryStore;
+    use hyphae_core::{Importance, Memory, MemoryStore};
     use serde_json::json;
 
     fn test_store() -> SqliteStore {
@@ -152,6 +168,7 @@ mod tests {
         let store = test_store();
         let result = tool_session_start(
             &store,
+            None,
             &json!({"project": "test-project", "task": "implement feature X"}),
         );
         assert!(!result.is_error, "session_start should succeed");
@@ -159,6 +176,49 @@ mod tests {
         let parsed: Value = serde_json::from_str(text).expect("valid JSON");
         assert!(parsed["session_id"].as_str().unwrap().starts_with("ses_"));
         assert!(parsed["started_at"].is_string());
+        assert!(parsed["recalled_context"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_session_start_with_context_signals_returns_recalled_context() {
+        let store = test_store();
+        store
+            .store(
+                Memory::builder(
+                    "session_scope".into(),
+                    "session_scope context aware recall feat context aware recall build failed"
+                        .into(),
+                    Importance::Medium,
+                )
+                .project("test-project".into())
+                .worktree("/tmp/demo-project".into())
+                .build(),
+            )
+            .unwrap();
+
+        let result = tool_session_start(
+            &store,
+            None,
+            &json!({
+                "project": "test-project",
+                "task": "implement feature X",
+                "project_root": "/tmp/demo-project",
+                "worktree_id": "git:demo",
+                "scope": "worker-a",
+                "context_signals": {
+                    "recent_files": ["/repo/demo/src/session_scope.rs"],
+                    "active_errors": ["context aware recall"],
+                    "git_branch": "feat/context-aware-recall"
+                }
+            }),
+        );
+        assert!(!result.is_error);
+
+        let text = &result.content[0].text;
+        let parsed: Value = serde_json::from_str(text).expect("valid JSON");
+        let recalled = parsed["recalled_context"].as_array().unwrap();
+        assert!(!recalled.is_empty());
+        assert_eq!(recalled[0]["topic"].as_str(), Some("session_scope"));
     }
 
     #[test]
@@ -166,10 +226,12 @@ mod tests {
         let store = test_store();
         let first = tool_session_start(
             &store,
+            None,
             &json!({"project": "test-project", "task": "worker a", "scope": "worker-a"}),
         );
         let second = tool_session_start(
             &store,
+            None,
             &json!({"project": "test-project", "task": "worker b", "scope": "worker-b"}),
         );
 
@@ -183,6 +245,7 @@ mod tests {
         let store = test_store();
         let result = tool_session_start(
             &store,
+            None,
             &json!({
                 "project": "test-project",
                 "task": "worker a",
@@ -210,6 +273,7 @@ mod tests {
         let store = test_store();
         let first = tool_session_start(
             &store,
+            None,
             &json!({
                 "project": "test-project",
                 "task": "worker a",
@@ -221,6 +285,7 @@ mod tests {
 
         let second = tool_session_start(
             &store,
+            None,
             &json!({
                 "project": "test-project",
                 "task": "worker b",
@@ -255,7 +320,7 @@ mod tests {
     #[test]
     fn test_session_start_missing_project() {
         let store = test_store();
-        let result = tool_session_start(&store, &json!({}));
+        let result = tool_session_start(&store, None, &json!({}));
         assert!(result.is_error);
     }
 
@@ -264,7 +329,7 @@ mod tests {
         let store = test_store();
 
         // Start a session
-        let start_result = tool_session_start(&store, &json!({"project": "test-proj"}));
+        let start_result = tool_session_start(&store, None, &json!({"project": "test-proj"}));
         assert!(!start_result.is_error);
         let parsed: Value = serde_json::from_str(&start_result.content[0].text).unwrap();
         let session_id = parsed["session_id"].as_str().unwrap();
@@ -308,7 +373,11 @@ mod tests {
         let store = test_store();
 
         // Start and end a session
-        let start = tool_session_start(&store, &json!({"project": "ctx-proj", "task": "test"}));
+        let start = tool_session_start(
+            &store,
+            None,
+            &json!({"project": "ctx-proj", "task": "test"}),
+        );
         let parsed: Value = serde_json::from_str(&start.content[0].text).unwrap();
         let sid = parsed["session_id"].as_str().unwrap();
         let _ = tool_session_end(&store, &json!({"session_id": sid, "summary": "done"}));
@@ -331,10 +400,12 @@ mod tests {
 
         let worker_a = tool_session_start(
             &store,
+            None,
             &json!({"project": "ctx-proj", "task": "worker a", "scope": "worker-a"}),
         );
         let worker_b = tool_session_start(
             &store,
+            None,
             &json!({"project": "ctx-proj", "task": "worker b", "scope": "worker-b"}),
         );
         assert!(!worker_a.is_error);
@@ -357,6 +428,7 @@ mod tests {
 
         let start = tool_session_start(
             &store,
+            None,
             &json!({
                 "project": "ctx-proj",
                 "task": "worker a",
@@ -397,6 +469,7 @@ mod tests {
 
         let worker_a = tool_session_start(
             &store,
+            None,
             &json!({
                 "project": "ctx-proj",
                 "task": "worker a",
@@ -407,6 +480,7 @@ mod tests {
         );
         let worker_b = tool_session_start(
             &store,
+            None,
             &json!({
                 "project": "ctx-proj",
                 "task": "worker b",
@@ -441,6 +515,7 @@ mod tests {
 
         let legacy = tool_session_start(
             &store,
+            None,
             &json!({"project": "ctx-proj", "task": "worker a", "scope": "worker-a"}),
         );
         assert!(!legacy.is_error);
