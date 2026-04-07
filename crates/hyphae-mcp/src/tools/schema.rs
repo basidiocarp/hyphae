@@ -85,11 +85,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     },
                     "project_root": {
                         "type": "string",
-                        "description": "Optional repository root for identity v1 lookups. Use with worktree_id to scope memory recall to the active worktree."
+                        "description": "Optional repository root for identity v1 lookups. Use with worktree_id to scope memory recall to the active worktree. When supplied, worktree_id must also be provided (and vice versa)."
                     },
                     "worktree_id": {
                         "type": "string",
-                        "description": "Optional worktree identifier for identity v1 lookups. Use with project_root to scope memory recall to the active worktree."
+                        "description": "Optional worktree identifier for identity v1 lookups. Use with project_root to scope memory recall to the active worktree. When supplied, project_root must also be provided (and vice versa)."
                     },
                     "code_context": {
                         "type": "boolean",
@@ -97,17 +97,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                         "description": "When true, code-shaped queries can gather matching concepts from the project's code memoir (code:{project}) using extracted code terms before recall results are finalized. Only effective when a project is configured, and the expanded hits are merged ahead of the globally visible '_shared' fallback results."
                     }
                 },
-                "required": ["query"],
-                "allOf": [
-                    {
-                        "if": { "required": ["project_root"] },
-                        "then": { "required": ["worktree_id"] }
-                    },
-                    {
-                        "if": { "required": ["worktree_id"] },
-                        "then": { "required": ["project_root"] }
-                    }
-                ]
+                "required": ["query"]
             }
         }),
         json!({
@@ -620,11 +610,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                 },
                 "project_root": {
                     "type": "string",
-                    "description": "Optional repository root for session identity v1 lookups. Use with worktree_id and project to scope structured session results to one worktree."
+                    "description": "Optional repository root for session identity v1 lookups. Use with worktree_id and project to scope structured session results to one worktree. When supplied alongside worktree_id, project must also be provided."
                 },
                 "worktree_id": {
                     "type": "string",
-                    "description": "Optional worktree identifier for session identity v1 lookups. Use with project_root and project to avoid mixing sibling worktrees in structured session context."
+                    "description": "Optional worktree identifier for session identity v1 lookups. Use with project_root and project to avoid mixing sibling worktrees in structured session context. When supplied alongside project_root, project must also be provided."
                 },
                 "scope": {
                     "type": "string",
@@ -646,17 +636,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     "description": "Which sources to include (default: all). Options: memories, errors, sessions, code"
                 }
             },
-            "required": ["task"],
-            "allOf": [
-                {
-                    "if": {
-                        "required": ["project_root", "worktree_id"]
-                    },
-                    "then": {
-                        "required": ["project"]
-                    }
-                }
-            ]
+            "required": ["task"]
         }
     }));
 
@@ -741,11 +721,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                 },
                 "project_root": {
                     "type": "string",
-                    "description": "Optional repository root for identity v1 lookups. Use with worktree_id to scope memory results to the active worktree."
+                    "description": "Optional repository root for identity v1 lookups. Use with worktree_id to scope memory results to the active worktree. When supplied, worktree_id must also be provided (and vice versa)."
                 },
                 "worktree_id": {
                     "type": "string",
-                    "description": "Optional worktree identifier for identity v1 lookups. Use with project_root to scope memory results to the active worktree."
+                    "description": "Optional worktree identifier for identity v1 lookups. Use with project_root to scope memory results to the active worktree. When supplied, project_root must also be provided (and vice versa)."
                 },
                 "limit": {
                     "type": "integer",
@@ -766,17 +746,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     "description": "Number of results to skip (for pagination)"
                 }
             },
-            "required": ["query"],
-            "allOf": [
-                {
-                    "if": { "required": ["project_root"] },
-                    "then": { "required": ["worktree_id"] }
-                },
-                {
-                    "if": { "required": ["worktree_id"] },
-                    "then": { "required": ["project_root"] }
-                }
-            ]
+            "required": ["query"]
         }
     }));
 
@@ -1005,21 +975,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_gather_context_requires_project_when_full_identity_is_supplied() {
+    fn test_gather_context_documents_project_requirement_for_full_identity() {
         let tools = tool_definitions_json(false);
         let gather_tool = tools
             .iter()
             .find(|tool| tool["name"] == "hyphae_gather_context")
             .expect("gather context tool");
 
-        let all_of = gather_tool["inputSchema"]["allOf"]
-            .as_array()
-            .expect("allOf schema");
-        let requirement = &all_of[0];
-
-        assert_eq!(requirement["if"]["required"][0], "project_root");
-        assert_eq!(requirement["if"]["required"][1], "worktree_id");
-        assert_eq!(requirement["then"]["required"][0], "project");
+        assert!(gather_tool["inputSchema"]["allOf"].is_null());
+        assert!(
+            gather_tool["inputSchema"]["properties"]["project_root"]["description"]
+                .as_str()
+                .expect("project_root description")
+                .contains("project must also be provided")
+        );
+        assert!(
+            gather_tool["inputSchema"]["properties"]["worktree_id"]["description"]
+                .as_str()
+                .expect("worktree_id description")
+                .contains("project must also be provided")
+        );
         assert_eq!(
             gather_tool["inputSchema"]["properties"]["scope"]["type"],
             "string"
@@ -1027,40 +1002,48 @@ mod tests {
     }
 
     #[test]
-    fn test_recall_requires_identity_fields_in_pairs() {
+    fn test_recall_documents_identity_fields_in_pairs() {
         let tools = tool_definitions_json(false);
         let recall_tool = tools
             .iter()
             .find(|tool| tool["name"] == "hyphae_memory_recall")
             .expect("memory recall tool");
 
-        let all_of = recall_tool["inputSchema"]["allOf"]
-            .as_array()
-            .expect("allOf schema");
-
-        assert_eq!(all_of.len(), 2);
-        assert_eq!(all_of[0]["if"]["required"][0], "project_root");
-        assert_eq!(all_of[0]["then"]["required"][0], "worktree_id");
-        assert_eq!(all_of[1]["if"]["required"][0], "worktree_id");
-        assert_eq!(all_of[1]["then"]["required"][0], "project_root");
+        assert!(recall_tool["inputSchema"]["allOf"].is_null());
+        assert!(
+            recall_tool["inputSchema"]["properties"]["project_root"]["description"]
+                .as_str()
+                .expect("project_root description")
+                .contains("worktree_id must also be provided")
+        );
+        assert!(
+            recall_tool["inputSchema"]["properties"]["worktree_id"]["description"]
+                .as_str()
+                .expect("worktree_id description")
+                .contains("project_root must also be provided")
+        );
     }
 
     #[test]
-    fn test_search_all_requires_identity_fields_in_pairs() {
+    fn test_search_all_documents_identity_fields_in_pairs() {
         let tools = tool_definitions_json(false);
         let search_tool = tools
             .iter()
             .find(|tool| tool["name"] == "hyphae_search_all")
             .expect("search-all tool");
 
-        let all_of = search_tool["inputSchema"]["allOf"]
-            .as_array()
-            .expect("allOf schema");
-
-        assert_eq!(all_of.len(), 2);
-        assert_eq!(all_of[0]["if"]["required"][0], "project_root");
-        assert_eq!(all_of[0]["then"]["required"][0], "worktree_id");
-        assert_eq!(all_of[1]["if"]["required"][0], "worktree_id");
-        assert_eq!(all_of[1]["then"]["required"][0], "project_root");
+        assert!(search_tool["inputSchema"]["allOf"].is_null());
+        assert!(
+            search_tool["inputSchema"]["properties"]["project_root"]["description"]
+                .as_str()
+                .expect("project_root description")
+                .contains("worktree_id must also be provided")
+        );
+        assert!(
+            search_tool["inputSchema"]["properties"]["worktree_id"]["description"]
+                .as_str()
+                .expect("worktree_id description")
+                .contains("project_root must also be provided")
+        );
     }
 }
