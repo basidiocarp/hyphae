@@ -1,17 +1,21 @@
 use serde_json::Value;
+use spore::logging::workflow_span;
 
 use hyphae_store::{SqliteStore, collect_evaluation_window};
 
 use crate::protocol::ToolResult;
 
-use super::super::get_bounded_i64;
+use super::super::{ToolTraceContext, get_bounded_i64, workflow_span_context};
 
 pub(crate) fn tool_evaluate(
     store: &SqliteStore,
     args: &Value,
     project: Option<&str>,
+    trace: &ToolTraceContext,
 ) -> ToolResult {
     let days = get_bounded_i64(args, "days", 14, 2, 365);
+    let workflow_context = workflow_span_context(trace, None, None);
+    let _workflow_span = workflow_span("evaluate", &workflow_context).entered();
     let midpoint = days / 2;
     let previous_window_days = days - midpoint;
     let proj_name = project.unwrap_or("all projects");

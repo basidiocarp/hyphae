@@ -9,11 +9,13 @@ use hyphae_core::{
 };
 use hyphae_ingest::chunker::{ChunkStrategy, detect_output_type};
 use hyphae_store::SqliteStore;
+use spore::logging::workflow_span;
 
 use crate::protocol::ToolResult;
 
 use super::{
-    get_bounded_i64, get_str, normalize_identity, scoped_worktree_root, validate_required_string,
+    ToolTraceContext, get_bounded_i64, get_str, normalize_identity, resolve_workspace_root,
+    scoped_worktree_root, validate_required_string, workflow_span_context,
 };
 
 use hyphae_store::UnifiedSearchResult;
@@ -26,6 +28,7 @@ pub(crate) fn tool_ingest_file(
     args: &Value,
     _compact: bool,
     project: Option<&str>,
+    trace: &ToolTraceContext,
 ) -> ToolResult {
     let path_str = match validate_required_string(args, "path") {
         Ok(s) => s,
@@ -37,6 +40,8 @@ pub(crate) fn tool_ingest_file(
         .unwrap_or(false);
 
     let path = Path::new(path_str);
+    let workflow_context = workflow_span_context(trace, resolve_workspace_root(args), None);
+    let _workflow_span = workflow_span("ingest_file", &workflow_context).entered();
 
     let results = if path.is_dir() {
         match hyphae_ingest::ingest_directory(path, embedder, recursive) {
@@ -86,11 +91,14 @@ pub(crate) fn tool_search_docs(
     args: &Value,
     compact: bool,
     project: Option<&str>,
+    trace: &ToolTraceContext,
 ) -> ToolResult {
     let query = match validate_required_string(args, "query") {
         Ok(q) => q,
         Err(e) => return e,
     };
+    let workflow_context = workflow_span_context(trace, resolve_workspace_root(args), None);
+    let _workflow_span = workflow_span("search_docs", &workflow_context).entered();
     let limit = get_bounded_i64(args, "limit", 10, 1, 100) as usize;
     let offset = get_bounded_i64(args, "offset", 0, 0, 10000) as usize;
 
@@ -146,7 +154,13 @@ pub(crate) fn tool_search_docs(
     ToolResult::text(out.trim_end().to_string())
 }
 
-pub(crate) fn tool_list_sources(store: &SqliteStore, project: Option<&str>) -> ToolResult {
+pub(crate) fn tool_list_sources(
+    store: &SqliteStore,
+    project: Option<&str>,
+    trace: &ToolTraceContext,
+) -> ToolResult {
+    let workflow_context = workflow_span_context(trace, None, None);
+    let _workflow_span = workflow_span("list_sources", &workflow_context).entered();
     let docs = match store.list_documents(project) {
         Ok(d) => d,
         Err(e) => return ToolResult::error(format!("db error: {e}")),
@@ -179,11 +193,14 @@ pub(crate) fn tool_forget_source(
     store: &SqliteStore,
     args: &Value,
     project: Option<&str>,
+    trace: &ToolTraceContext,
 ) -> ToolResult {
     let path = match validate_required_string(args, "path") {
         Ok(p) => p,
         Err(e) => return e,
     };
+    let workflow_context = workflow_span_context(trace, resolve_workspace_root(args), None);
+    let _workflow_span = workflow_span("forget_source", &workflow_context).entered();
 
     let doc = match store.get_document_by_path(path, project) {
         Ok(Some(d)) => d,
@@ -210,6 +227,7 @@ pub(crate) fn tool_store_command_output(
     args: &Value,
     _compact: bool,
     project: Option<&str>,
+    trace: &ToolTraceContext,
 ) -> ToolResult {
     match args.get("schema_version").and_then(|value| value.as_str()) {
         Some(COMMAND_OUTPUT_SCHEMA_VERSION) => {}
@@ -227,6 +245,8 @@ pub(crate) fn tool_store_command_output(
         Ok(c) => c,
         Err(e) => return e,
     };
+    let workflow_context = workflow_span_context(trace, resolve_workspace_root(args), None);
+    let _workflow_span = workflow_span("store_command_output", &workflow_context).entered();
     let output = match validate_required_string(args, "output") {
         Ok(o) => o,
         Err(e) => return e,
@@ -337,7 +357,11 @@ fn command_output_source_path(
     }
 }
 
-pub(crate) fn tool_get_command_chunks(store: &SqliteStore, args: &Value) -> ToolResult {
+pub(crate) fn tool_get_command_chunks(
+    store: &SqliteStore,
+    args: &Value,
+    trace: &ToolTraceContext,
+) -> ToolResult {
     let doc_id_str = match validate_required_string(args, "document_id") {
         Ok(id) => id,
         Err(e) => return e,
@@ -346,6 +370,8 @@ pub(crate) fn tool_get_command_chunks(store: &SqliteStore, args: &Value) -> Tool
     let limit = get_bounded_i64(args, "limit", 5, 1, 20) as usize;
 
     let doc_id = DocumentId::from(doc_id_str);
+    let workflow_context = workflow_span_context(trace, resolve_workspace_root(args), None);
+    let _workflow_span = workflow_span("get_command_chunks", &workflow_context).entered();
 
     let runtime_session_id = match store.get_document(&doc_id) {
         Ok(Some(document)) => document.runtime_session_id,
@@ -391,6 +417,7 @@ pub(crate) fn tool_search_all(
     args: &Value,
     compact: bool,
     project: Option<&str>,
+    trace: &ToolTraceContext,
 ) -> ToolResult {
     let query = match validate_required_string(args, "query") {
         Ok(q) => q,
@@ -402,6 +429,8 @@ pub(crate) fn tool_search_all(
         .get("include_docs")
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
+    let workflow_context = workflow_span_context(trace, resolve_workspace_root(args), None);
+    let _workflow_span = workflow_span("search_all", &workflow_context).entered();
     let raw_project_root = get_str(args, "project_root");
     let raw_worktree_id = get_str(args, "worktree_id");
     if raw_project_root.is_some() ^ raw_worktree_id.is_some() {
@@ -529,6 +558,7 @@ mod tests {
             }),
             false,
             None,
+            &ToolTraceContext::default(),
         );
         assert!(!first.is_error);
 
@@ -544,6 +574,7 @@ mod tests {
             }),
             false,
             None,
+            &ToolTraceContext::default(),
         );
         assert!(!second.is_error);
 
@@ -573,6 +604,7 @@ mod tests {
             }),
             false,
             None,
+            &ToolTraceContext::default(),
         );
         assert!(!first.is_error);
         let first_parsed: Value = serde_json::from_str(&first.content[0].text).unwrap();
@@ -588,6 +620,7 @@ mod tests {
             }),
             false,
             None,
+            &ToolTraceContext::default(),
         );
         assert!(!second.is_error);
         let second_parsed: Value = serde_json::from_str(&second.content[0].text).unwrap();
@@ -624,6 +657,7 @@ mod tests {
             }),
             false,
             None,
+            &ToolTraceContext::default(),
         );
         assert!(!result.is_error);
 
@@ -644,6 +678,7 @@ mod tests {
             }),
             false,
             None,
+            &ToolTraceContext::default(),
         );
 
         assert!(result.is_error);
@@ -667,6 +702,7 @@ mod tests {
             }),
             false,
             None,
+            &ToolTraceContext::default(),
         );
 
         assert!(result.is_error);
@@ -691,6 +727,7 @@ mod tests {
             }),
             false,
             None,
+            &ToolTraceContext::default(),
         );
         assert!(!result.is_error);
 
@@ -709,6 +746,7 @@ mod tests {
                 "offset": 0,
                 "limit": 5
             }),
+            &ToolTraceContext::default(),
         );
         assert!(!chunks.is_error);
         let payload: Value = serde_json::from_str(&chunks.content[0].text).unwrap();
@@ -731,6 +769,7 @@ mod tests {
             }),
             false,
             Some("demo"),
+            &ToolTraceContext::default(),
         );
 
         assert!(result.is_error);
@@ -822,6 +861,7 @@ mod tests {
             }),
             false,
             Some("demo"),
+            &ToolTraceContext::default(),
         );
 
         assert!(!result.is_error);

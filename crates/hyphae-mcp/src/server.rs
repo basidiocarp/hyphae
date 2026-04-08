@@ -1,8 +1,6 @@
-use std::io::{self, BufRead, Write};
-use std::path::Path;
-
 use serde_json::{Value, json};
 use spore::logging::{SpanContext, request_span, root_span, tool_span, workflow_span};
+use std::io::{self, BufRead, Write};
 use tracing::{debug, error};
 
 use hyphae_core::{ConsolidationConfig, Embedder, MemoryStore};
@@ -318,7 +316,12 @@ fn handle_tools_call(id: Value, ctx: ToolCallCtx<'_>) -> JsonRpcResponse {
     };
 
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
-    let tool_context = tool_context(tool_name, &args, workspace_root, request_id);
+    let tool_trace = tools::ToolTraceContext {
+        request_id: request_id.clone(),
+        session_id: tools::span_session_id(&args),
+        workspace_root: workspace_root.clone(),
+    };
+    let tool_context = tool_context(tool_name, &args, &tool_trace, workspace_root);
     let _tool_span = tool_span(tool_name, &tool_context).entered();
     let _workflow_span = workflow_span(tool_name, &tool_context).entered();
 
@@ -338,6 +341,7 @@ fn handle_tools_call(id: Value, ctx: ToolCallCtx<'_>) -> JsonRpcResponse {
         compact,
         project,
         reject_secrets,
+        &tool_trace,
     );
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -414,39 +418,19 @@ fn request_context(workspace_root: Option<String>, request_id: Option<String>) -
 fn tool_context(
     tool_name: &str,
     args: &Value,
+    trace: &tools::ToolTraceContext,
     workspace_root: Option<String>,
-    request_id: Option<String>,
 ) -> SpanContext {
-    let context = request_context(resolve_workspace_root(args).or(workspace_root), request_id)
-        .with_tool(tool_name);
-    match span_session_id(args) {
+    let context = tools::request_span_context(
+        trace,
+        tools::resolve_workspace_root(args).or(workspace_root),
+        None,
+    )
+    .with_tool(tool_name);
+    match tools::span_session_id(args) {
         Some(session_id) => context.with_session_id(session_id),
         None => context,
     }
-}
-
-fn resolve_workspace_root(args: &Value) -> Option<String> {
-    tools::get_str(args, "project_root")
-        .map(ToOwned::to_owned)
-        .or_else(|| tools::get_str(args, "worktree").map(ToOwned::to_owned))
-        .or_else(|| path_workspace_root(args))
-}
-
-fn path_workspace_root(args: &Value) -> Option<String> {
-    let path = tools::get_str(args, "path")?;
-    let path = Path::new(path);
-    let workspace = if path.is_dir() {
-        path
-    } else {
-        path.parent().unwrap_or(path)
-    };
-    Some(workspace.display().to_string())
-}
-
-fn span_session_id(args: &Value) -> Option<String> {
-    tools::get_str(args, "session_id")
-        .or_else(|| tools::get_str(args, "runtime_session_id"))
-        .map(ToOwned::to_owned)
 }
 
 fn request_id_from_value(request_id: &Value) -> Option<String> {
@@ -760,8 +744,12 @@ mod tests {
         let context = tool_context(
             "hyphae_memory_store",
             &args,
+            &tools::ToolTraceContext {
+                request_id: Some("req-9".into()),
+                session_id: None,
+                workspace_root: Some("/fallback".into()),
+            },
             Some("/fallback".into()),
-            Some("req-9".into()),
         );
 
         assert_eq!(context.tool.as_deref(), Some("hyphae_memory_store"));
@@ -777,7 +765,12 @@ mod tests {
             "runtime_session_id": "runtime-7"
         });
 
-        let context = tool_context("hyphae_ingest_file", &args, None, None);
+        let context = tool_context(
+            "hyphae_ingest_file",
+            &args,
+            &tools::ToolTraceContext::default(),
+            None,
+        );
 
         assert_eq!(context.tool.as_deref(), Some("hyphae_ingest_file"));
         assert_eq!(context.session_id.as_deref(), Some("runtime-7"));

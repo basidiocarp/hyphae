@@ -43,6 +43,8 @@ adds hybrid retrieval, document indexing, and session tracking.
 
 > **Boundary:** `hyphae` owns memory, retrieval, and session records. It does
 > not own shell filtering, code intelligence, hook capture, UI, or installation.
+> `hyphae-core` stays domain-only: types, traits, and embedder abstractions,
+> with transport, operator, and persistence concerns living in sibling crates.
 
 ---
 
@@ -137,12 +139,16 @@ end session       ─►    session lifecycle       ─►    outcomes and lesso
 
 ```text
 hyphae (single binary)
-├── hyphae-core    types, traits, embedder logic
+├── hyphae-core    domain types, traits, embedder logic only
 ├── hyphae-ingest  file readers and chunking
 ├── hyphae-store   SQLite, FTS5, sqlite-vec
 ├── hyphae-mcp     MCP server and tool handlers
 └── hyphae-cli     CLI commands and operator surfaces
 ```
+
+Versioned payloads stay explicit at the boundary. MCP tools that cross repo or
+host boundaries use schema/version fields instead of ad hoc shapes, and shared
+contract updates should land with their schema or fixture changes.
 
 ```bash
 hyphae session start --project demo --task "refactor auth flow"

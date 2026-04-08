@@ -3,13 +3,22 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 use serde_json::json;
+use spore::logging::workflow_span;
 
 use hyphae_core::{MemoirStore, MemoryStore};
 use hyphae_store::SqliteStore;
 
 use crate::protocol::ToolResult;
 
-pub fn tool_onboard(store: &SqliteStore, project: Option<&str>) -> ToolResult {
+use super::{ToolTraceContext, workflow_span_context};
+
+pub fn tool_onboard(
+    store: &SqliteStore,
+    project: Option<&str>,
+    trace: &ToolTraceContext,
+) -> ToolResult {
+    let workflow_context = workflow_span_context(trace, None, None);
+    let _workflow_span = workflow_span("onboard", &workflow_context).entered();
     let stats = match store.stats(project) {
         Ok(s) => s,
         Err(e) => return ToolResult::error(format!("failed to get stats: {e}")),

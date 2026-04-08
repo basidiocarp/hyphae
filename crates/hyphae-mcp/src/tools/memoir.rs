@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
 use serde_json::{Value, json};
+use spore::logging::workflow_span;
 
 use hyphae_core::{
     Concept, ConceptLink, Label, Memoir, MemoirStore, Relation,
@@ -12,7 +13,8 @@ use hyphae_store::SqliteStore;
 use crate::protocol::ToolResult;
 
 use super::{
-    get_bounded_i64, get_str, resolve_memoir, validate_max_length, validate_required_string,
+    ToolTraceContext, get_bounded_i64, get_str, resolve_memoir, validate_max_length,
+    validate_required_string, workflow_span_context,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -22,12 +24,18 @@ use super::{
 const MEMOIR_STALE_DAYS: i64 = 7;
 const CODE_GRAPH_SCHEMA_VERSION: &str = "1.0";
 
-pub(crate) fn tool_memoir_create(store: &SqliteStore, args: &Value) -> ToolResult {
+pub(crate) fn tool_memoir_create(
+    store: &SqliteStore,
+    args: &Value,
+    trace: &ToolTraceContext,
+) -> ToolResult {
     let name = match validate_required_string(args, "name") {
         Ok(n) => n,
         Err(e) => return e,
     };
     let description = get_str(args, "description").unwrap_or("");
+    let workflow_context = workflow_span_context(trace, None, None);
+    let _workflow_span = workflow_span("memoir_create", &workflow_context).entered();
 
     let memoir = Memoir::new(name.into(), description.into());
     match store.create_memoir(memoir) {
@@ -36,7 +44,9 @@ pub(crate) fn tool_memoir_create(store: &SqliteStore, args: &Value) -> ToolResul
     }
 }
 
-pub(crate) fn tool_memoir_list(store: &SqliteStore) -> ToolResult {
+pub(crate) fn tool_memoir_list(store: &SqliteStore, trace: &ToolTraceContext) -> ToolResult {
+    let workflow_context = workflow_span_context(trace, None, None);
+    let _workflow_span = workflow_span("memoir_list", &workflow_context).entered();
     let memoirs = match store.list_memoirs() {
         Ok(m) => m,
         Err(e) => return ToolResult::error(format!("failed to list memoirs: {e}")),
@@ -58,11 +68,17 @@ pub(crate) fn tool_memoir_list(store: &SqliteStore) -> ToolResult {
     ToolResult::text(output)
 }
 
-pub(crate) fn tool_memoir_show(store: &SqliteStore, args: &Value) -> ToolResult {
+pub(crate) fn tool_memoir_show(
+    store: &SqliteStore,
+    args: &Value,
+    trace: &ToolTraceContext,
+) -> ToolResult {
     let name = match validate_required_string(args, "name") {
         Ok(n) => n,
         Err(e) => return e,
     };
+    let workflow_context = workflow_span_context(trace, None, Some(name));
+    let _workflow_span = workflow_span("memoir_show", &workflow_context).entered();
 
     let memoir = match resolve_memoir(store, name) {
         Ok(m) => m,
@@ -130,7 +146,11 @@ pub(crate) fn tool_memoir_show(store: &SqliteStore, args: &Value) -> ToolResult 
     ToolResult::text(output)
 }
 
-pub(crate) fn tool_memoir_add_concept(store: &SqliteStore, args: &Value) -> ToolResult {
+pub(crate) fn tool_memoir_add_concept(
+    store: &SqliteStore,
+    args: &Value,
+    trace: &ToolTraceContext,
+) -> ToolResult {
     let memoir_name = match validate_required_string(args, "memoir") {
         Ok(n) => n,
         Err(e) => return e,
@@ -146,6 +166,8 @@ pub(crate) fn tool_memoir_add_concept(store: &SqliteStore, args: &Value) -> Tool
     if let Err(e) = validate_max_length(definition, "definition", 32768) {
         return e;
     }
+    let workflow_context = workflow_span_context(trace, None, Some(name));
+    let _workflow_span = workflow_span("memoir_add_concept", &workflow_context).entered();
 
     let memoir = match resolve_memoir(store, memoir_name) {
         Ok(m) => m,
@@ -169,7 +191,11 @@ pub(crate) fn tool_memoir_add_concept(store: &SqliteStore, args: &Value) -> Tool
     }
 }
 
-pub(crate) fn tool_memoir_refine(store: &SqliteStore, args: &Value) -> ToolResult {
+pub(crate) fn tool_memoir_refine(
+    store: &SqliteStore,
+    args: &Value,
+    trace: &ToolTraceContext,
+) -> ToolResult {
     let memoir_name = match validate_required_string(args, "memoir") {
         Ok(n) => n,
         Err(e) => return e,
@@ -185,6 +211,8 @@ pub(crate) fn tool_memoir_refine(store: &SqliteStore, args: &Value) -> ToolResul
     if let Err(e) = validate_max_length(definition, "definition", 32768) {
         return e;
     }
+    let workflow_context = workflow_span_context(trace, None, Some(name));
+    let _workflow_span = workflow_span("memoir_refine", &workflow_context).entered();
 
     let memoir = match resolve_memoir(store, memoir_name) {
         Ok(m) => m,
@@ -213,7 +241,11 @@ pub(crate) fn tool_memoir_refine(store: &SqliteStore, args: &Value) -> ToolResul
     ))
 }
 
-pub(crate) fn tool_memoir_search(store: &SqliteStore, args: &Value) -> ToolResult {
+pub(crate) fn tool_memoir_search(
+    store: &SqliteStore,
+    args: &Value,
+    trace: &ToolTraceContext,
+) -> ToolResult {
     let memoir_name = match get_str(args, "memoir") {
         Some(n) => n,
         None => return ToolResult::error("missing required field: memoir".into()),
@@ -222,6 +254,8 @@ pub(crate) fn tool_memoir_search(store: &SqliteStore, args: &Value) -> ToolResul
         Some(q) => q,
         None => return ToolResult::error("missing required field: query".into()),
     };
+    let workflow_context = workflow_span_context(trace, None, Some(memoir_name));
+    let _workflow_span = workflow_span("memoir_search", &workflow_context).entered();
     let limit = get_bounded_i64(args, "limit", 10, 1, 100) as usize;
     let label_str = get_str(args, "label");
 
@@ -281,11 +315,17 @@ pub(crate) fn tool_memoir_search(store: &SqliteStore, args: &Value) -> ToolResul
     ToolResult::text(output)
 }
 
-pub(crate) fn tool_memoir_search_all(store: &SqliteStore, args: &Value) -> ToolResult {
+pub(crate) fn tool_memoir_search_all(
+    store: &SqliteStore,
+    args: &Value,
+    trace: &ToolTraceContext,
+) -> ToolResult {
     let query = match get_str(args, "query") {
         Some(q) => q,
         None => return ToolResult::error("missing required field: query".into()),
     };
+    let workflow_context = workflow_span_context(trace, None, None);
+    let _workflow_span = workflow_span("memoir_search_all", &workflow_context).entered();
     let limit = get_bounded_i64(args, "limit", 10, 1, 100) as usize;
 
     let results = match store.search_all_concepts_fts(query, limit) {
@@ -338,7 +378,11 @@ pub(crate) fn tool_memoir_search_all(store: &SqliteStore, args: &Value) -> ToolR
     ToolResult::text(output)
 }
 
-pub(crate) fn tool_memoir_link(store: &SqliteStore, args: &Value) -> ToolResult {
+pub(crate) fn tool_memoir_link(
+    store: &SqliteStore,
+    args: &Value,
+    trace: &ToolTraceContext,
+) -> ToolResult {
     let memoir_name = match get_str(args, "memoir") {
         Some(n) => n,
         None => return ToolResult::error("missing required field: memoir".into()),
@@ -355,6 +399,8 @@ pub(crate) fn tool_memoir_link(store: &SqliteStore, args: &Value) -> ToolResult 
         Some(r) => r,
         None => return ToolResult::error("missing required field: relation".into()),
     };
+    let workflow_context = workflow_span_context(trace, None, Some(memoir_name));
+    let _workflow_span = workflow_span("memoir_link", &workflow_context).entered();
 
     let relation: Relation = match relation_str.parse() {
         Ok(r) => r,
@@ -390,7 +436,11 @@ pub(crate) fn tool_memoir_link(store: &SqliteStore, args: &Value) -> ToolResult 
     }
 }
 
-pub(crate) fn tool_memoir_inspect(store: &SqliteStore, args: &Value) -> ToolResult {
+pub(crate) fn tool_memoir_inspect(
+    store: &SqliteStore,
+    args: &Value,
+    trace: &ToolTraceContext,
+) -> ToolResult {
     let memoir_name = match get_str(args, "memoir") {
         Some(n) => n,
         None => return ToolResult::error("missing required field: memoir".into()),
@@ -399,6 +449,8 @@ pub(crate) fn tool_memoir_inspect(store: &SqliteStore, args: &Value) -> ToolResu
         Some(n) => n,
         None => return ToolResult::error("missing required field: name".into()),
     };
+    let workflow_context = workflow_span_context(trace, None, Some(memoir_name));
+    let _workflow_span = workflow_span("memoir_inspect", &workflow_context).entered();
     let depth = get_bounded_i64(args, "depth", 2, 1, 10) as usize;
 
     let memoir = match resolve_memoir(store, memoir_name) {
@@ -463,6 +515,7 @@ pub(crate) fn tool_import_code_graph(
     args: &Value,
     compact: bool,
     _project: Option<&str>,
+    trace: &ToolTraceContext,
 ) -> ToolResult {
     match args.get("schema_version").and_then(|value| value.as_str()) {
         Some(CODE_GRAPH_SCHEMA_VERSION) => {}
@@ -480,6 +533,8 @@ pub(crate) fn tool_import_code_graph(
         Ok(p) => p,
         Err(e) => return e,
     };
+    let workflow_context = workflow_span_context(trace, None, Some(project));
+    let _workflow_span = workflow_span("import_code_graph", &workflow_context).entered();
 
     let nodes_raw = match args.get("nodes").and_then(|v| v.as_array()) {
         Some(arr) => arr,
@@ -695,6 +750,7 @@ pub(crate) fn tool_code_query(
     args: &Value,
     compact: bool,
     _project: Option<&str>,
+    trace: &ToolTraceContext,
 ) -> ToolResult {
     let project = match validate_required_string(args, "project") {
         Ok(p) => p,
@@ -705,6 +761,8 @@ pub(crate) fn tool_code_query(
         Ok(qt) => qt,
         Err(e) => return e,
     };
+    let workflow_context = workflow_span_context(trace, None, Some(&project));
+    let _workflow_span = workflow_span("code_query", &workflow_context).entered();
 
     // Look up memoir by name
     let memoir_name = format!("code:{project}");
@@ -1043,7 +1101,8 @@ mod tests {
             "prune": false
         });
 
-        let result = tool_import_code_graph(&store, &args, false, None);
+        let result =
+            tool_import_code_graph(&store, &args, false, None, &ToolTraceContext::default());
         assert!(
             !result.is_error,
             "Expected success, got: {:?}",
@@ -1102,7 +1161,8 @@ mod tests {
             ]
         });
 
-        let result = tool_import_code_graph(&store, &args, false, None);
+        let result =
+            tool_import_code_graph(&store, &args, false, None, &ToolTraceContext::default());
         assert!(result.is_error);
         assert!(result.content[0].text.contains("nonexistent"));
     }
@@ -1120,7 +1180,8 @@ mod tests {
             "prune": false
         });
 
-        let result = tool_import_code_graph(&store, &args, true, None);
+        let result =
+            tool_import_code_graph(&store, &args, true, None, &ToolTraceContext::default());
         assert!(!result.is_error);
         let text = &result.content[0].text;
         assert!(text.contains("code:compact_test"));
@@ -1143,14 +1204,26 @@ mod tests {
             "prune": false
         });
 
-        let _import_result = tool_import_code_graph(&store, &import_args, false, None);
+        let _import_result = tool_import_code_graph(
+            &store,
+            &import_args,
+            false,
+            None,
+            &ToolTraceContext::default(),
+        );
 
         // Query all symbols
         let query_args = json!({
             "project": "test_project",
             "query_type": "symbols"
         });
-        let result = tool_code_query(&store, &query_args, false, None);
+        let result = tool_code_query(
+            &store,
+            &query_args,
+            false,
+            None,
+            &ToolTraceContext::default(),
+        );
         assert!(!result.is_error);
         let text = &result.content[0].text;
         let symbols: Vec<Value> = serde_json::from_str(text).unwrap();
@@ -1163,7 +1236,13 @@ mod tests {
             "query_type": "symbols",
             "labels": ["function"]
         });
-        let result = tool_code_query(&store, &query_args_filtered, false, None);
+        let result = tool_code_query(
+            &store,
+            &query_args_filtered,
+            false,
+            None,
+            &ToolTraceContext::default(),
+        );
         assert!(!result.is_error);
         let text = &result.content[0].text;
         let symbols: Vec<Value> = serde_json::from_str(text).unwrap();
@@ -1188,7 +1267,13 @@ mod tests {
             "prune": false
         });
 
-        let _import_result = tool_import_code_graph(&store, &import_args, false, None);
+        let _import_result = tool_import_code_graph(
+            &store,
+            &import_args,
+            false,
+            None,
+            &ToolTraceContext::default(),
+        );
 
         // Query callers of helper
         let query_args = json!({
@@ -1196,7 +1281,13 @@ mod tests {
             "query_type": "callers",
             "symbol": "helper"
         });
-        let result = tool_code_query(&store, &query_args, false, None);
+        let result = tool_code_query(
+            &store,
+            &query_args,
+            false,
+            None,
+            &ToolTraceContext::default(),
+        );
         assert!(!result.is_error);
         let text = &result.content[0].text;
         let data: Value = serde_json::from_str(text).unwrap();
@@ -1224,7 +1315,13 @@ mod tests {
             "prune": false
         });
 
-        let _import_result = tool_import_code_graph(&store, &import_args, false, None);
+        let _import_result = tool_import_code_graph(
+            &store,
+            &import_args,
+            false,
+            None,
+            &ToolTraceContext::default(),
+        );
 
         // Query callees of main
         let query_args = json!({
@@ -1232,7 +1329,13 @@ mod tests {
             "query_type": "callees",
             "symbol": "main"
         });
-        let result = tool_code_query(&store, &query_args, false, None);
+        let result = tool_code_query(
+            &store,
+            &query_args,
+            false,
+            None,
+            &ToolTraceContext::default(),
+        );
         assert!(!result.is_error);
         let text = &result.content[0].text;
         let data: Value = serde_json::from_str(text).unwrap();
@@ -1262,7 +1365,13 @@ mod tests {
             "prune": false
         });
 
-        let _import_result = tool_import_code_graph(&store, &import_args, false, None);
+        let _import_result = tool_import_code_graph(
+            &store,
+            &import_args,
+            false,
+            None,
+            &ToolTraceContext::default(),
+        );
 
         // Query structure around b
         let query_args = json!({
@@ -1270,7 +1379,13 @@ mod tests {
             "query_type": "structure",
             "symbol": "b"
         });
-        let result = tool_code_query(&store, &query_args, false, None);
+        let result = tool_code_query(
+            &store,
+            &query_args,
+            false,
+            None,
+            &ToolTraceContext::default(),
+        );
         assert!(!result.is_error);
         let text = &result.content[0].text;
         let data: Value = serde_json::from_str(text).unwrap();
@@ -1288,7 +1403,13 @@ mod tests {
             "project": "nonexistent",
             "query_type": "symbols"
         });
-        let result = tool_code_query(&store, &query_args, false, None);
+        let result = tool_code_query(
+            &store,
+            &query_args,
+            false,
+            None,
+            &ToolTraceContext::default(),
+        );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("not found"));
     }
@@ -1306,14 +1427,26 @@ mod tests {
             "prune": false
         });
 
-        let _import_result = tool_import_code_graph(&store, &import_args, false, None);
+        let _import_result = tool_import_code_graph(
+            &store,
+            &import_args,
+            false,
+            None,
+            &ToolTraceContext::default(),
+        );
 
         let query_args = json!({
             "project": "sym_test",
             "query_type": "callers",
             "symbol": "does_not_exist"
         });
-        let result = tool_code_query(&store, &query_args, false, None);
+        let result = tool_code_query(
+            &store,
+            &query_args,
+            false,
+            None,
+            &ToolTraceContext::default(),
+        );
         assert!(result.is_error);
         assert!(result.content[0].text.contains("not found"));
     }
@@ -1329,7 +1462,8 @@ mod tests {
             "edges": []
         });
 
-        let result = tool_import_code_graph(&store, &args, false, None);
+        let result =
+            tool_import_code_graph(&store, &args, false, None, &ToolTraceContext::default());
         assert!(result.is_error);
         assert_eq!(
             result.content[0].text,
@@ -1349,7 +1483,8 @@ mod tests {
             "edges": []
         });
 
-        let result = tool_import_code_graph(&store, &args, false, None);
+        let result =
+            tool_import_code_graph(&store, &args, false, None, &ToolTraceContext::default());
         assert!(result.is_error);
         assert_eq!(
             result.content[0].text,

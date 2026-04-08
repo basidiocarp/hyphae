@@ -6,13 +6,17 @@
 // code symbols within a token budget, ranked by FTS relevance.
 
 use serde_json::{Value, json};
+use spore::logging::workflow_span;
 
 use hyphae_core::{MemoirStore, MemoryStore};
 use hyphae_store::SqliteStore;
 
 use crate::protocol::ToolResult;
 
-use super::{get_bounded_i64, get_str, normalize_identity, validate_required_string};
+use super::{
+    ToolTraceContext, get_bounded_i64, get_str, normalize_identity, resolve_workspace_root,
+    validate_required_string, workflow_span_context,
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -35,6 +39,7 @@ pub(crate) fn tool_gather_context(
     store: &SqliteStore,
     args: &Value,
     project: Option<&str>,
+    trace: &ToolTraceContext,
 ) -> ToolResult {
     let task = match validate_required_string(args, "task") {
         Ok(t) => t,
@@ -46,6 +51,8 @@ pub(crate) fn tool_gather_context(
         normalize_identity(get_str(args, "project_root"), get_str(args, "worktree_id"));
     let scoped_worktree = super::scoped_worktree_root(project_root, worktree_id);
     let scope = get_str(args, "scope");
+    let workflow_context = workflow_span_context(trace, resolve_workspace_root(args), None);
+    let _workflow_span = workflow_span("gather_context", &workflow_context).entered();
 
     if project_arg.is_none() && project_root.is_some() && worktree_id.is_some() {
         return ToolResult::error(
@@ -331,7 +338,12 @@ mod tests {
     #[test]
     fn test_gather_context_empty_store() {
         let store = test_store();
-        let result = tool_gather_context(&store, &json!({"task": "refactor auth"}), None);
+        let result = tool_gather_context(
+            &store,
+            &json!({"task": "refactor auth"}),
+            None,
+            &ToolTraceContext::default(),
+        );
         assert!(!result.is_error, "should succeed on empty store");
         let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
         assert_eq!(parsed["tokens_budget"], 2000);
@@ -355,6 +367,7 @@ mod tests {
             &store,
             &json!({"task": "auth middleware", "include": ["memories"]}),
             None,
+            &ToolTraceContext::default(),
         );
         assert!(!result.is_error);
         let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
@@ -396,6 +409,7 @@ mod tests {
                 "include": ["memories"]
             }),
             None,
+            &ToolTraceContext::default(),
         );
         assert!(!result.is_error);
         let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
@@ -432,6 +446,7 @@ mod tests {
             &store,
             &json!({"task": "authentication", "token_budget": 50, "include": ["memories"]}),
             None,
+            &ToolTraceContext::default(),
         );
         assert!(!result.is_error);
         let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
@@ -445,7 +460,7 @@ mod tests {
     #[test]
     fn test_gather_context_missing_task() {
         let store = test_store();
-        let result = tool_gather_context(&store, &json!({}), None);
+        let result = tool_gather_context(&store, &json!({}), None, &ToolTraceContext::default());
         assert!(result.is_error);
     }
 
@@ -465,6 +480,7 @@ mod tests {
                 "include": ["sessions"]
             }),
             None,
+            &ToolTraceContext::default(),
         );
         assert!(!result.is_error);
         let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
@@ -498,6 +514,7 @@ mod tests {
                 "include": ["sessions"]
             }),
             None,
+            &ToolTraceContext::default(),
         );
 
         assert!(!result.is_error);
@@ -522,6 +539,7 @@ mod tests {
                 "include": ["sessions"]
             }),
             None,
+            &ToolTraceContext::default(),
         );
 
         assert!(!result.is_error);
@@ -543,6 +561,7 @@ mod tests {
                 "include": ["sessions"]
             }),
             None,
+            &ToolTraceContext::default(),
         );
 
         assert!(result.is_error);
@@ -598,6 +617,7 @@ mod tests {
                 "include": ["sessions"]
             }),
             None,
+            &ToolTraceContext::default(),
         );
 
         assert!(!result.is_error);
@@ -664,6 +684,7 @@ mod tests {
                 "include": ["sessions"]
             }),
             None,
+            &ToolTraceContext::default(),
         );
 
         assert!(!result.is_error);
@@ -728,6 +749,7 @@ mod tests {
                 "include": ["sessions"]
             }),
             None,
+            &ToolTraceContext::default(),
         );
 
         assert!(!result.is_error);
@@ -774,6 +796,7 @@ mod tests {
                 "include": ["sessions"]
             }),
             None,
+            &ToolTraceContext::default(),
         );
 
         assert!(!result.is_error);

@@ -1,12 +1,16 @@
 use chrono::Utc;
 use serde_json::Value;
+use spore::logging::workflow_span;
 
 use hyphae_core::{Embedder, Memory, MemoryStore};
 use hyphae_store::{SqliteStore, context};
 
 use crate::protocol::ToolResult;
 
-use super::super::{get_bounded_i64, get_str, normalize_identity, scoped_worktree_root};
+use super::super::{
+    ToolTraceContext, get_bounded_i64, get_str, normalize_identity, resolve_workspace_root,
+    scoped_worktree_root, workflow_span_context,
+};
 use super::helpers::dedupe_memory_results;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -356,6 +360,7 @@ pub(crate) fn tool_recall(
     args: &Value,
     compact: bool,
     project: Option<&str>,
+    trace: &ToolTraceContext,
 ) -> ToolResult {
     if let Err(e) = store.maybe_auto_decay() {
         tracing::warn!("auto-decay failed: {e}");
@@ -379,6 +384,8 @@ pub(crate) fn tool_recall(
     }
     let (project_root, worktree_id) = normalize_identity(raw_project_root, raw_worktree_id);
     let scoped_worktree = scoped_worktree_root(project_root, worktree_id);
+    let workflow_context = workflow_span_context(trace, resolve_workspace_root(args), session_id);
+    let _workflow_span = workflow_span("memory_recall", &workflow_context).entered();
     let code_context_requested = args
         .get("code_context")
         .and_then(|v| v.as_bool())

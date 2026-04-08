@@ -39,7 +39,8 @@ hyphae-cli ──► hyphae-ingest ──► hyphae-core
 All five crates compile into the `hyphae` binary.
 
 - **`hyphae-core`**: Domain types, traits, and embedder abstraction. No
-  database I/O. No transport code.
+  database I/O. No transport code. Keep this crate narrow so transport,
+  operator, and persistence concerns stay in the surrounding crates.
 - **`hyphae-store`**: SQLite implementation of `MemoryStore` and `MemoirStore`,
   including FTS5, sqlite-vec, migrations, and decay bookkeeping.
 - **`hyphae-ingest`**: File readers and chunking strategies for Markdown, code,
@@ -144,6 +145,10 @@ File: `crates/hyphae-store/src/`
 2. Extend the SQLite schema and migration path in `hyphae-store`.
 3. Thread the behavior through CLI or MCP handlers.
 4. Add roundtrip and edge-case tests before shipping the new surface.
+
+When a surface crosses the MCP or CLI boundary, make the contract version
+explicit in the payload or schema. Do not hide boundary changes behind
+unversioned convenience fields.
 
 ---
 

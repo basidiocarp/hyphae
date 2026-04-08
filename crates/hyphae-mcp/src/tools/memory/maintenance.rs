@@ -1,11 +1,14 @@
 use serde_json::Value;
+use spore::logging::workflow_span;
 
 use hyphae_core::{ConsolidationConfig, Embedder, Importance, MemoirStore, Memory, MemoryStore};
 use hyphae_store::SqliteStore;
 
 use crate::protocol::ToolResult;
 
-use super::super::{get_bounded_i64, get_str, validate_required_string};
+use super::super::{
+    ToolTraceContext, get_bounded_i64, get_str, validate_required_string, workflow_span_context,
+};
 use crate::text::truncate_str;
 
 fn topic_needs_consolidation(
@@ -50,7 +53,11 @@ pub(super) fn consolidation_hint(
     }
 }
 
-pub(crate) fn tool_consolidate(store: &SqliteStore, args: &Value) -> ToolResult {
+pub(crate) fn tool_consolidate(
+    store: &SqliteStore,
+    args: &Value,
+    trace: &ToolTraceContext,
+) -> ToolResult {
     let topic = match validate_required_string(args, "topic") {
         Ok(t) => t,
         Err(e) => return e,
@@ -62,6 +69,8 @@ pub(crate) fn tool_consolidate(store: &SqliteStore, args: &Value) -> ToolResult 
     if let Err(e) = super::super::validate_max_length(summary, "summary", 32768) {
         return e;
     }
+    let workflow_context = workflow_span_context(trace, None, Some(topic));
+    let _workflow_span = workflow_span("memory_consolidate", &workflow_context).entered();
 
     let consolidated = Memory::new(topic.into(), summary.into(), Importance::High);
 
@@ -75,9 +84,12 @@ pub(crate) fn tool_list_invalidated(
     store: &SqliteStore,
     args: &Value,
     project: Option<&str>,
+    trace: &ToolTraceContext,
 ) -> ToolResult {
     let limit = get_bounded_i64(args, "limit", 20, 1, 100) as usize;
     let offset = get_bounded_i64(args, "offset", 0, 0, 10_000) as usize;
+    let workflow_context = workflow_span_context(trace, None, None);
+    let _workflow_span = workflow_span("memory_list_invalidated", &workflow_context).entered();
 
     match store.list_invalidated(limit, offset, project) {
         Ok(memories) => {
@@ -111,7 +123,13 @@ pub(crate) fn tool_list_invalidated(
     }
 }
 
-pub(crate) fn tool_list_topics(store: &SqliteStore, project: Option<&str>) -> ToolResult {
+pub(crate) fn tool_list_topics(
+    store: &SqliteStore,
+    project: Option<&str>,
+    trace: &ToolTraceContext,
+) -> ToolResult {
+    let workflow_context = workflow_span_context(trace, None, None);
+    let _workflow_span = workflow_span("memory_list_topics", &workflow_context).entered();
     match store.list_topics(project) {
         Ok(topics) => {
             if topics.is_empty() {
@@ -127,7 +145,13 @@ pub(crate) fn tool_list_topics(store: &SqliteStore, project: Option<&str>) -> To
     }
 }
 
-pub(crate) fn tool_stats(store: &SqliteStore, project: Option<&str>) -> ToolResult {
+pub(crate) fn tool_stats(
+    store: &SqliteStore,
+    project: Option<&str>,
+    trace: &ToolTraceContext,
+) -> ToolResult {
+    let workflow_context = workflow_span_context(trace, None, None);
+    let _workflow_span = workflow_span("memory_stats", &workflow_context).entered();
     match store.stats(project) {
         Ok(stats) => {
             let mut output = format!(
@@ -151,8 +175,11 @@ pub(crate) fn tool_health_with_rules(
     consolidation: &ConsolidationConfig,
     args: &Value,
     project: Option<&str>,
+    trace: &ToolTraceContext,
 ) -> ToolResult {
     let specific_topic = get_str(args, "topic");
+    let workflow_context = workflow_span_context(trace, None, None);
+    let _workflow_span = workflow_span("memory_health", &workflow_context).entered();
 
     let topics = if let Some(t) = specific_topic {
         vec![(t.to_string(), 0usize)]
@@ -217,11 +244,14 @@ pub(crate) fn tool_embed_all(
     embedder: Option<&dyn Embedder>,
     args: &Value,
     project: Option<&str>,
+    trace: &ToolTraceContext,
 ) -> ToolResult {
     let embedder = match embedder {
         Some(e) => e,
         None => return ToolResult::error("embeddings not available".into()),
     };
+    let workflow_context = workflow_span_context(trace, None, None);
+    let _workflow_span = workflow_span("memory_embed_all", &workflow_context).entered();
 
     let topic_filter = get_str(args, "topic");
 
@@ -277,12 +307,19 @@ pub(crate) fn tool_embed_all(
 
 const PROMOTION_THRESHOLD: usize = 15;
 
-pub(crate) fn tool_recall_global(store: &SqliteStore, args: &Value, compact: bool) -> ToolResult {
+pub(crate) fn tool_recall_global(
+    store: &SqliteStore,
+    args: &Value,
+    compact: bool,
+    trace: &ToolTraceContext,
+) -> ToolResult {
     let query = match get_str(args, "query") {
         Some(q) => q,
         None => return ToolResult::error("missing required field: query".into()),
     };
     let limit = get_bounded_i64(args, "limit", 10, 1, 100) as usize;
+    let workflow_context = workflow_span_context(trace, None, None);
+    let _workflow_span = workflow_span("recall_global", &workflow_context).entered();
 
     let results = match store.search_all_projects(query, limit) {
         Ok(r) => r,
@@ -346,11 +383,14 @@ pub(crate) fn tool_promote_to_memoir(
     store: &SqliteStore,
     args: &Value,
     project: Option<&str>,
+    trace: &ToolTraceContext,
 ) -> ToolResult {
     let topic = match validate_required_string(args, "topic") {
         Ok(t) => t,
         Err(e) => return e,
     };
+    let workflow_context = workflow_span_context(trace, None, Some(topic));
+    let _workflow_span = workflow_span("promote_to_memoir", &workflow_context).entered();
 
     let memories = match store.get_by_topic(topic, project) {
         Ok(m) => m,

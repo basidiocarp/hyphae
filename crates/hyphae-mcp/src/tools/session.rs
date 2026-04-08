@@ -4,19 +4,24 @@
 //! for tracking coding sessions across MCP clients.
 
 use serde_json::{Value, json};
+use spore::logging::workflow_span;
 
 use hyphae_core::Embedder;
 use hyphae_store::SqliteStore;
 
 use crate::protocol::ToolResult;
 
-use super::{get_bounded_i64, get_str, normalize_identity, validate_required_string};
+use super::{
+    ToolTraceContext, get_bounded_i64, get_str, normalize_identity, resolve_workspace_root,
+    validate_required_string, workflow_span_context,
+};
 
 /// `hyphae_session_start` — begin a new coding session.
 pub(crate) fn tool_session_start(
     store: &SqliteStore,
     embedder: Option<&dyn Embedder>,
     args: &Value,
+    trace: &ToolTraceContext,
 ) -> ToolResult {
     let project = match validate_required_string(args, "project") {
         Ok(p) => p,
@@ -28,6 +33,9 @@ pub(crate) fn tool_session_start(
     let scope = get_str(args, "scope");
     let runtime_session_id = get_str(args, "runtime_session_id");
     let context_signals = args.get("context_signals");
+    let workflow_context =
+        workflow_span_context(trace, resolve_workspace_root(args), runtime_session_id);
+    let _workflow_span = workflow_span("session_start", &workflow_context).entered();
 
     match store.session_start_identity_with_runtime_and_context_signals(
         project,
@@ -59,11 +67,18 @@ pub(crate) fn tool_session_start(
 }
 
 /// `hyphae_session_end` — end a coding session.
-pub(crate) fn tool_session_end(store: &SqliteStore, args: &Value) -> ToolResult {
+pub(crate) fn tool_session_end(
+    store: &SqliteStore,
+    args: &Value,
+    trace: &ToolTraceContext,
+) -> ToolResult {
     let session_id = match validate_required_string(args, "session_id") {
         Ok(s) => s,
         Err(e) => return e,
     };
+    let workflow_context =
+        workflow_span_context(trace, resolve_workspace_root(args), Some(session_id));
+    let _workflow_span = workflow_span("session_end", &workflow_context).entered();
     let summary = get_str(args, "summary");
     let files_modified = args
         .get("files_modified")
@@ -94,7 +109,11 @@ pub(crate) fn tool_session_end(store: &SqliteStore, args: &Value) -> ToolResult 
 }
 
 /// `hyphae_session_context` — retrieve recent session history for a project.
-pub(crate) fn tool_session_context(store: &SqliteStore, args: &Value) -> ToolResult {
+pub(crate) fn tool_session_context(
+    store: &SqliteStore,
+    args: &Value,
+    trace: &ToolTraceContext,
+) -> ToolResult {
     let project = match validate_required_string(args, "project") {
         Ok(p) => p,
         Err(e) => return e,
@@ -103,6 +122,8 @@ pub(crate) fn tool_session_context(store: &SqliteStore, args: &Value) -> ToolRes
         normalize_identity(get_str(args, "project_root"), get_str(args, "worktree_id"));
     let scope = get_str(args, "scope");
     let limit = get_bounded_i64(args, "limit", 5, 1, 50);
+    let workflow_context = workflow_span_context(trace, resolve_workspace_root(args), None);
+    let _workflow_span = workflow_span("session_context", &workflow_context).entered();
 
     match store.session_context_identity(project, project_root, worktree_id, scope, limit) {
         Ok(sessions) => {
@@ -160,6 +181,7 @@ mod tests {
             &store,
             None,
             &json!({"project": "test-project", "task": "implement feature X"}),
+            &ToolTraceContext::default(),
         );
         assert!(!result.is_error, "session_start should succeed");
         let text = &result.content[0].text;
@@ -201,6 +223,7 @@ mod tests {
                     "git_branch": "feat/context-aware-recall"
                 }
             }),
+            &ToolTraceContext::default(),
         );
         assert!(!result.is_error);
 
@@ -218,11 +241,13 @@ mod tests {
             &store,
             None,
             &json!({"project": "test-project", "task": "worker a", "scope": "worker-a"}),
+            &ToolTraceContext::default(),
         );
         let second = tool_session_start(
             &store,
             None,
             &json!({"project": "test-project", "task": "worker b", "scope": "worker-b"}),
+            &ToolTraceContext::default(),
         );
 
         let first_parsed: Value = serde_json::from_str(&first.content[0].text).unwrap();
@@ -244,6 +269,7 @@ mod tests {
                 "scope": "worker-a",
                 "runtime_session_id": "claude-session-1"
             }),
+            &ToolTraceContext::default(),
         );
         assert!(!result.is_error);
 
@@ -270,6 +296,7 @@ mod tests {
                 "project_root": "/repo/test-project",
                 "scope": "worker-a"
             }),
+            &ToolTraceContext::default(),
         );
         assert!(!first.is_error);
 
@@ -281,6 +308,7 @@ mod tests {
                 "task": "worker b",
                 "scope": "worker-a"
             }),
+            &ToolTraceContext::default(),
         );
         assert!(!second.is_error);
 
@@ -300,6 +328,7 @@ mod tests {
                 "project_root": "/repo/test-project",
                 "scope": "worker-a"
             }),
+            &ToolTraceContext::default(),
         );
         assert!(!ctx.is_error);
         let ctx_parsed: Value = serde_json::from_str(&ctx.content[0].text).unwrap();
@@ -310,7 +339,7 @@ mod tests {
     #[test]
     fn test_session_start_missing_project() {
         let store = test_store();
-        let result = tool_session_start(&store, None, &json!({}));
+        let result = tool_session_start(&store, None, &json!({}), &ToolTraceContext::default());
         assert!(result.is_error);
     }
 
@@ -319,7 +348,12 @@ mod tests {
         let store = test_store();
 
         // Start a session
-        let start_result = tool_session_start(&store, None, &json!({"project": "test-proj"}));
+        let start_result = tool_session_start(
+            &store,
+            None,
+            &json!({"project": "test-proj"}),
+            &ToolTraceContext::default(),
+        );
         assert!(!start_result.is_error);
         let parsed: Value = serde_json::from_str(&start_result.content[0].text).unwrap();
         let session_id = parsed["session_id"].as_str().unwrap();
@@ -333,6 +367,7 @@ mod tests {
                 "files_modified": ["session.rs", "mod.rs"],
                 "errors_encountered": 0,
             }),
+            &ToolTraceContext::default(),
         );
         assert!(
             !end_result.is_error,
@@ -354,7 +389,11 @@ mod tests {
     fn test_session_end_invalid_id() {
         let store = test_store();
 
-        let result = tool_session_end(&store, &json!({"session_id": "nonexistent"}));
+        let result = tool_session_end(
+            &store,
+            &json!({"session_id": "nonexistent"}),
+            &ToolTraceContext::default(),
+        );
         assert!(result.is_error);
     }
 
@@ -367,13 +406,22 @@ mod tests {
             &store,
             None,
             &json!({"project": "ctx-proj", "task": "test"}),
+            &ToolTraceContext::default(),
         );
         let parsed: Value = serde_json::from_str(&start.content[0].text).unwrap();
         let sid = parsed["session_id"].as_str().unwrap();
-        let _ = tool_session_end(&store, &json!({"session_id": sid, "summary": "done"}));
+        let _ = tool_session_end(
+            &store,
+            &json!({"session_id": sid, "summary": "done"}),
+            &ToolTraceContext::default(),
+        );
 
         // Query context
-        let ctx = tool_session_context(&store, &json!({"project": "ctx-proj"}));
+        let ctx = tool_session_context(
+            &store,
+            &json!({"project": "ctx-proj"}),
+            &ToolTraceContext::default(),
+        );
         assert!(!ctx.is_error);
         let ctx_parsed: Value = serde_json::from_str(&ctx.content[0].text).unwrap();
         assert_eq!(ctx_parsed["count"].as_u64().unwrap(), 1);
@@ -392,17 +440,22 @@ mod tests {
             &store,
             None,
             &json!({"project": "ctx-proj", "task": "worker a", "scope": "worker-a"}),
+            &ToolTraceContext::default(),
         );
         let worker_b = tool_session_start(
             &store,
             None,
             &json!({"project": "ctx-proj", "task": "worker b", "scope": "worker-b"}),
+            &ToolTraceContext::default(),
         );
         assert!(!worker_a.is_error);
         assert!(!worker_b.is_error);
 
-        let ctx =
-            tool_session_context(&store, &json!({"project": "ctx-proj", "scope": "worker-a"}));
+        let ctx = tool_session_context(
+            &store,
+            &json!({"project": "ctx-proj", "scope": "worker-a"}),
+            &ToolTraceContext::default(),
+        );
         assert!(!ctx.is_error);
         let ctx_parsed: Value = serde_json::from_str(&ctx.content[0].text).unwrap();
         assert_eq!(ctx_parsed["count"].as_u64().unwrap(), 1);
@@ -426,6 +479,7 @@ mod tests {
                 "worktree_id": "wt-alpha",
                 "scope": "worker-a"
             }),
+            &ToolTraceContext::default(),
         );
         assert!(!start.is_error);
 
@@ -437,6 +491,7 @@ mod tests {
                 "worktree_id": "wt-alpha",
                 "scope": "worker-a"
             }),
+            &ToolTraceContext::default(),
         );
         assert!(!ctx.is_error);
 
@@ -467,6 +522,7 @@ mod tests {
                 "worktree_id": "wt-alpha",
                 "scope": "worker-a"
             }),
+            &ToolTraceContext::default(),
         );
         let worker_b = tool_session_start(
             &store,
@@ -478,6 +534,7 @@ mod tests {
                 "worktree_id": "wt-alpha",
                 "scope": "worker-b"
             }),
+            &ToolTraceContext::default(),
         );
         assert!(!worker_a.is_error);
         assert!(!worker_b.is_error);
@@ -490,6 +547,7 @@ mod tests {
                 "worktree_id": "wt-alpha",
                 "scope": "worker-a"
             }),
+            &ToolTraceContext::default(),
         );
         assert!(!ctx.is_error);
 
@@ -507,6 +565,7 @@ mod tests {
             &store,
             None,
             &json!({"project": "ctx-proj", "task": "worker a", "scope": "worker-a"}),
+            &ToolTraceContext::default(),
         );
         assert!(!legacy.is_error);
 
@@ -518,6 +577,7 @@ mod tests {
                 "worktree_id": "wt-alpha",
                 "scope": "worker-a"
             }),
+            &ToolTraceContext::default(),
         );
         assert!(!ctx.is_error);
 
@@ -528,7 +588,11 @@ mod tests {
     #[test]
     fn test_session_context_empty() {
         let store = test_store();
-        let result = tool_session_context(&store, &json!({"project": "empty-proj"}));
+        let result = tool_session_context(
+            &store,
+            &json!({"project": "empty-proj"}),
+            &ToolTraceContext::default(),
+        );
         assert!(!result.is_error);
         let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
         assert_eq!(parsed["count"].as_u64().unwrap(), 0);

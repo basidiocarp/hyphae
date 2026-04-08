@@ -1,19 +1,23 @@
 use serde_json::Value;
+use spore::logging::workflow_span;
 
 use hyphae_core::{Memory, MemoryStore};
 use hyphae_store::SqliteStore;
 
 use crate::protocol::ToolResult;
 
-use super::super::get_bounded_i64;
+use super::super::{ToolTraceContext, get_bounded_i64, workflow_span_context};
 use super::helpers::{extract_common_pattern, extract_keywords};
 
 pub(crate) fn tool_extract_lessons(
     store: &SqliteStore,
     args: &Value,
     project: Option<&str>,
+    trace: &ToolTraceContext,
 ) -> ToolResult {
     let limit = get_bounded_i64(args, "limit", 10, 1, 50) as usize;
+    let workflow_context = workflow_span_context(trace, None, None);
+    let _workflow_span = workflow_span("extract_lessons", &workflow_context).entered();
 
     let corrections = store
         .get_by_topic("corrections", project)

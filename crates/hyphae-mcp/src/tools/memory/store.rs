@@ -1,5 +1,6 @@
 use chrono::Utc;
 use serde_json::Value;
+use spore::logging::workflow_span;
 
 use hyphae_core::{
     Embedder, Importance, Memory, MemoryId, MemoryStore, Weight, detect_git_context_from,
@@ -9,7 +10,10 @@ use hyphae_store::SqliteStore;
 
 use crate::protocol::ToolResult;
 
-use super::super::{get_str, validate_max_length, validate_required_string};
+use super::super::{
+    ToolTraceContext, get_str, resolve_workspace_root, validate_max_length,
+    validate_required_string, workflow_span_context,
+};
 
 pub(crate) fn tool_store(
     store: &SqliteStore,
@@ -19,6 +23,7 @@ pub(crate) fn tool_store(
     compact: bool,
     project: Option<&str>,
     reject_secrets: bool,
+    trace: &ToolTraceContext,
 ) -> ToolResult {
     let topic = match validate_required_string(args, "topic") {
         Ok(t) => t,
@@ -38,6 +43,8 @@ pub(crate) fn tool_store(
     }
     let importance_str = get_str(args, "importance").unwrap_or("medium");
     let importance = importance_str.parse().unwrap_or(Importance::Medium);
+    let workflow_context = workflow_span_context(trace, resolve_workspace_root(args), None);
+    let _workflow_span = workflow_span("memory_store", &workflow_context).entered();
 
     if reject_secrets {
         let detected = detect_secrets(content);
@@ -193,11 +200,17 @@ pub(crate) fn tool_store(
     }
 }
 
-pub(crate) fn tool_forget(store: &SqliteStore, args: &Value) -> ToolResult {
+pub(crate) fn tool_forget(
+    store: &SqliteStore,
+    args: &Value,
+    trace: &ToolTraceContext,
+) -> ToolResult {
     let id = match get_str(args, "id") {
         Some(id) => id,
         None => return ToolResult::error("missing required field: id".into()),
     };
+    let workflow_context = workflow_span_context(trace, None, Some(id));
+    let _workflow_span = workflow_span("memory_forget", &workflow_context).entered();
 
     let memory_id = MemoryId::from(id);
     match store.delete(&memory_id) {
@@ -206,11 +219,17 @@ pub(crate) fn tool_forget(store: &SqliteStore, args: &Value) -> ToolResult {
     }
 }
 
-pub(crate) fn tool_invalidate(store: &SqliteStore, args: &Value) -> ToolResult {
+pub(crate) fn tool_invalidate(
+    store: &SqliteStore,
+    args: &Value,
+    trace: &ToolTraceContext,
+) -> ToolResult {
     let id = match get_str(args, "id") {
         Some(id) => id,
         None => return ToolResult::error("missing required field: id".into()),
     };
+    let workflow_context = workflow_span_context(trace, None, Some(id));
+    let _workflow_span = workflow_span("memory_invalidate", &workflow_context).entered();
     let reason = get_str(args, "reason");
     if let Some(reason) = reason {
         if let Err(e) = validate_max_length(reason, "reason", 1024) {
@@ -239,11 +258,14 @@ pub(crate) fn tool_update(
     store: &SqliteStore,
     embedder: Option<&dyn Embedder>,
     args: &Value,
+    trace: &ToolTraceContext,
 ) -> ToolResult {
     let id = match get_str(args, "id") {
         Some(id) => id,
         None => return ToolResult::error("missing required field: id".into()),
     };
+    let workflow_context = workflow_span_context(trace, None, Some(id));
+    let _workflow_span = workflow_span("memory_update", &workflow_context).entered();
     let content = match validate_required_string(args, "content") {
         Ok(c) => c,
         Err(e) => return e,

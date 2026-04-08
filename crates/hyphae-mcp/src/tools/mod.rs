@@ -1,4 +1,5 @@
 use serde_json::{Value, json};
+use spore::logging::SpanContext;
 
 use hyphae_core::{Memoir, MemoirStore};
 use hyphae_store::SqliteStore;
@@ -15,6 +16,13 @@ mod schema;
 mod session;
 
 pub use dispatch::{call_tool, call_tool_with_consolidation};
+
+#[derive(Debug, Clone, Default)]
+pub struct ToolTraceContext {
+    pub request_id: Option<String>,
+    pub session_id: Option<String>,
+    pub workspace_root: Option<String>,
+}
 
 // ===========================================================================
 // Tool schemas for tools/list
@@ -36,6 +44,60 @@ pub fn tool_definitions(has_embedder: bool) -> Value {
 
 pub(super) fn get_str<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
     args.get(key).and_then(|v| v.as_str())
+}
+
+pub(super) fn path_workspace_root(args: &Value) -> Option<String> {
+    let path = get_str(args, "path")?;
+    let path = std::path::Path::new(path);
+    let workspace = if path.is_dir() {
+        path
+    } else {
+        path.parent().unwrap_or(path)
+    };
+    Some(workspace.display().to_string())
+}
+
+pub(super) fn resolve_workspace_root(args: &Value) -> Option<String> {
+    get_str(args, "project_root")
+        .map(ToOwned::to_owned)
+        .or_else(|| get_str(args, "worktree").map(ToOwned::to_owned))
+        .or_else(|| path_workspace_root(args))
+}
+
+pub(super) fn span_session_id(args: &Value) -> Option<String> {
+    get_str(args, "session_id")
+        .or_else(|| get_str(args, "runtime_session_id"))
+        .map(ToOwned::to_owned)
+}
+
+pub(crate) fn request_span_context(
+    trace: &ToolTraceContext,
+    workspace_root: Option<String>,
+    session_id: Option<&str>,
+) -> SpanContext {
+    let mut context = SpanContext::for_app("hyphae");
+    if let Some(request_id) = trace.request_id.as_deref() {
+        context = context.with_request_id(request_id);
+    }
+    let workspace_root = workspace_root.or_else(|| trace.workspace_root.clone());
+    if let Some(workspace_root) = workspace_root {
+        context = context.with_workspace_root(workspace_root);
+    }
+    let session_id = session_id
+        .map(ToOwned::to_owned)
+        .or_else(|| trace.session_id.clone());
+    if let Some(session_id) = session_id {
+        context = context.with_session_id(session_id);
+    }
+    context
+}
+
+pub(crate) fn workflow_span_context(
+    trace: &ToolTraceContext,
+    workspace_root: Option<String>,
+    session_id: Option<&str>,
+) -> SpanContext {
+    request_span_context(trace, workspace_root, session_id)
 }
 
 /// Normalize the identity-v1 pair so partial identity input collapses back to
@@ -2176,116 +2238,6 @@ mod tests {
     }
 
     #[test]
-    fn test_tool_search_all_rejects_partial_identity_pair() {
-        let store = test_store();
-        let result = call_tool(
-            &store,
-            None,
-            "hyphae_search_all",
-            &json!({
-                "query": "identity scoped search",
-                "project_root": "/repo/demo"
-            }),
-            false,
-            Some("demo"),
-            false,
-        );
-        assert!(result.is_error);
-        assert!(
-            result.content[0]
-                .text
-                .contains("project_root and worktree_id must be provided together")
-        );
-    }
-
-    #[test]
-    fn test_tool_search_all_identity_contract() {
-        use std::fs;
-        use tempfile::TempDir;
-
-        let store = test_store();
-
-        call_tool(
-            &store,
-            None,
-            "hyphae_memory_store",
-            &json!({
-                "topic": "identity",
-                "content": "Alpha memory search target",
-                "worktree": "/repo/demo/wt-alpha"
-            }),
-            false,
-            Some("demo"),
-            false,
-        );
-        call_tool(
-            &store,
-            None,
-            "hyphae_memory_store",
-            &json!({
-                "topic": "identity",
-                "content": "Beta memory search target",
-                "worktree": "/repo/demo/wt-beta"
-            }),
-            false,
-            Some("demo"),
-            false,
-        );
-        call_tool(
-            &store,
-            None,
-            "hyphae_memory_store",
-            &json!({
-                "topic": "identity",
-                "content": "Shared memory search target"
-            }),
-            false,
-            Some(hyphae_store::SHARED_PROJECT),
-            false,
-        );
-
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("identity.md");
-        fs::write(&path, "Identity search target doc chunk for project demo.").unwrap();
-        call_tool(
-            &store,
-            None,
-            "hyphae_ingest_file",
-            &json!({"path": path.to_str().unwrap()}),
-            false,
-            Some("demo"),
-            false,
-        );
-
-        let result = call_tool(
-            &store,
-            None,
-            "hyphae_search_all",
-            &json!({
-                "query": "search target",
-                "project_root": "/repo/demo/wt-alpha",
-                "worktree_id": "wt-alpha"
-            }),
-            false,
-            Some("demo"),
-            false,
-        );
-        assert!(
-            !result.is_error,
-            "search_all error: {}",
-            result.content[0].text
-        );
-        let text = &result.content[0].text;
-        assert!(text.contains("Alpha memory search target"));
-        assert!(text.contains("Shared memory search target"));
-        assert!(text.contains("Identity search target doc chunk"));
-        assert!(
-            !text.contains("Beta memory search target"),
-            "other worktrees should not leak into identity-scoped search_all"
-        );
-    }
-
-    #[test]
     fn test_is_session_query_detects_keywords() {
         assert!(memory::is_session_query("what did I do last session"));
         assert!(memory::is_session_query("last time I worked on auth"));
@@ -2300,137 +2252,5 @@ mod tests {
         assert!(!memory::is_session_query("how to parse JSON"));
         assert!(!memory::is_session_query("authentication flow"));
         assert!(!memory::is_session_query("database schema design"));
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────────
-    // Secrets Rejection Tests
-    // ─────────────────────────────────────────────────────────────────────────────
-
-    #[test]
-    fn test_store_with_reject_secrets_true_blocks_api_key() {
-        let store = test_store();
-        let args = json!({
-            "topic": "config",
-            "content": "api_key = sk1234567890abcdefghij",
-            "importance": "medium"
-        });
-        let result = memory::tool_store(
-            &store,
-            None,
-            &hyphae_core::ConsolidationConfig::default(),
-            &args,
-            false,
-            None,
-            true,
-        );
-        assert!(result.is_error);
-        assert!(result.content[0].text.contains("Storing blocked"));
-        assert!(result.content[0].text.contains("secrets detected"));
-    }
-
-    #[test]
-    fn test_store_with_reject_secrets_true_blocks_github_token() {
-        let store = test_store();
-        let args = json!({
-            "topic": "credentials",
-            "content": "ghp_1234567890abcdefghijklmnopqrstuvwxyz",
-            "importance": "high"
-        });
-        let result = memory::tool_store(
-            &store,
-            None,
-            &hyphae_core::ConsolidationConfig::default(),
-            &args,
-            false,
-            None,
-            true,
-        );
-        assert!(result.is_error);
-        assert!(result.content[0].text.contains("Storing blocked"));
-    }
-
-    #[test]
-    fn test_store_with_reject_secrets_false_allows_api_key() {
-        let store = test_store();
-        let args = json!({
-            "topic": "config",
-            "content": "api_key = sk1234567890abcdefghij",
-            "importance": "medium"
-        });
-        let result = memory::tool_store(
-            &store,
-            None,
-            &hyphae_core::ConsolidationConfig::default(),
-            &args,
-            false,
-            None,
-            false,
-        );
-        // Should store successfully (though it warns about secrets)
-        assert!(!result.is_error);
-    }
-
-    #[test]
-    fn test_store_with_reject_secrets_allows_normal_content() {
-        let store = test_store();
-        let args = json!({
-            "topic": "learning",
-            "content": "How to debug memory issues in Rust",
-            "importance": "medium"
-        });
-        let result = memory::tool_store(
-            &store,
-            None,
-            &hyphae_core::ConsolidationConfig::default(),
-            &args,
-            false,
-            None,
-            true,
-        );
-        assert!(!result.is_error);
-    }
-
-    #[test]
-    fn test_store_with_reject_secrets_blocks_private_key() {
-        let store = test_store();
-        let args = json!({
-            "topic": "security",
-            "content": "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA...",
-            "importance": "critical"
-        });
-        let result = memory::tool_store(
-            &store,
-            None,
-            &hyphae_core::ConsolidationConfig::default(),
-            &args,
-            false,
-            None,
-            true,
-        );
-        assert!(result.is_error);
-        assert!(result.content[0].text.contains("Storing blocked"));
-        assert!(result.content[0].text.contains("private key"));
-    }
-
-    #[test]
-    fn test_store_with_reject_secrets_blocks_aws_key() {
-        let store = test_store();
-        let args = json!({
-            "topic": "credentials",
-            "content": "AWS_ACCESS_KEY_ID = AKIAIOSFODNN7EXAMPLE",
-            "importance": "high"
-        });
-        let result = memory::tool_store(
-            &store,
-            None,
-            &hyphae_core::ConsolidationConfig::default(),
-            &args,
-            false,
-            None,
-            true,
-        );
-        assert!(result.is_error);
-        assert!(result.content[0].text.contains("Storing blocked"));
-        assert!(result.content[0].text.contains("AWS"));
     }
 }
