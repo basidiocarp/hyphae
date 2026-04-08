@@ -2,18 +2,6 @@ use std::collections::HashSet;
 
 use hyphae_core::Memory;
 
-/// Safely truncate a string at a byte boundary, respecting multi-byte UTF-8.
-pub(super) fn truncate_str(s: &str, max_bytes: usize) -> &str {
-    if s.len() <= max_bytes {
-        return s;
-    }
-    let mut end = max_bytes;
-    while !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    &s[..end]
-}
-
 /// Merge branches of memories while preserving first-seen ordering and removing duplicates.
 pub(super) fn dedupe_memory_results(branches: Vec<Vec<Memory>>, limit: usize) -> Vec<Memory> {
     let mut results = Vec::new();

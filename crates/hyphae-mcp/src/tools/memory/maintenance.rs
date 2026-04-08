@@ -6,7 +6,7 @@ use hyphae_store::SqliteStore;
 use crate::protocol::ToolResult;
 
 use super::super::{get_bounded_i64, get_str, validate_required_string};
-use super::helpers::truncate_str;
+use crate::text::truncate_str;
 
 fn topic_needs_consolidation(
     store: &SqliteStore,
