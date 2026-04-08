@@ -358,7 +358,7 @@ default_threshold = 15
         let db_path_str = db_path.to_string_lossy().to_string();
         let toml_str = r#"
 [store]
-path = "__TEST_DB__"
+path = '__TEST_DB__'
 
 [memory]
 default_importance = "high"
