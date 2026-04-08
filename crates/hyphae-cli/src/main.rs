@@ -121,7 +121,7 @@ fn init_embedder(model: &str) -> Option<Box<dyn Embedder>> {
 }
 
 fn main() -> Result<()> {
-    spore::logging::init(tracing::Level::WARN);
+    spore::logging::init_app("hyphae", tracing::Level::WARN);
 
     let cli = Cli::parse();
 

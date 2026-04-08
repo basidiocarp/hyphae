@@ -1,6 +1,7 @@
 use std::io::{self, BufRead, Write};
 
 use serde_json::{Value, json};
+use spore::logging::{SpanContext, request_span, root_span, tool_span};
 use tracing::{debug, error};
 
 use hyphae_core::{ConsolidationConfig, Embedder, MemoryStore};
@@ -31,6 +32,8 @@ struct ToolCallCtx<'a> {
     consolidation: &'a ConsolidationConfig,
     compact: bool,
     project: Option<&'a str>,
+    request_id: Option<String>,
+    workspace_root: Option<String>,
     calls_since_store: &'a mut u32,
     reject_secrets: bool,
 }
@@ -127,12 +130,16 @@ pub fn run_server(
     project: Option<String>,
     reject_secrets: bool,
 ) -> anyhow::Result<()> {
+    let cwd = std::env::current_dir().ok();
     // Auto-detect project from spore if not explicitly provided
     let project = project.or_else(|| {
-        let cwd = std::env::current_dir().ok()?;
+        let cwd = cwd.clone()?;
         let ctx = spore::ProjectContext::detect(&cwd);
         Some(ctx.name)
     });
+    let workspace_root = cwd.as_ref().map(|path| path.display().to_string());
+    let root_context = base_span_context(workspace_root.clone());
+    let _runtime_span = root_span(&root_context).entered();
 
     let stdin = io::stdin();
     let mut stdout = io::stdout();
@@ -163,10 +170,13 @@ pub fn run_server(
             }
         };
 
+        let request_id = msg.id.as_ref().and_then(request_id_from_value);
+        let request_context = request_context(workspace_root.clone(), request_id.clone());
         let method = msg.method.as_deref().unwrap_or_else(|| {
             error!("received JSON-RPC message without method field");
             ""
         });
+        let _request_span = request_span(method, &request_context).entered();
         debug!("MCP request: {method}");
 
         // Notifications have no id — don't respond
@@ -191,6 +201,8 @@ pub fn run_server(
                     consolidation,
                     compact,
                     project: project.as_deref(),
+                    request_id,
+                    workspace_root: workspace_root.clone(),
                     calls_since_store: &mut calls_since_store,
                     reject_secrets,
                 },
@@ -285,6 +297,8 @@ fn handle_tools_call(id: Value, ctx: ToolCallCtx<'_>) -> JsonRpcResponse {
         consolidation,
         compact,
         project,
+        request_id,
+        workspace_root,
         calls_since_store,
         reject_secrets,
     } = ctx;
@@ -303,6 +317,8 @@ fn handle_tools_call(id: Value, ctx: ToolCallCtx<'_>) -> JsonRpcResponse {
     };
 
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
+    let tool_context = request_context(workspace_root, request_id).with_tool(tool_name);
+    let _tool_span = tool_span(tool_name, &tool_context).entered();
 
     // Track store calls to nudge the agent
     if tool_name == "hyphae_memory_store" {
@@ -375,6 +391,30 @@ fn handle_tools_call(id: Value, ctx: ToolCallCtx<'_>) -> JsonRpcResponse {
     };
 
     JsonRpcResponse::ok(id, result_value)
+}
+
+fn base_span_context(workspace_root: Option<String>) -> SpanContext {
+    let context = SpanContext::for_app("hyphae");
+    match workspace_root {
+        Some(workspace_root) => context.with_workspace_root(workspace_root),
+        None => context,
+    }
+}
+
+fn request_context(workspace_root: Option<String>, request_id: Option<String>) -> SpanContext {
+    let context = base_span_context(workspace_root);
+    match request_id {
+        Some(request_id) => context.with_request_id(request_id),
+        None => context,
+    }
+}
+
+fn request_id_from_value(request_id: &Value) -> Option<String> {
+    match request_id {
+        Value::Null => None,
+        Value::String(text) => Some(text.clone()),
+        value => Some(value.to_string()),
+    }
 }
 
 #[cfg(test)]
@@ -461,6 +501,8 @@ mod tests {
                 consolidation: &ConsolidationConfig::default(),
                 compact: false,
                 project: None,
+                request_id: None,
+                workspace_root: None,
                 calls_since_store: &mut counter,
                 reject_secrets: false,
             },
@@ -483,6 +525,8 @@ mod tests {
                 consolidation: &ConsolidationConfig::default(),
                 compact: false,
                 project: None,
+                request_id: None,
+                workspace_root: None,
                 calls_since_store: &mut counter,
                 reject_secrets: false,
             },
@@ -505,6 +549,8 @@ mod tests {
                 consolidation: &ConsolidationConfig::default(),
                 compact: false,
                 project: None,
+                request_id: None,
+                workspace_root: None,
                 calls_since_store: &mut counter,
                 reject_secrets: false,
             },
@@ -535,6 +581,8 @@ mod tests {
                 consolidation: &ConsolidationConfig::default(),
                 compact: false,
                 project: None,
+                request_id: None,
+                workspace_root: None,
                 calls_since_store: &mut counter,
                 reject_secrets: false,
             },
@@ -561,6 +609,8 @@ mod tests {
                 consolidation: &ConsolidationConfig::default(),
                 compact: false,
                 project: None,
+                request_id: None,
+                workspace_root: None,
                 calls_since_store: &mut counter,
                 reject_secrets: false,
             },
@@ -587,6 +637,8 @@ mod tests {
                 consolidation: &ConsolidationConfig::default(),
                 compact: false,
                 project: None,
+                request_id: None,
+                workspace_root: None,
                 calls_since_store: &mut counter,
                 reject_secrets: false,
             },
@@ -613,6 +665,8 @@ mod tests {
                 consolidation: &ConsolidationConfig::default(),
                 compact: false,
                 project: None,
+                request_id: None,
+                workspace_root: None,
                 calls_since_store: &mut counter,
                 reject_secrets: false,
             },
@@ -627,10 +681,32 @@ mod tests {
                 consolidation: &ConsolidationConfig::default(),
                 compact: false,
                 project: None,
+                request_id: None,
+                workspace_root: None,
                 calls_since_store: &mut counter,
                 reject_secrets: false,
             },
         );
         assert_eq!(counter, 2);
+    }
+
+    #[test]
+    fn request_id_from_value_supports_jsonrpc_scalars() {
+        assert_eq!(
+            request_id_from_value(&json!("req-42")),
+            Some("req-42".into())
+        );
+        assert_eq!(request_id_from_value(&json!(42)), Some("42".into()));
+        assert_eq!(request_id_from_value(&json!(true)), Some("true".into()));
+        assert_eq!(request_id_from_value(&Value::Null), None);
+    }
+
+    #[test]
+    fn request_context_carries_workspace_root_and_request_id() {
+        let context = request_context(Some("/tmp/hyphae".into()), Some("req-7".into()));
+
+        assert_eq!(context.service.as_deref(), Some("hyphae"));
+        assert_eq!(context.request_id.as_deref(), Some("req-7"));
+        assert_eq!(context.workspace_root.as_deref(), Some("/tmp/hyphae"));
     }
 }

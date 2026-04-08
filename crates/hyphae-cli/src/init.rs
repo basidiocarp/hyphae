@@ -62,6 +62,7 @@ impl Editor {
             SharedEditor::ClaudeDesktop => Some(Self::ClaudeDesktop),
             SharedEditor::CodexCli => Some(Self::CodexCli),
             SharedEditor::GeminiCli | SharedEditor::CopilotCli => None,
+            _ => None,
         }
     }
 

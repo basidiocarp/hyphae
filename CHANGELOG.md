@@ -4,6 +4,17 @@ All notable changes to Hyphae are documented in this file.
 
 ## [Unreleased]
 
+## [0.10.4] - 2026-04-08
+
+### Changed
+
+- **Shared Spore logging rollout**: Hyphae now consumes `spore v0.4.9`,
+  initializes logging with the app-aware path, and adds shared root, request,
+  and tool spans around MCP serve flows.
+- **Runtime compatibility with non-exhaustive Spore editors**: Init logic now
+  tolerates future `spore::editors::Editor` variants instead of failing to
+  compile.
+
 ### Changed
 
 - **Docs cleanup**: README, architecture, CLI reference, embedding-model docs,
