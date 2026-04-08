@@ -4,6 +4,23 @@ All notable changes to Hyphae are documented in this file.
 
 ## [Unreleased]
 
+## [0.10.6] - 2026-04-08
+
+### Changed
+
+- **Foundation alignment**: repo guidance and architecture notes now describe
+  the core, store, ingest, MCP, and CLI boundaries more concretely.
+- **Boundary verification**: added explicit surface checks for crate layering
+  and maintainer-facing contract guidance.
+
+### Fixed
+
+- **Request tracing continuity**: request, session, and workspace identity now
+  survive deeper into write-heavy and workflow-heavy MCP paths.
+- **Runtime instrumentation depth**: CLI and tool execution paths now enter the
+  shared root, workflow, and subprocess spans at the fragile boundaries that
+  were still under-instrumented.
+
 ## [0.10.5] - 2026-04-08
 
 ### Fixed
