@@ -1123,7 +1123,17 @@ mod tests {
         assert_eq!(rows_before.len(), 2);
         assert_eq!(rows_before[0].1, recall_event_id);
         assert_eq!(rows_before[0].3, 4);
-        assert!(rows_before[0].2 > rows_before[1].2);
+        let first_effectiveness = rows_before
+            .iter()
+            .find(|(memory_id, _, _, _, _)| memory_id == &first.as_ref().to_string())
+            .map(|(_, _, effectiveness, _, _)| *effectiveness)
+            .unwrap();
+        let second_effectiveness = rows_before
+            .iter()
+            .find(|(memory_id, _, _, _, _)| memory_id == &second.as_ref().to_string())
+            .map(|(_, _, effectiveness, _, _)| *effectiveness)
+            .unwrap();
+        assert!(first_effectiveness > second_effectiveness);
         assert_eq!(rows_before, rows_after);
     }
 
@@ -1209,7 +1219,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(rows.len(), 2);
-        assert!(rows.iter().all(|(_, _, effectiveness)| *effectiveness > 0.0));
+        assert!(
+            rows.iter()
+                .all(|(_, _, effectiveness)| *effectiveness > 0.0)
+        );
         assert!(rows.iter().any(|(memory_id, recall_event_id, _)| {
             memory_id == &first.as_ref().to_string() && recall_event_id == &first_recall
         }));
