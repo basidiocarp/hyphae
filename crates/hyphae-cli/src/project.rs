@@ -1,10 +1,18 @@
 use std::path::PathBuf;
 
 use hyphae_core::{GitContext, detect_git_context_from};
+use spore::logging::{SpanContext, subprocess_span};
 
 /// Detect a project name from the current environment.
 /// Resolution order: git repo basename → cwd basename → None
 pub fn detect_project() -> Option<String> {
+    let mut span_context = SpanContext::for_app("hyphae").with_tool("project_detection");
+    if let Ok(cwd) = std::env::current_dir() {
+        span_context = span_context.with_workspace_root(cwd.display().to_string());
+    }
+    let _subprocess_span =
+        subprocess_span("git rev-parse --show-toplevel", &span_context).entered();
+
     if let Ok(output) = std::process::Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
         .output()

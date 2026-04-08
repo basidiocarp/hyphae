@@ -4,6 +4,20 @@ All notable changes to Hyphae are documented in this file.
 
 ## [Unreleased]
 
+## [0.10.5] - 2026-04-08
+
+### Fixed
+
+- **Deeper request-local tracing context**: MCP tool handling now threads
+  `session_id`, `request_id`, and better workspace scope into downstream spans
+  so failures inside write-heavy paths retain useful identity.
+- **Broader runtime boundary instrumentation**: CLI startup, project
+  detection, doctor checks, and MCP workflow execution now enter shared root,
+  workflow, and subprocess spans around long-running or fragile boundaries.
+- **Docs now match the runtime surface**: README and MCP/feature guides no
+  longer hard-code stale tool counts and now document `HYPHAE_LOG`, stderr
+  logging, and serve/runtime behavior accurately.
+
 ## [0.10.4] - 2026-04-08
 
 ### Changed

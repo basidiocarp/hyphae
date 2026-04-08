@@ -1,6 +1,7 @@
 //! `hyphae doctor` — diagnose common issues with the hyphae installation.
 
 use anyhow::Result;
+use spore::logging::{SpanContext, subprocess_span};
 use spore::{Tool, discover};
 use std::path::PathBuf;
 
@@ -333,6 +334,11 @@ fn check_editor_registration(
     }
 
     if matches!(editor, Editor::ClaudeCode) && which::which("claude").is_ok() {
+        let mut span_context = SpanContext::for_app("hyphae").with_tool("doctor");
+        if let Ok(cwd) = std::env::current_dir() {
+            span_context = span_context.with_workspace_root(cwd.display().to_string());
+        }
+        let _subprocess_span = subprocess_span("claude mcp list", &span_context).entered();
         match std::process::Command::new("claude")
             .args(["mcp", "list"])
             .output()

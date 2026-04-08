@@ -29,7 +29,11 @@ This auto-detects the currently supported editors and agent runtimes and configu
 
 ### 3. Use
 
-That's it. Your agent now has access to 18 MCP tools. It uses them automatically based on the server instructions.
+That's it. Your agent now has access to Hyphae's MCP toolset and uses it
+automatically based on the server instructions.
+
+For debugging, set `HYPHAE_LOG=debug`. `hyphae serve` keeps stdout reserved for
+MCP JSON-RPC and writes logs to stderr so the transport stays clean.
 
 ## Two Memory Models
 

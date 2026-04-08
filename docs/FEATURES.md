@@ -21,7 +21,9 @@ This file covers the conceptual and operational guides for Hyphae: when to use e
 
 Hyphae offers two complementary memory systems. Memories are episodic: temporal storage with decay, organized by topic. Important memories persist, trivial ones fade naturally. Memoirs are semantic: permanent knowledge graphs organized by memoir, containing concepts linked by typed relations. Concepts are refined, never deleted.
 
-The CLI offers 29 commands. The MCP server exposes 23 tools (9 memory + 9 memoir + 5 RAG). Both access the same SQLite database.
+The CLI and MCP server share the same SQLite-backed store. The exact command
+and tool counts change as Hyphae grows, but both surfaces cover memories,
+memoirs, RAG, context gathering, and session lifecycle workflows.
 
 ---
 
@@ -553,6 +555,10 @@ compact = true
 | `HYPHAE_CONFIG` | Path to the configuration file |
 | `HYPHAE_DB`     | Path to the SQLite database |
 | `HYPHAE_LOG`    | Log level (`debug`, `info`, `warn`, `error`) |
+
+Hyphae reads `HYPHAE_LOG` first, then falls back to `RUST_LOG`, then defaults
+to `warn`. `hyphae serve` keeps stdout reserved for MCP JSON-RPC and writes
+logs to stderr.
 
 ### Database location
 

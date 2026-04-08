@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use hyphae_core::Embedder;
 use hyphae_store::SqliteStore;
+use spore::logging::{SpanContext, root_span, workflow_span};
 use std::path::PathBuf;
 
 #[cfg(test)]
@@ -21,6 +22,55 @@ mod project;
 mod watch;
 
 use cli::{Cli, Commands};
+
+fn command_name(command: &Commands) -> &'static str {
+    match command {
+        Commands::Store { .. } => "store",
+        Commands::Search { .. } => "search",
+        Commands::ListInvalidated { .. } => "list_invalidated",
+        Commands::Stats { .. } => "stats",
+        Commands::Topics { .. } => "topics",
+        Commands::Health { .. } => "health",
+        Commands::Memory(_) => "memory",
+        Commands::Invalidate { .. } => "invalidate",
+        Commands::Extract { .. } => "extract",
+        Commands::EmbedAll { .. } => "embed_all",
+        Commands::Ingest { .. } => "ingest",
+        Commands::ForgetSource { .. } => "forget_source",
+        Commands::Watch { .. } => "watch",
+        Commands::Serve { .. } => "serve",
+        Commands::GatherContext(_) => "gather_context",
+        Commands::ListSources { .. } => "list_sources",
+        Commands::SearchDocs { .. } => "search_docs",
+        Commands::SearchAll { .. } => "search_all",
+        Commands::Config => "config",
+        Commands::Memoir(_) => "memoir",
+        Commands::Feedback(_) => "feedback",
+        Commands::Session(_) => "session",
+        Commands::Prune { .. } => "prune",
+        Commands::Consolidate { .. } => "consolidate",
+        Commands::Lessons { .. } => "lessons",
+        Commands::Activity => "activity",
+        Commands::Analytics => "analytics",
+        Commands::TestEmbed { .. } => "test_embed",
+        Commands::ImportClaudeMemory { .. } => "import_claude_memory",
+        Commands::CodexNotify { .. } => "codex_notify",
+        Commands::Completions { .. } => "completions",
+        Commands::Project(_) => "project",
+        Commands::Init { .. } => "init",
+        Commands::Bench { .. } => "bench",
+        Commands::SelfUpdate { .. } => "self_update",
+        Commands::Doctor { .. } => "doctor",
+        Commands::ExportTraining { .. } => "export_training",
+        Commands::Evaluate { .. } => "evaluate",
+        Commands::Backup { .. } => "backup",
+        Commands::Restore { .. } => "restore",
+        Commands::IngestSessions { .. } => "ingest_sessions",
+        Commands::Purge { .. } => "purge",
+        Commands::AuditSecrets { .. } => "audit_secrets",
+        Commands::Changelog { .. } => "changelog",
+    }
+}
 
 fn all_projects_allowed(command: &Commands) -> bool {
     match command {
@@ -124,6 +174,12 @@ fn main() -> Result<()> {
     spore::logging::init_app("hyphae", tracing::Level::WARN);
 
     let cli = Cli::parse();
+    let mut span_context = SpanContext::for_app("hyphae");
+    if let Ok(cwd) = std::env::current_dir() {
+        span_context = span_context.with_workspace_root(cwd.display().to_string());
+    }
+    let _runtime_span = root_span(&span_context).entered();
+    let _command_span = workflow_span(command_name(&cli.command), &span_context).entered();
 
     // Early-return commands that must remain available even if config parsing fails.
     match &cli.command {

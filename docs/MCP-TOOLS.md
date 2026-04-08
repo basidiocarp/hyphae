@@ -1,11 +1,15 @@
 # Hyphae -- MCP Tools Reference
 
-This file documents all 23 tools exposed by the Hyphae MCP server over the JSON-RPC 2.0 protocol (stdio transport). These tools are called transparently by AI agents (Claude, Cursor, Windsurf, etc.)—no manual invocation is required once the server is configured. Tools are organized into three categories: episodic memory (9 tools), memoir knowledge graphs (9 tools), and RAG document ingestion (5 tools).
+This file documents Hyphae's MCP tool surface over the JSON-RPC 2.0 stdio
+transport. These tools are called transparently by AI agents (Claude, Cursor,
+Windsurf, etc.), so no manual invocation is required once the server is
+configured. The toolset spans episodic memory, memoir knowledge graphs, RAG
+document workflows, context gathering, and session lifecycle operations.
 
 ## Table of Contents
 
 - [Overview](#overview)
-- [Memory Tools (9)](#memory-tools-9)
+- [Memory Tools](#memory-tools)
   - [`hyphae_memory_store`](#hyphae_memory_store----store-a-memory)
   - [`hyphae_memory_recall`](#hyphae_memory_recall----search-memories)
   - [`hyphae_memory_update`](#hyphae_memory_update----update-a-memory)
@@ -15,7 +19,7 @@ This file documents all 23 tools exposed by the Hyphae MCP server over the JSON-
   - [`hyphae_memory_stats`](#hyphae_memory_stats----global-statistics)
   - [`hyphae_memory_health`](#hyphae_memory_health----health-audit)
   - [`hyphae_memory_embed_all`](#hyphae_memory_embed_all----backfill-embeddings)
-- [Memoir Tools (9)](#memoir-tools-9)
+- [Memoir Tools](#memoir-tools)
   - [`hyphae_memoir_create`](#hyphae_memoir_create----create-a-memoir)
   - [`hyphae_memoir_list`](#hyphae_memoir_list----list-memoirs)
   - [`hyphae_memoir_show`](#hyphae_memoir_show----show-a-memoir)
@@ -25,7 +29,7 @@ This file documents all 23 tools exposed by the Hyphae MCP server over the JSON-
   - [`hyphae_memoir_search_all`](#hyphae_memoir_search_all----search-across-all-memoirs)
   - [`hyphae_memoir_link`](#hyphae_memoir_link----link-two-concepts)
   - [`hyphae_memoir_inspect`](#hyphae_memoir_inspect----inspect-a-concepts-neighborhood)
-- [RAG Tools (5)](#rag-tools-5)
+- [RAG Tools](#rag-tools)
   - [`hyphae_ingest_file`](#hyphae_ingest_file----ingest-a-file-or-directory)
   - [`hyphae_search_docs`](#hyphae_search_docs----search-ingested-documents)
   - [`hyphae_list_sources`](#hyphae_list_sources----list-ingested-sources)
@@ -37,11 +41,14 @@ This file documents all 23 tools exposed by the Hyphae MCP server over the JSON-
 
 ## Overview
 
-The MCP server is started with `hyphae serve` and communicates over stdio using JSON-RPC 2.0. Enable compact mode (`hyphae serve --compact` or `compact = true` in `config.toml`) to reduce response sizes by ~40%.
+The MCP server is started with `hyphae serve` and communicates over stdio using
+JSON-RPC 2.0. Enable compact mode (`hyphae serve --compact` or
+`compact = true` in `config.toml`) to reduce response sizes by ~40%.
+`hyphae serve` keeps stdout reserved for MCP traffic and writes logs to stderr.
 
 ---
 
-## Memory Tools (9)
+## Memory Tools
 
 ### `hyphae_memory_store` -- Store a memory
 
@@ -245,7 +252,7 @@ Available only if the `embeddings` feature is enabled. Generates vectors for mem
 
 ---
 
-## Memoir Tools (9)
+## Memoir Tools
 
 ### `hyphae_memoir_create` -- Create a memoir
 
@@ -393,7 +400,7 @@ Returns the concept and all concepts reachable in N hops, with the links between
 
 ---
 
-## RAG Tools (5)
+## RAG Tools
 
 ### `hyphae_ingest_file` -- Ingest a file or directory
 

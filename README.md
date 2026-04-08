@@ -162,6 +162,19 @@ hyphae session context --project demo
 | Hybrid search | 951 us |
 | Batch decay (1000) | 5.8 ms |
 
+## Logging
+
+Hyphae reads `HYPHAE_LOG` first, then falls back to `RUST_LOG`. If neither is
+set, it defaults to `warn`.
+
+```bash
+HYPHAE_LOG=debug hyphae doctor
+HYPHAE_LOG=debug hyphae serve
+```
+
+`hyphae serve` keeps stdout reserved for newline-delimited MCP JSON-RPC
+responses. Logs go to stderr so they do not corrupt the MCP transport.
+
 ---
 
 ## Documentation
