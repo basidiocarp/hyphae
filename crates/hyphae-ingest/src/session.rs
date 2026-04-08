@@ -283,8 +283,7 @@ pub fn normalize_codex_event_type(event_type: &str) -> String {
     let normalized = event_type
         .trim()
         .to_ascii_lowercase()
-        .replace('_', "-")
-        .replace(' ', "-");
+        .replace(['_', ' '], "-");
 
     match normalized.as_str() {
         "session-start" | "session-started" | "session-begin" | "session-began" => {

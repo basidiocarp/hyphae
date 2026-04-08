@@ -211,6 +211,7 @@ pub(crate) fn dispatch(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_start(
     store: &SqliteStore,
     embedder: Option<&dyn Embedder>,

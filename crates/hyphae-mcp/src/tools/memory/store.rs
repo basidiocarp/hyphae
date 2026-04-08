@@ -15,6 +15,7 @@ use super::super::{
     validate_required_string, workflow_span_context,
 };
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn tool_store(
     store: &SqliteStore,
     embedder: Option<&dyn Embedder>,

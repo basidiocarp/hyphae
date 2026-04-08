@@ -265,6 +265,7 @@ pub(crate) fn cmd_store(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn cmd_search(
     store: &SqliteStore,
     query: String,

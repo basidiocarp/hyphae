@@ -177,6 +177,7 @@ impl SqliteStore {
 
     /// Start a new session with additive identity fields, external session metadata,
     /// and optional context-aware recall signals.
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     pub fn session_start_identity_with_runtime_and_context_signals(
         &self,
         project: &str,

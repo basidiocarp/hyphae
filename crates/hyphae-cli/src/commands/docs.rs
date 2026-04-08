@@ -163,6 +163,7 @@ pub(crate) fn cmd_forget_source(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn cmd_search_all(
     store: &SqliteStore,
     query: String,

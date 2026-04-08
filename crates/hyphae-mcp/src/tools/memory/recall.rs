@@ -316,6 +316,7 @@ fn run_context_aware_recall(
     Ok(dedupe_memory_results(branches, limit))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn merge_shared_hybrid(
     store: &SqliteStore,
     query: &str,

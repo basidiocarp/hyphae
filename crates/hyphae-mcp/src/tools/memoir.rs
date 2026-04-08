@@ -761,7 +761,7 @@ pub(crate) fn tool_code_query(
         Ok(qt) => qt,
         Err(e) => return e,
     };
-    let workflow_context = workflow_span_context(trace, None, Some(&project));
+    let workflow_context = workflow_span_context(trace, None, Some(project));
     let _workflow_span = workflow_span("code_query", &workflow_context).entered();
 
     // Look up memoir by name

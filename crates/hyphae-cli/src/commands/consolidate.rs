@@ -12,6 +12,7 @@ struct ConsolidationTarget {
     threshold: usize,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn cmd_consolidate(
     store: &SqliteStore,
     consolidation: &ConsolidationConfig,

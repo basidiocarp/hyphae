@@ -245,8 +245,7 @@ impl MemoirStore for SqliteStore {
             return Ok(Vec::new());
         }
 
-        let sql = format!(
-            "SELECT c.id, c.memoir_id, c.name, c.definition, c.labels, c.confidence,
+        let sql = "SELECT c.id, c.memoir_id, c.name, c.definition, c.labels, c.confidence,
                     c.revision, c.created_at, c.updated_at, c.source_memory_ids
              FROM concepts c
              JOIN concepts_fts fts ON c.rowid = fts.rowid
@@ -254,7 +253,7 @@ impl MemoirStore for SqliteStore {
                AND concepts_fts MATCH ?2
              ORDER BY fts.rank, c.name ASC
              LIMIT ?3"
-        );
+            .to_string();
 
         let mut stmt = self
             .conn
@@ -281,15 +280,14 @@ impl MemoirStore for SqliteStore {
             return Ok(Vec::new());
         }
 
-        let sql = format!(
-            "SELECT c.id, c.memoir_id, c.name, c.definition, c.labels, c.confidence,
+        let sql = "SELECT c.id, c.memoir_id, c.name, c.definition, c.labels, c.confidence,
                     c.revision, c.created_at, c.updated_at, c.source_memory_ids
              FROM concepts c
              JOIN concepts_fts fts ON c.rowid = fts.rowid
              WHERE concepts_fts MATCH ?1
              ORDER BY fts.rank, c.name ASC
              LIMIT ?2"
-        );
+            .to_string();
 
         let mut stmt = self
             .conn

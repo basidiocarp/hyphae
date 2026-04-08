@@ -27,6 +27,7 @@ pub enum SearchOrder {
 }
 
 impl SqliteStore {
+    #[allow(clippy::too_many_arguments)]
     pub fn search_fts_with_options(
         &self,
         query: &str,

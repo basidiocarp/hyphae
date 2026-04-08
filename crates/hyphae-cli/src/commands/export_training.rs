@@ -311,6 +311,7 @@ fn collect_training_examples(
 /// ─────────────────────────────────────────────────────────────────────────
 /// Export Memories as Training Data
 /// ─────────────────────────────────────────────────────────────────────────
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn cmd_export_training(
     store: &SqliteStore,
     format: TrainingFormat,

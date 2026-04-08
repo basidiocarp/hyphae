@@ -33,6 +33,7 @@ pub fn call_tool(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn call_tool_with_consolidation(
     store: &SqliteStore,
     embedder: Option<&dyn Embedder>,
