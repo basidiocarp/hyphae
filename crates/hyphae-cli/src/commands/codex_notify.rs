@@ -286,6 +286,7 @@ fn build_normalized_session(
             session.note_raw_excerpt_line(format!("lifecycle: {}", recorded.note));
         }
     }
+    capture_event_context(notification, &mut session);
     if !notification.input_messages.is_empty() {
         session.note_raw_excerpt_line("input-messages:");
         for message in &notification.input_messages {
@@ -312,6 +313,71 @@ fn build_normalized_session(
         }
     }
     session
+}
+
+fn capture_event_context(notification: &CodexNotification, session: &mut NormalizedSession) {
+    match normalize_codex_event_type(&notification.event_type).as_str() {
+        "session-started" => {
+            if let Some(snippet) =
+                notification_field_text(notification, &["task", "summary", "message", "model"])
+            {
+                session.note_highlight(&snippet);
+                session.note_raw_excerpt_line(format!("session-detail: {snippet}"));
+            }
+        }
+        "tool-use" => {
+            if let Some(tool_name) =
+                notification_field_text(notification, &["tool_name", "tool-name", "name", "tool"])
+            {
+                session.note_highlight(&tool_name);
+                session.note_raw_excerpt_line(format!("tool-name: {tool_name}"));
+            }
+
+            if let Some(command) = notification_field_text(notification, &["command", "cmd"]) {
+                session.note_command(command.clone());
+                session.note_raw_excerpt_line(format!("tool-command: {command}"));
+            }
+
+            if let Some(path) = notification_field_text(
+                notification,
+                &[
+                    "file_path",
+                    "target_path",
+                    "destination_path",
+                    "source_path",
+                ],
+            ) {
+                session.note_file_modified(path.clone());
+                session.note_raw_excerpt_line(format!("tool-file: {path}"));
+            }
+        }
+        "tool-result" => {
+            let is_error = notification_field_bool(notification, &["is_error", "error"]);
+            if is_error {
+                let error = notification_field_text(
+                    notification,
+                    &["error", "stderr", "message", "result", "output", "content"],
+                )
+                .unwrap_or_else(|| "tool result reported an error".to_string());
+                session.note_error(error.clone());
+                session.note_raw_excerpt_line(format!("tool-error: {error}"));
+            } else if let Some(result) =
+                notification_field_text(notification, &["result", "output", "content"])
+            {
+                session.note_highlight(&result);
+                session.note_raw_excerpt_line(format!("tool-result: {result}"));
+            }
+        }
+        "session-ended" => {
+            if let Some(summary) =
+                notification_field_text(notification, &["summary", "message", "status"])
+            {
+                session.note_highlight(&summary);
+                session.note_raw_excerpt_line(format!("session-result: {summary}"));
+            }
+        }
+        _ => {}
+    }
 }
 
 fn hash_prefix(text: &str) -> String {
@@ -408,6 +474,48 @@ fn value_to_snippet(value: &serde_json::Value) -> String {
                 .map(|s| truncate_snippet(&s, 120))
                 .unwrap_or_else(|_| "<unserializable>".to_string())
         }
+    }
+}
+
+fn notification_field_text(notification: &CodexNotification, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| notification_field_value(notification, key))
+        .map(value_to_snippet)
+        .filter(|snippet| !snippet.is_empty())
+}
+
+fn notification_field_bool(notification: &CodexNotification, keys: &[&str]) -> bool {
+    keys.iter().any(|key| {
+        notification_field_value(notification, key).is_some_and(|value| match value {
+            serde_json::Value::Bool(flag) => *flag,
+            serde_json::Value::String(text) => matches!(text.as_str(), "true" | "error"),
+            _ => false,
+        })
+    })
+}
+
+fn notification_field_value<'a>(
+    notification: &'a CodexNotification,
+    key: &str,
+) -> Option<&'a serde_json::Value> {
+    notification.extra_fields.get(key).or_else(|| {
+        notification
+            .extra_fields
+            .values()
+            .find_map(|value| find_nested_value(value, key))
+    })
+}
+
+fn find_nested_value<'a>(value: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
+    match value {
+        serde_json::Value::Object(map) => map.get(key).or_else(|| {
+            map.values()
+                .find_map(|nested| find_nested_value(nested, key))
+        }),
+        serde_json::Value::Array(items) => items
+            .iter()
+            .find_map(|nested| find_nested_value(nested, key)),
+        _ => None,
     }
 }
 
@@ -535,5 +643,107 @@ mod tests {
                 .iter()
                 .any(|keyword| keyword == "session_id:thread-8")
         );
+    }
+
+    #[test]
+    fn test_session_start_event_marks_session_active() {
+        let payload = serde_json::json!({
+            "type": "session_start",
+            "thread-id": "thread-9",
+            "cwd": "/Users/williamnewton/projects/myapp",
+            "summary": "Booting Codex session"
+        });
+
+        let record = build_record(
+            &parse_notification(&serde_json::to_string(&payload).unwrap()).unwrap(),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert!(
+            record
+                .keywords
+                .iter()
+                .any(|keyword| keyword == "event:session-started")
+        );
+        assert!(
+            record
+                .keywords
+                .iter()
+                .any(|keyword| keyword == "state:session-active")
+        );
+        assert!(record.summary.contains("session-started"));
+        assert!(record.summary.contains("phase session-active"));
+        assert!(
+            record
+                .raw_excerpt
+                .contains("session-detail: Booting Codex session")
+        );
+    }
+
+    #[test]
+    fn test_tool_use_event_captures_structured_context() {
+        let payload = serde_json::json!({
+            "type": "tool_use",
+            "thread-id": "thread-10",
+            "cwd": "/Users/williamnewton/projects/myapp",
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": "cargo test --quiet"
+            },
+            "file_path": "src/lib.rs"
+        });
+
+        let record = build_record(
+            &parse_notification(&serde_json::to_string(&payload).unwrap()).unwrap(),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert!(
+            record
+                .keywords
+                .iter()
+                .any(|keyword| keyword == "event:tool-use")
+        );
+        assert!(record.raw_excerpt.contains("tool-name: Bash"));
+        assert!(
+            record
+                .raw_excerpt
+                .contains("tool-command: cargo test --quiet")
+        );
+        assert!(record.raw_excerpt.contains("tool-file: src/lib.rs"));
+        assert!(record.summary.contains("phase session-active"));
+    }
+
+    #[test]
+    fn test_tool_result_error_captures_failure_context() {
+        let payload = serde_json::json!({
+            "type": "tool_result",
+            "thread-id": "thread-11",
+            "cwd": "/Users/williamnewton/projects/myapp",
+            "tool_name": "Bash",
+            "is_error": true,
+            "content": "permission denied"
+        });
+
+        let record = build_record(
+            &parse_notification(&serde_json::to_string(&payload).unwrap()).unwrap(),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert!(
+            record
+                .keywords
+                .iter()
+                .any(|keyword| keyword == "event:tool-result")
+        );
+        assert!(record.raw_excerpt.contains("tool-error: permission denied"));
+        assert!(record.summary.contains("permission denied"));
+        assert!(record.summary.contains("phase session-active"));
     }
 }

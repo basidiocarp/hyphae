@@ -224,22 +224,36 @@ impl NormalizedSession {
         state.last_event = Some(normalized_event_type.to_string());
 
         match normalized_event_type {
-            "agent-turn-complete" => state.turns_completed += 1,
+            "session-started" => {
+                state.session_started = true;
+                state.session_ended = false;
+            }
+            "agent-turn-complete" => {
+                state.session_started = true;
+                state.turns_completed += 1;
+            }
             "approval-requested" => {
+                state.session_started = true;
                 state.approvals_requested += 1;
                 state.pending_approvals += 1;
             }
             "approval-approved" | "approval-denied" | "approval-rejected" => {
+                state.session_started = true;
                 state.approvals_resolved += 1;
                 state.pending_approvals = state.pending_approvals.saturating_sub(1);
             }
-            "session-ended" | "session-complete" | "session-stopped" => {
+            "tool-use" | "tool-result" => {
+                state.session_started = true;
+            }
+            "session-ended" => {
+                state.session_started = true;
                 state.session_ended = true;
             }
             _ => {
                 if normalized_event_type.contains("session")
                     && normalized_event_type.contains("end")
                 {
+                    state.session_started = true;
                     state.session_ended = true;
                 }
             }
@@ -266,7 +280,22 @@ pub fn truncate_snippet(text: &str, limit: usize) -> String {
 }
 
 pub fn normalize_codex_event_type(event_type: &str) -> String {
-    event_type.trim().replace('_', "-")
+    let normalized = event_type
+        .trim()
+        .to_ascii_lowercase()
+        .replace('_', "-")
+        .replace(' ', "-");
+
+    match normalized.as_str() {
+        "session-start" | "session-started" | "session-begin" | "session-began" => {
+            "session-started".to_string()
+        }
+        "session-end" | "session-ended" | "session-stop" | "session-stopped"
+        | "session-complete" | "session-completed" => "session-ended".to_string(),
+        "tool-use" => "tool-use".to_string(),
+        "tool-result" => "tool-result".to_string(),
+        _ => normalized,
+    }
 }
 
 pub fn format_codex_lifecycle_note(event_type: &str, detail: &str) -> String {
@@ -463,8 +492,19 @@ mod tests {
         assert_eq!(
             session.codex_lifecycle_state_summary().as_deref(),
             Some(
-                "phase awaiting-approval · 1 approval request(s) · 1 pending approval(s) · last event approval-requested"
+                "phase awaiting-approval · session started · 1 approval request(s) · 1 pending approval(s) · last event approval-requested"
             )
         );
+    }
+
+    #[test]
+    fn test_normalize_codex_event_type_canonicalizes_session_and_tool_variants() {
+        assert_eq!(
+            normalize_codex_event_type("session_start"),
+            "session-started"
+        );
+        assert_eq!(normalize_codex_event_type("session end"), "session-ended");
+        assert_eq!(normalize_codex_event_type("tool_use"), "tool-use");
+        assert_eq!(normalize_codex_event_type("tool result"), "tool-result");
     }
 }

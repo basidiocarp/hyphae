@@ -703,7 +703,7 @@ mod tests {
                 approvals_requested: 1,
                 approvals_resolved: 1,
                 pending_approvals: 0,
-                last_event: Some("session-complete".to_string()),
+                last_event: Some("session-ended".to_string()),
             })
         );
     }

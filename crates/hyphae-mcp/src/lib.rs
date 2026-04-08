@@ -1,6 +1,6 @@
 pub mod protocol;
 pub mod server;
-pub mod tools;
 mod text;
+pub mod tools;
 
 pub use server::run_server;
