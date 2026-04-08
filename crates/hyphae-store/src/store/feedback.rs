@@ -1147,7 +1147,7 @@ mod tests {
             ))
             .unwrap();
 
-        store
+        let first_recall = store
             .log_recall_event(
                 Some(&session_id),
                 "first recall",
@@ -1209,11 +1209,13 @@ mod tests {
             .unwrap();
 
         assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].0, first.as_ref().to_string());
-        assert!(rows[0].2 > 0.0);
-        assert_eq!(rows[1].0, second.as_ref().to_string());
-        assert_eq!(rows[1].1, second_recall);
-        assert!(rows[1].2 > 0.0);
+        assert!(rows.iter().all(|(_, _, effectiveness)| *effectiveness > 0.0));
+        assert!(rows.iter().any(|(memory_id, recall_event_id, _)| {
+            memory_id == &first.as_ref().to_string() && recall_event_id == &first_recall
+        }));
+        assert!(rows.iter().any(|(memory_id, recall_event_id, _)| {
+            memory_id == &second.as_ref().to_string() && recall_event_id == &second_recall
+        }));
     }
 
     #[test]
