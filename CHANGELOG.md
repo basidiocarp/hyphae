@@ -4,6 +4,22 @@ All notable changes to Hyphae are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Passive MCP resources**: Added bounded `resources/list` and `resources/read`
+  surfaces for current passive context, compact summaries, and project
+  understanding bundles.
+- **Typed passive artifacts**: Added typed passive retrieval surfaces for
+  compact summaries and project-understanding bundles in `hyphae-store`.
+
+### Fixed
+
+- **Context boundary redaction**: Passive resource reads and initialize-time
+  preload now share boundary redaction behavior for obvious secret-bearing
+  content.
+- **Project-scoped current resources**: Current passive resources no longer
+  guess across projects when no active project context exists.
+
 ## [0.10.8] - 2026-04-09
 
 ### Added

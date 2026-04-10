@@ -9,6 +9,10 @@ pub use store::evaluation::{EvaluationWindow, collect_evaluation_window};
 pub use store::insights::{
     HyphaeActivitySnapshot, HyphaeAnalytics, LessonCategory, LessonRecord, RecentMemoryActivity,
 };
+pub use store::passive::{
+    CompactSummaryArtifact, PassiveContextBundle, PassiveMemoryItem,
+    ProjectUnderstandingBundle, ProjectUnderstandingConcept,
+};
 pub use store::session::{Session, SessionTimelineEvent, SessionTimelineRecord};
 pub use store::{SearchOrder, TopicMemoryOrder};
 pub mod context {

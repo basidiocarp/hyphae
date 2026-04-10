@@ -6,6 +6,7 @@ mod helpers;
 pub mod insights;
 mod memoir_store;
 mod memory_store;
+pub mod passive;
 mod project;
 mod purge;
 mod search;

@@ -5,10 +5,11 @@
 // `hyphae_gather_context` — collects relevant memories, errors, sessions, and
 // code symbols within a token budget, ranked by FTS relevance.
 
+use serde::Serialize;
 use serde_json::{Value, json};
 use spore::logging::workflow_span;
 
-use hyphae_core::{MemoirStore, MemoryStore};
+use hyphae_core::{MemoirStore, MemoryStore, detect_secrets};
 use hyphae_store::SqliteStore;
 
 use crate::protocol::ToolResult;
@@ -30,6 +31,20 @@ const DEFAULT_TOKEN_BUDGET: i64 = 2000;
 
 /// Max results per source category.
 const MAX_PER_SOURCE: usize = 5;
+const REDACTED_VALUE: &str = "[REDACTED]";
+const SENSITIVE_FIELD_FRAGMENTS: &[&str] = &[
+    "api_key",
+    "apikey",
+    "access_key",
+    "auth",
+    "authorization",
+    "bearer",
+    "credential",
+    "password",
+    "private_key",
+    "secret",
+    "token",
+];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool entry point
@@ -230,6 +245,30 @@ pub(crate) fn tool_gather_context(
     ToolResult::text(response.to_string())
 }
 
+pub(crate) fn passive_context_resource_text(
+    store: &SqliteStore,
+    project: Option<&str>,
+) -> Result<String, String> {
+    let bundle = store
+        .passive_context_bundle(project)
+        .map_err(|e| format!("db error: {e}"))?;
+    redacted_json_text(&bundle)
+}
+
+pub(crate) fn redacted_json_text<T: Serialize>(payload: &T) -> Result<String, String> {
+    let value = serde_json::to_value(payload).map_err(|e| format!("serialize error: {e}"))?;
+    let redacted = redact_boundary_value(None, value);
+    serde_json::to_string_pretty(&redacted).map_err(|e| format!("serialize error: {e}"))
+}
+
+pub(crate) fn redact_boundary_text(text: &str) -> String {
+    if detect_secrets(text).is_empty() {
+        text.to_string()
+    } else {
+        REDACTED_VALUE.to_string()
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -319,6 +358,50 @@ fn session_query_score(task: Option<&str>, summary: Option<&str>, query: &str) -
     }
 
     Some((matches as f64 / query_terms.len() as f64).clamp(0.1, 1.0))
+}
+
+fn redact_boundary_value(field_name: Option<&str>, value: Value) -> Value {
+    match value {
+        Value::String(text) => {
+            if field_name.is_some_and(is_sensitive_field_name) || !detect_secrets(&text).is_empty()
+            {
+                Value::String(REDACTED_VALUE.to_string())
+            } else {
+                Value::String(text)
+            }
+        }
+        Value::Array(items) => Value::Array(
+            items
+                .into_iter()
+                .map(|item| redact_boundary_value(field_name, item))
+                .collect(),
+        ),
+        Value::Object(map) => Value::Object(
+            map.into_iter()
+                .map(|(key, value)| {
+                    let redacted = if is_sensitive_field_name(&key) {
+                        Value::String(REDACTED_VALUE.to_string())
+                    } else {
+                        redact_boundary_value(Some(&key), value)
+                    };
+                    (key, redacted)
+                })
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+fn is_sensitive_field_name(field_name: &str) -> bool {
+    let normalized = field_name
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect::<String>()
+        .to_ascii_lowercase();
+
+    SENSITIVE_FIELD_FRAGMENTS
+        .iter()
+        .any(|fragment| normalized.contains(fragment))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -827,5 +910,33 @@ mod tests {
         assert!((relevance_score(0) - 0.95).abs() < 0.001);
         assert!((relevance_score(1) - 0.85).abs() < 0.001);
         assert!((relevance_score(10) - 0.1).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_redacted_json_text_masks_secret_strings() {
+        let payload = json!({
+            "summary": "normal note",
+            "raw_excerpt": "api_key: sk1234567890abcdefghij",
+            "nested": {
+                "token": "Bearer super-secret-token-value"
+            }
+        });
+
+        let text = redacted_json_text(&payload).unwrap();
+        assert!(text.contains("[REDACTED]"));
+        assert!(!text.contains("sk1234567890abcdefghij"));
+        assert!(!text.contains("super-secret-token-value"));
+    }
+
+    #[test]
+    fn test_redact_boundary_text_redacts_secrets() {
+        let redacted = redact_boundary_text("api_key: sk1234567890abcdefghij");
+        assert_eq!(redacted, REDACTED_VALUE);
+    }
+
+    #[test]
+    fn test_redact_boundary_text_keeps_safe_text() {
+        let redacted = redact_boundary_text("Implemented compact passive context resource");
+        assert_eq!(redacted, "Implemented compact passive context resource");
     }
 }

@@ -16,6 +16,9 @@ use crate::tools;
 const SERVER_NAME: &str = "hyphae";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const PROTOCOL_VERSION: &str = "2024-11-05";
+const CONTEXT_RESOURCE_URI: &str = "hyphae://context/current";
+const COMPACT_RESOURCE_URI: &str = "hyphae://artifacts/compact/current";
+const UNDERSTANDING_RESOURCE_URI: &str = "hyphae://artifacts/project-understanding/current";
 
 /// Escalating nudge thresholds for store reminders.
 const NUDGE_HINT: u32 = 10;
@@ -41,24 +44,23 @@ struct ToolCallCtx<'a> {
 fn initial_context(store: &SqliteStore, project: Option<&str>) -> String {
     use hyphae_core::MemoryStore;
 
+    let Some(proj) = project else {
+        return String::new();
+    };
+
     // ─────────────────────────────────────────────────────────────────────────────
     // Session Context (query the structured sessions table only)
     // ─────────────────────────────────────────────────────────────────────────────
     let mut session_summaries = Vec::new();
 
-    let session_ctx = match project {
-        Some(proj) => store.session_context(proj, 3).unwrap_or_default(),
-        None => store.session_context_all(3).unwrap_or_default(),
-    };
+    let session_ctx = store.session_context(proj, 3).unwrap_or_default();
     if !session_ctx.is_empty() {
         for s in &session_ctx {
             if let Some(summary) = &s.summary {
-                session_summaries.push(summary.clone());
+                session_summaries.push(tools::context::redact_boundary_text(summary));
             }
         }
     }
-
-    let proj = project.unwrap_or("default");
 
     // Get top memories for the project context topic
     let project_topic = format!("context/{proj}");
@@ -94,7 +96,10 @@ fn initial_context(store: &SqliteStore, project: Option<&str>) -> String {
         }
     }
 
-    let truncate = |s: &str| -> String { format!("{}...", crate::text::truncate_str(s, 200)) };
+    let truncate = |s: &str| -> String {
+        let redacted = tools::context::redact_boundary_text(s);
+        format!("{}...", crate::text::truncate_str(&redacted, 200))
+    };
 
     if !decisions.is_empty() {
         ctx.push_str("Key decisions:\n");
@@ -191,6 +196,8 @@ pub fn run_server(
             "initialize" => handle_initialize(id, store, project.as_deref()),
             "ping" => JsonRpcResponse::ok(id, json!({})),
             "tools/list" => handle_tools_list(id, embedder.is_some()),
+            "resources/list" => handle_resources_list(id, store, project.as_deref()),
+            "resources/read" => handle_resources_read(id, &msg.params, store, project.as_deref()),
             "tools/call" => handle_tools_call(
                 id,
                 ToolCallCtx {
@@ -236,7 +243,8 @@ fn handle_initialize(id: Value, store: &SqliteStore, project: Option<&str>) -> J
         json!({
             "protocolVersion": PROTOCOL_VERSION,
             "capabilities": {
-                "tools": {}
+                "tools": {},
+                "resources": {}
             },
             "serverInfo": {
                 "name": SERVER_NAME,
@@ -286,6 +294,124 @@ and resolution rates across time windows to measure whether the agent is getting
 
 fn handle_tools_list(id: Value, has_embedder: bool) -> JsonRpcResponse {
     JsonRpcResponse::ok(id, tools::tool_definitions(has_embedder))
+}
+
+fn handle_resources_list(id: Value, store: &SqliteStore, project: Option<&str>) -> JsonRpcResponse {
+    let current_project = resolve_resource_project(store, project);
+    let Some(label) = current_project.as_deref() else {
+        return JsonRpcResponse::ok(id, json!({ "resources": [] }));
+    };
+
+    JsonRpcResponse::ok(
+        id,
+        json!({
+            "resources": [
+                {
+                    "uri": CONTEXT_RESOURCE_URI,
+                    "name": format!("Hyphae Passive Context ({label})"),
+                    "description": "Bounded project/session context bundle built from recent summaries, context memories, decisions, and project understanding.",
+                    "mimeType": "application/json"
+                },
+                {
+                    "uri": COMPACT_RESOURCE_URI,
+                    "name": format!("Hyphae Compact Summaries ({label})"),
+                    "description": "Typed compact session summary artifacts for the current project.",
+                    "mimeType": "application/json"
+                },
+                {
+                    "uri": UNDERSTANDING_RESOURCE_URI,
+                    "name": format!("Hyphae Project Understanding ({label})"),
+                    "description": "Typed project-understanding bundle exported from the current project's code memoir.",
+                    "mimeType": "application/json"
+                }
+            ]
+        }),
+    )
+}
+
+fn handle_resources_read(
+    id: Value,
+    params: &Option<Value>,
+    store: &SqliteStore,
+    project: Option<&str>,
+) -> JsonRpcResponse {
+    let params = match params {
+        Some(params) => params,
+        None => return JsonRpcResponse::err(id, -32602, "missing params".into()),
+    };
+
+    let uri = match params.get("uri").and_then(|value| value.as_str()) {
+        Some(uri) => uri,
+        None => return JsonRpcResponse::err(id, -32602, "missing resource uri".into()),
+    };
+
+    let current_project = resolve_resource_project(store, project);
+    let project_name = match current_project.as_deref() {
+        Some(project_name) => project_name,
+        None => {
+            return JsonRpcResponse::err(
+                id,
+                -32602,
+                "resource read requires an active or discoverable project context".into(),
+            );
+        }
+    };
+
+    let text = match uri {
+        CONTEXT_RESOURCE_URI => match tools::context::passive_context_resource_text(
+            store,
+            Some(project_name),
+        ) {
+            Ok(text) => text,
+            Err(message) => return JsonRpcResponse::err(id, -32603, message),
+        },
+        COMPACT_RESOURCE_URI => {
+            let artifacts = match store.list_compact_summary_artifacts(Some(project_name), 5) {
+                Ok(artifacts) => artifacts,
+                Err(error) => {
+                    return JsonRpcResponse::err(id, -32603, format!("db error: {error}"));
+                }
+            };
+            match tools::context::redacted_json_text(&json!({
+                "project": project_name,
+                "artifact_type": "compact_summary",
+                "artifacts": artifacts,
+            })) {
+                Ok(text) => text,
+                Err(message) => return JsonRpcResponse::err(id, -32603, message),
+            }
+        }
+        UNDERSTANDING_RESOURCE_URI => {
+            let bundle = match store.project_understanding_bundle(project_name, 8) {
+                Ok(bundle) => bundle,
+                Err(error) => {
+                    return JsonRpcResponse::err(id, -32603, format!("db error: {error}"));
+                }
+            };
+            match tools::context::redacted_json_text(&json!({
+                "project": project_name,
+                "artifact_type": "project_understanding",
+                "bundle": bundle,
+            })) {
+                Ok(text) => text,
+                Err(message) => return JsonRpcResponse::err(id, -32603, message),
+            }
+        }
+        other => return JsonRpcResponse::method_not_found(id, other),
+    };
+
+    JsonRpcResponse::ok(
+        id,
+        json!({
+            "contents": [
+                {
+                    "uri": uri,
+                    "mimeType": "application/json",
+                    "text": text,
+                }
+            ]
+        }),
+    )
 }
 
 fn handle_tools_call(id: Value, ctx: ToolCallCtx<'_>) -> JsonRpcResponse {
@@ -441,6 +567,11 @@ fn request_id_from_value(request_id: &Value) -> Option<String> {
     }
 }
 
+fn resolve_resource_project(store: &SqliteStore, project: Option<&str>) -> Option<String> {
+    let _ = store;
+    project.map(ToOwned::to_owned)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -458,11 +589,12 @@ mod tests {
         assert_eq!(result["protocolVersion"], PROTOCOL_VERSION);
         assert_eq!(result["serverInfo"]["name"], SERVER_NAME);
         assert!(result["capabilities"]["tools"].is_object());
+        assert!(result["capabilities"]["resources"].is_object());
         assert!(result["instructions"].as_str().unwrap().contains("Hyphae"));
     }
 
     #[test]
-    fn test_initial_context_without_project_uses_structured_sessions() {
+    fn test_initial_context_without_project_skips_passive_preload() {
         let store = SqliteStore::in_memory().unwrap();
         let (session_id, _) = store.session_start("proj-a", Some("login flow")).unwrap();
         store
@@ -470,7 +602,7 @@ mod tests {
             .unwrap();
 
         let ctx = initial_context(&store, None);
-        assert!(ctx.contains("Implemented login flow"));
+        assert!(ctx.is_empty());
     }
 
     #[test]
@@ -510,6 +642,79 @@ mod tests {
             .unwrap();
         assert!(properties.contains_key("project_root"));
         assert!(properties.contains_key("worktree_id"));
+    }
+
+    #[test]
+    fn test_handle_resources_list_returns_current_resources() {
+        let store = SqliteStore::in_memory().unwrap();
+        let resp = handle_resources_list(json!(21), &store, Some("demo"));
+        let result = resp.result.unwrap();
+        let resources = result["resources"].as_array().unwrap();
+        assert_eq!(resources.len(), 3);
+        assert_eq!(resources[0]["uri"], CONTEXT_RESOURCE_URI);
+    }
+
+    #[test]
+    fn test_handle_resources_list_requires_explicit_or_detected_project() {
+        let store = SqliteStore::in_memory().unwrap();
+        let resp = handle_resources_list(json!(21), &store, None);
+        let result = resp.result.unwrap();
+        let resources = result["resources"].as_array().unwrap();
+        assert!(resources.is_empty());
+    }
+
+    #[test]
+    fn test_handle_resources_read_redacts_secret_context_values() {
+        let store = SqliteStore::in_memory().unwrap();
+        let memory = hyphae_core::Memory::builder(
+            "context/demo".to_string(),
+            "api_key: sk1234567890abcdefghij".to_string(),
+            hyphae_core::Importance::Medium,
+        )
+        .project("demo".to_string())
+        .build();
+        <SqliteStore as hyphae_core::MemoryStore>::store(&store, memory).unwrap();
+
+        let params = Some(json!({ "uri": CONTEXT_RESOURCE_URI }));
+        let resp = handle_resources_read(json!(22), &params, &store, Some("demo"));
+        let result = resp.result.unwrap();
+        let text = result["contents"][0]["text"].as_str().unwrap();
+        assert!(text.contains("[REDACTED]"));
+        assert!(!text.contains("sk1234567890abcdefghij"));
+    }
+
+    #[test]
+    fn test_handle_resources_read_requires_explicit_or_detected_project() {
+        let store = SqliteStore::in_memory().unwrap();
+        let (session_id, _) = store.session_start("demo", Some("task")).unwrap();
+        store
+            .session_end(&session_id, Some("summary"), None, Some("0"))
+            .unwrap();
+
+        let params = Some(json!({ "uri": CONTEXT_RESOURCE_URI }));
+        let resp = handle_resources_read(json!(23), &params, &store, None);
+        let error = resp.error.expect("resource read should require project");
+        assert_eq!(error.code, -32602);
+        assert!(error.message.contains("requires an active or discoverable project context"));
+    }
+
+    #[test]
+    fn test_handle_initialize_redacts_secret_preload_content() {
+        let store = SqliteStore::in_memory().unwrap();
+        let memory = hyphae_core::Memory::builder(
+            "context/demo".to_string(),
+            "api_key: sk1234567890abcdefghij".to_string(),
+            hyphae_core::Importance::Medium,
+        )
+        .project("demo".to_string())
+        .build();
+        <SqliteStore as hyphae_core::MemoryStore>::store(&store, memory).unwrap();
+
+        let resp = handle_initialize(json!(24), &store, Some("demo"));
+        let result = resp.result.unwrap();
+        let instructions = result["instructions"].as_str().unwrap();
+        assert!(instructions.contains("[REDACTED]"));
+        assert!(!instructions.contains("sk1234567890abcdefghij"));
     }
 
     #[test]

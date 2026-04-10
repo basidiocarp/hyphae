@@ -6,7 +6,7 @@ use hyphae_store::SqliteStore;
 
 use crate::protocol::ToolResult;
 
-mod context;
+pub(crate) mod context;
 mod dispatch;
 mod ingest;
 mod memoir;
