@@ -574,7 +574,6 @@ fn main() -> Result<()> {
                 dry_run,
                 force,
                 no_backup,
-                resolved_project,
                 resolved_db_path.as_path(),
             )?;
         }

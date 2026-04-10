@@ -62,7 +62,6 @@ pub fn cmd_purge(
     dry_run: bool,
     force: bool,
     no_backup: bool,
-    _resolved_project: Option<String>,
     db_path: &Path,
 ) -> anyhow::Result<()> {
     if project.is_none() && before.is_none() {
