@@ -20,14 +20,14 @@ Write scope:
 - `hyphae/crates/hyphae-mcp/src/tools/schema.rs` if schema/help needs updates
 - `hyphae/crates/hyphae-cli/src/main.rs`
 - `hyphae/crates/hyphae-cli/src/commands/docs.rs`
-- `hyphae/docs/FEATURES.md`
-- `hyphae/docs/CLI-REFERENCE.md`
-- `hyphae/docs/MCP-TOOLS.md`
+- `hyphae/docs/features.md`
+- `hyphae/docs/cli-reference.md`
+- `hyphae/docs/mcp-tools.md`
 
 Read-only context:
 
-- `hyphae/docs/ARCHITECTURE.md`
-- `hyphae/docs/INTERNALS.md`
+- `hyphae/docs/architecture.md`
+- `hyphae/docs/internals.md`
 - `hyphae/crates/hyphae-mcp/src/tools/context.rs`
 - `hyphae/crates/hyphae-mcp/src/tools/memory.rs`
 
@@ -84,7 +84,7 @@ plus tests. Only change `hyphae-store` if you find a real bug there.
 Run:
 
 ```bash
-cd /Users/williamnewton/projects/claude-mycelium/hyphae
+cd /Users/williamnewton/projects/basidiocarp/hyphae
 cargo test -p hyphae-store -p hyphae-mcp -p hyphae-cli
 cargo fmt --all --check
 ```

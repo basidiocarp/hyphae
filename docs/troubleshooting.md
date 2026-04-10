@@ -337,6 +337,6 @@ hyphae topics
 
 ## See also
 
-- [GUIDE.md](GUIDE.md)
-- [SETUP-BY-TOOL.md](SETUP-BY-TOOL.md)
-- [CLI-REFERENCE.md](CLI-REFERENCE.md)
+- [guide.md](guide.md)
+- [setup-by-tool.md](setup-by-tool.md)
+- [cli-reference.md](cli-reference.md)

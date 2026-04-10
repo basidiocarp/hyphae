@@ -768,22 +768,27 @@ hyphae prune --threshold 0.1
 ### `hyphae consolidate` -- Consolidate a topic
 
 ```
-hyphae consolidate -t <topic> [--keep-originals]
+hyphae consolidate -t <topic> [--all | --above-threshold <n>] [--dry-run] [--yes] [--no-backup]
 ```
 
 | Option | Short | Required | Default | Description |
 |--------|-------|----------|---------|-------------|
 | `--topic` | `-t` | yes | -- | Topic to consolidate |
-| `--keep-originals` | -- | no | false | Keep originals after consolidation |
+| `--all` | -- | no | false | Consolidate all topics above their configured threshold |
+| `--above-threshold` | -- | no | -- | Consolidate topics with at least this many memories |
+| `--dry-run` | -- | no | false | Show what would be consolidated without changing anything |
+| `--yes` | -- | no | false | Skip confirmation when consolidating multiple topics |
+| `--no-backup` | -- | no | false | Skip the automatic pre-consolidation backup |
 
 Consolidation merges all memories in a topic into a single summary. The consolidated summary's importance is the highest of the originals. Keywords are merged.
+Unless `--no-backup` is set, Hyphae creates a backup before the first destructive write and prints the backup path to stderr.
 
 ```bash
 # Replace all memories with a summary
 hyphae consolidate --topic "errors-resolved"
 
-# Keep originals
-hyphae consolidate --topic "errors-resolved" --keep-originals
+# Consolidate a whole topic set without taking the automatic backup
+hyphae consolidate --all --yes --no-backup
 ```
 
 ---
@@ -854,18 +859,22 @@ hyphae export-training --format alpaca -o full_training.jsonl
 ### `hyphae backup` -- Backup the database
 
 ```
-hyphae backup [-o <output-path>]
+hyphae backup [--list] [-o <output-path>]
 ```
 
 | Option | Short | Required | Default | Description |
 |--------|-------|----------|---------|-------------|
-| `--output` | `-o` | no | `./hyphae-backup-<timestamp>.db` | Backup file path |
+| `--output` | `-o` | no | `~/.local/share/hyphae/backups/hyphae-backup-<timestamp>.db` | Backup file path |
+| `--list` | -- | no | false | List existing backups with size and modified time |
 
-Creates a complete backup of the Hyphae database including all memories, memoirs, documents, and metadata.
+Creates a complete backup of the Hyphae database including all memories, memoirs, documents, and metadata. Backups default to the Hyphae data directory under `backups/`.
 
 ```bash
 # Automatic timestamped backup
 hyphae backup
+
+# List available backups
+hyphae backup --list
 
 # Specific location
 hyphae backup --output /backups/hyphae-2024-03.db
@@ -876,22 +885,18 @@ hyphae backup --output /backups/hyphae-2024-03.db
 ### `hyphae restore` -- Restore from backup
 
 ```
-hyphae restore <backup-path> [--verify]
+hyphae restore <backup-path>
 ```
 
 | Argument | Required | Description |
 |----------|----------|-------------|
 | `backup-path` | yes (positional) | Path to backup file |
-| `--verify` | no | Verify database integrity before restoring |
 
-Restores the database from a backup. The current database is moved to `.backup` before restoration.
+Restore from a backup after validating that the file is a readable SQLite database and confirming the replacement with the user.
 
 ```bash
 # Restore from backup
 hyphae restore /backups/hyphae-2024-03.db
-
-# Verify before restoring
-hyphae restore /backups/hyphae-2024-03.db --verify
 ```
 
 ---
@@ -1135,5 +1140,5 @@ hyphae bench-agent --sessions 10 --model haiku --runs 3
 
 ## See also
 
-- **[MCP-TOOLS.md](MCP-TOOLS.md)** — All 23 MCP tool definitions (parameters, request/response examples) for AI agent integration
-- **[FEATURES.md](FEATURES.md)** — Conceptual guides: Memory vs Memoir, multi-session workflows, topic organization, consolidation, importance levels, decay model, and complete configuration reference
+- **[mcp-tools.md](mcp-tools.md)** — All 23 MCP tool definitions (parameters, request/response examples) for AI agent integration
+- **[features.md](features.md)** — Conceptual guides: Memory vs Memoir, multi-session workflows, topic organization, consolidation, importance levels, decay model, and complete configuration reference

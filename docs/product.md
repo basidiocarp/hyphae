@@ -116,5 +116,5 @@ Two commands configure permanent memory for your agent.
 ## Resources
 
 - GitHub: [https://github.com/basidiocarp/hyphae](https://github.com/basidiocarp/hyphae)
-- [Technical Architecture](ARCHITECTURE.md)
-- [User Guide](GUIDE.md)
+- [Technical Architecture](architecture.md)
+- [User Guide](guide.md)

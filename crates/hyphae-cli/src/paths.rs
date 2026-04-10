@@ -10,6 +10,10 @@ pub(crate) fn default_db_path() -> PathBuf {
     spore::paths::data_dir("hyphae").join("hyphae.db")
 }
 
+pub(crate) fn backup_dir() -> PathBuf {
+    spore::paths::data_dir("hyphae").join("backups")
+}
+
 pub(crate) fn default_config_path() -> Option<PathBuf> {
     Some(spore::paths::config_path_with_env(
         "hyphae",
@@ -39,6 +43,15 @@ mod tests {
         assert_eq!(
             path.file_name().and_then(|value| value.to_str()),
             Some("hyphae.db")
+        );
+    }
+
+    #[test]
+    fn test_backup_dir_ends_with_backups() {
+        let path = backup_dir();
+        assert_eq!(
+            path.file_name().and_then(|value| value.to_str()),
+            Some("backups")
         );
     }
 

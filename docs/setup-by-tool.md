@@ -218,5 +218,5 @@ Hyphae does not currently auto-configure Gemini, Amazon Q, Cline, Roo Code, Kilo
 
 ## See also
 
-- [GUIDE.md](GUIDE.md) — Core guide: memory models, MCP tools reference, init modes
-- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — Fix tool-detection issues, MCP connection errors, and more
+- [guide.md](guide.md) — Core guide: memory models, MCP tools reference, init modes
+- [troubleshooting.md](troubleshooting.md) — Fix tool-detection issues, MCP connection errors, and more

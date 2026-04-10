@@ -12,8 +12,11 @@ Hyphae is persistent memory for AI coding agents. It stores what your agent lear
 # Homebrew
 brew tap basidiocarp/tap && brew install hyphae
 
-# Quick install
+# Quick install: smaller binary without local embeddings
 curl -fsSL https://raw.githubusercontent.com/basidiocarp/hyphae/main/install.sh | sh
+
+# Quick install: prebuilt binary with embeddings enabled
+curl -fsSL https://raw.githubusercontent.com/basidiocarp/hyphae/main/install.sh | sh -s -- --embeddings
 
 # From source
 cargo install --path crates/hyphae-cli
@@ -140,9 +143,11 @@ hyphae health
 # Consolidate (replaces all entries with one summary)
 hyphae consolidate --topic "errors-resolved"
 
-# Keep originals alongside the consolidated summary
-hyphae consolidate --topic "errors-resolved" --keep-originals
+# Consolidate without the automatic pre-write backup
+hyphae consolidate --topic "errors-resolved" --no-backup
 ```
+
+Hyphae automatically creates a backup before the first destructive write unless `--no-backup` is set.
 
 When a topic exceeds 7 entries, the MCP `hyphae_memory_store` response includes a consolidation warning.
 
@@ -298,6 +303,9 @@ cargo build --release --no-default-features
 cargo install --path crates/hyphae-cli --no-default-features
 ```
 
+The default install script and the slim prebuilt release archives use this
+variant. Release asset names without a suffix are the no-embeddings build.
+
 Search falls back to FTS5 (full-text search), which works but is less semantically aware. Useful for:
 - Development/testing without embedding overhead
 - Offline environments where HTTP is unavailable
@@ -307,6 +315,12 @@ Re-enable embeddings anytime by building with the default features:
 
 ```bash
 cargo build --release
+```
+
+Or install the prebuilt embeddings-enabled binary directly:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/basidiocarp/hyphae/main/install.sh | sh -s -- --embeddings
 ```
 
 ### When to Use Which
@@ -476,7 +490,7 @@ The memory appears with its ID, topic, weight, and content. Verify with `hyphae 
 
 ### Test with your agent
 
-Restart your AI tool and ask it to "recall the Hyphae context." It should call `hyphae_memory_recall` automatically. If not, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+Restart your AI tool and ask it to "recall the Hyphae context." It should call `hyphae_memory_recall` automatically. If not, see [troubleshooting.md](troubleshooting.md).
 
 ### From here
 
@@ -486,5 +500,5 @@ Store architecture decisions with `-i high`, invariant facts (ports, URLs) with 
 
 ## Next steps
 
-- **Tool-specific setup** — MCP config files, slash commands, and hooks for every supported tool: [SETUP-BY-TOOL.md](SETUP-BY-TOOL.md)
-- **Troubleshooting & FAQ** — Fix common issues and get answers to frequent questions: [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
+- **Tool-specific setup** — MCP config files, slash commands, and hooks for every supported tool: [setup-by-tool.md](setup-by-tool.md)
+- **Troubleshooting & FAQ** — Fix common issues and get answers to frequent questions: [troubleshooting.md](troubleshooting.md)

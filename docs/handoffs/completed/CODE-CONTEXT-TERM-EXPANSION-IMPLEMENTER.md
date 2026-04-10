@@ -27,9 +27,9 @@ Write scope:
 
 - `hyphae/crates/hyphae-store/src/store/context.rs`
 - `hyphae/crates/hyphae-mcp/src/tools/memory.rs`
-- `hyphae/docs/MCP-TOOLS.md` only if behavior wording needs a precise update
-- `hyphae/docs/FEATURES.md` only if behavior wording needs a precise update
-- `hyphae/docs/GUIDE.md` only if behavior wording needs a precise update
+- `hyphae/docs/mcp-tools.md` only if behavior wording needs a precise update
+- `hyphae/docs/features.md` only if behavior wording needs a precise update
+- `hyphae/docs/guide.md` only if behavior wording needs a precise update
 
 Read-only context:
 
@@ -106,7 +106,7 @@ the implementation satisfy it.
 Run:
 
 ```bash
-cd /Users/williamnewton/projects/claude-mycelium/hyphae
+cd /Users/williamnewton/projects/basidiocarp/hyphae
 cargo test -p hyphae-store -p hyphae-mcp -p hyphae-cli
 cargo fmt --all --check
 ```

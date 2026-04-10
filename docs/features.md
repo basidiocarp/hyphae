@@ -227,11 +227,12 @@ hyphae health
 # Consolidate by replacing all memories
 hyphae consolidate --topic "errors-resolved"
 
-# Or keep originals (summary is added, not replaced)
-hyphae consolidate --topic "errors-resolved" --keep-originals
+# Or skip the automatic backup
+hyphae consolidate --topic "errors-resolved" --no-backup
 ```
 
 The CLI merges automatically: it concatenates summaries with ` | `, merges keywords, and takes the highest importance.
+By default it creates a backup before the first destructive write and prints the path to stderr.
 
 #### Via MCP (agent-guided consolidation)
 
@@ -581,5 +582,5 @@ When changing the model in `config.toml`:
 
 ## See also
 
-- **[CLI-REFERENCE.md](CLI-REFERENCE.md)** — All CLI commands with syntax, option tables, and examples
-- **[MCP-TOOLS.md](MCP-TOOLS.md)** — All 23 MCP tool definitions (parameters, request/response examples) for AI agent integration
+- **[cli-reference.md](cli-reference.md)** — All CLI commands with syntax, option tables, and examples
+- **[mcp-tools.md](mcp-tools.md)** — All 23 MCP tool definitions (parameters, request/response examples) for AI agent integration

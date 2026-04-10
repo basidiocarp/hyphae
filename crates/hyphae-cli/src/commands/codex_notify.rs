@@ -524,6 +524,8 @@ mod tests {
     use super::*;
     use hyphae_store::SqliteStore;
 
+    const SAMPLE_CWD: &str = "/workspace/myapp";
+
     #[test]
     fn test_parse_notification_and_store_turn_summary() {
         let store = SqliteStore::in_memory().unwrap();
@@ -531,7 +533,7 @@ mod tests {
             "type": "agent-turn-complete",
             "thread-id": "thread-7",
             "turn-id": "turn-9",
-            "cwd": "/Users/williamnewton/projects/myapp",
+            "cwd": SAMPLE_CWD,
             "input-messages": ["Can you summarize the repo?", {"text": "What should I do next?"}],
             "last-assistant-message": "You should release spore first."
         });
@@ -563,7 +565,7 @@ mod tests {
         let payload = serde_json::json!({
             "type": "approval_requested",
             "thread-id": "thread-7",
-            "cwd": "/Users/williamnewton/projects/myapp",
+            "cwd": SAMPLE_CWD,
             "reason": "needs approval before writing files"
         });
         let serialized = serde_json::to_string(&payload).unwrap();
@@ -611,7 +613,7 @@ mod tests {
             "type": "agent_turn_complete",
             "thread-id": "thread-8",
             "turn-id": "turn-4",
-            "cwd": "/Users/williamnewton/projects/myapp",
+            "cwd": SAMPLE_CWD,
             "last-assistant-message": "Wrapped up the turn."
         });
 
@@ -650,7 +652,7 @@ mod tests {
         let payload = serde_json::json!({
             "type": "session_start",
             "thread-id": "thread-9",
-            "cwd": "/Users/williamnewton/projects/myapp",
+            "cwd": SAMPLE_CWD,
             "summary": "Booting Codex session"
         });
 
@@ -687,7 +689,7 @@ mod tests {
         let payload = serde_json::json!({
             "type": "tool_use",
             "thread-id": "thread-10",
-            "cwd": "/Users/williamnewton/projects/myapp",
+            "cwd": SAMPLE_CWD,
             "tool_name": "Bash",
             "tool_input": {
                 "command": "cargo test --quiet"
@@ -723,7 +725,7 @@ mod tests {
         let payload = serde_json::json!({
             "type": "tool_result",
             "thread-id": "thread-11",
-            "cwd": "/Users/williamnewton/projects/myapp",
+            "cwd": SAMPLE_CWD,
             "tool_name": "Bash",
             "is_error": true,
             "content": "permission denied"

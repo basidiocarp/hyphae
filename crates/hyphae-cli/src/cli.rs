@@ -305,6 +305,9 @@ pub(crate) enum Commands {
         /// Skip confirmation when consolidating multiple topics
         #[arg(long)]
         yes: bool,
+        /// Skip the automatic pre-consolidation backup
+        #[arg(long = "no-backup")]
+        no_backup: bool,
     },
 
     /// Import Claude Code auto-memory files into hyphae
@@ -385,6 +388,9 @@ pub(crate) enum Commands {
         /// Output path for backup file (defaults to hyphae-backup-{timestamp}.db)
         #[arg(short, long)]
         output: Option<PathBuf>,
+        /// List existing backups instead of creating a new one
+        #[arg(long, conflicts_with = "output")]
+        list: bool,
     },
 
     /// Restore database from a backup
@@ -417,6 +423,9 @@ pub(crate) enum Commands {
         /// Skip confirmation prompt
         #[arg(long)]
         force: bool,
+        /// Skip the automatic pre-purge backup
+        #[arg(long = "no-backup")]
+        no_backup: bool,
     },
 
     /// View recent activity and lessons learned
@@ -498,5 +507,44 @@ mod tests {
     fn test_activity_command_parses() {
         let cli = Cli::try_parse_from(["hyphae", "activity"]).unwrap();
         assert!(matches!(cli.command, Commands::Activity));
+    }
+
+    #[test]
+    fn test_backup_list_parses() {
+        let cli = Cli::try_parse_from(["hyphae", "backup", "--list"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Backup {
+                list: true,
+                output: None,
+            }
+        ));
+    }
+
+    #[test]
+    fn test_consolidate_no_backup_parses() {
+        let cli =
+            Cli::try_parse_from(["hyphae", "consolidate", "--topic", "errors", "--no-backup"])
+                .unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Consolidate {
+                no_backup: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_purge_no_backup_parses() {
+        let cli =
+            Cli::try_parse_from(["hyphae", "purge", "--project", "demo", "--no-backup"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Purge {
+                no_backup: true,
+                ..
+            }
+        ));
     }
 }

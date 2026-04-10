@@ -195,6 +195,6 @@ Each of these alone, with 500+ examples, produces a noticeable improvement in a 
 
 ## Related
 
-- [Configuring Embeddings](GUIDE.md#configuring-embeddings) — local vs HTTP embedding models
+- [Configuring Embeddings](guide.md#configuring-embeddings) — local vs HTTP embedding models
 - [RAG Pipeline](../README.md#rag-pipeline) — how ingested documents are searched
 - [Ecosystem LLM Training Guide](https://github.com/basidiocarp/.github/blob/main/docs/LLM-TRAINING.md) — full training infrastructure overview

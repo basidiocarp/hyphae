@@ -23,6 +23,7 @@ jobs:
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             archive: tar.gz
+            cross: false
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
             archive: tar.gz
@@ -30,12 +31,15 @@ jobs:
           - target: x86_64-apple-darwin
             os: macos-latest
             archive: tar.gz
+            cross: false
           - target: aarch64-apple-darwin
             os: macos-14
             archive: tar.gz
+            cross: false
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             archive: zip
+            cross: false
 
     steps:
       - uses: actions/checkout@v6.0.2
@@ -99,57 +103,86 @@ jobs:
           passthrough = ["CFLAGS", "OPENSSL_DIR", "OPENSSL_LIB_DIR", "OPENSSL_INCLUDE_DIR"]
           TOML
 
-      - name: Build
+      - name: Build and package release variants
         run: |
           set -euo pipefail
+
+          build_variant() {
+            local variant="$1"
+            local asset_suffix="$2"
+            local cargo_feature_flag="$3"
+            local binary="target/${{ matrix.target }}/release/hyphae"
+            local build_log="build-${{ matrix.target }}-${variant}.log"
+            local smoke_log="smoke-${{ matrix.target }}-${variant}.log"
+
+            if [ "${{ matrix.cross }}" = "true" ]; then
+              if [ -n "$cargo_feature_flag" ]; then
+                CROSS_CONTAINER_OPTS="--env CFLAGS" cross build --release "$cargo_feature_flag" --target ${{ matrix.target }}
+              else
+                CROSS_CONTAINER_OPTS="--env CFLAGS" cross build --release --target ${{ matrix.target }}
+              fi
+            elif [[ "${{ matrix.target }}" == *apple-darwin ]]; then
+              export CARGO_BUILD_JOBS=1
+              export CC_ENABLE_DEBUG_OUTPUT=1
+              if [ -n "$cargo_feature_flag" ]; then
+                cargo build --release "$cargo_feature_flag" --target ${{ matrix.target }} -vv 2>&1 | tee "$build_log"
+              else
+                cargo build --release --target ${{ matrix.target }} -vv 2>&1 | tee "$build_log"
+              fi
+
+              codesign --force --sign - "$binary"
+              codesign -dv "$binary" 2>&1
+
+              echo "--- ${variant}: version check ---"
+              "$binary" --version
+              echo "--- ${variant}: sqlite smoke (stats) ---"
+              "$binary" stats
+              echo "--- ${variant}: MCP initialize ---"
+              printf '%s' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"release-smoke","version":"0.1"}}}' \
+                | "$binary" serve 2>&1 | tee "$smoke_log"
+              grep -q 'protocolVersion' "$smoke_log"
+            else
+              if [ -n "$cargo_feature_flag" ]; then
+                cargo build --release "$cargo_feature_flag" --target ${{ matrix.target }}
+              else
+                cargo build --release --target ${{ matrix.target }}
+              fi
+            fi
+
+            if [ "${{ matrix.archive }}" = "tar.gz" ]; then
+              (
+                cd "target/${{ matrix.target }}/release"
+                tar czf "../../../hyphae-${{ matrix.target }}${asset_suffix}.tar.gz" hyphae
+              )
+            else
+              (
+                cd "target/${{ matrix.target }}/release"
+                7z a "../../../hyphae-${{ matrix.target }}${asset_suffix}.zip" hyphae.exe
+              )
+            fi
+          }
+
           # sqlite-vec uses BSD u_int*_t types missing from musl — define them
           if [[ "${{ matrix.target }}" == *-musl ]]; then
             export CFLAGS="-Du_int8_t=uint8_t -Du_int16_t=uint16_t -Du_int64_t=uint64_t"
           fi
-          if [ "${{ matrix.cross }}" = "true" ]; then
-            CROSS_CONTAINER_OPTS="--env CFLAGS" cross build --release --no-default-features --target ${{ matrix.target }}
-          elif [[ "${{ matrix.target }}" == *apple-darwin ]]; then
-            export CARGO_BUILD_JOBS=1
-            export CC_ENABLE_DEBUG_OUTPUT=1
-            cargo build --release --no-default-features --target ${{ matrix.target }} -vv 2>&1 | tee build-${{ matrix.target }}.log
-          else
-            cargo build --release --no-default-features --target ${{ matrix.target }}
-          fi
+
+          build_variant "slim" "" "--no-default-features"
+          build_variant "embeddings" "-embeddings" ""
         shell: bash
 
       - name: Inspect macOS build diagnostics
         if: startsWith(matrix.target, 'x86_64-apple') || startsWith(matrix.target, 'aarch64-apple')
         run: |
           set -euo pipefail
-          LOG=build-${{ matrix.target }}.log
           echo "--- SDK ---"
           xcrun --sdk macosx --show-sdk-path
           echo "--- Relevant compiler lines ---"
-          grep -E 'running: .*clang|running: .*cc|cargo:warning=' "$LOG" | sed -n '1,120p' || true
-        shell: bash
-
-      - name: Re-sign binary (macOS)
-        if: startsWith(matrix.target, 'x86_64-apple') || startsWith(matrix.target, 'aarch64-apple')
-        run: |
-          set -euo pipefail
-          BINARY=target/${{ matrix.target }}/release/hyphae
-          codesign --force --sign - "$BINARY"
-          codesign -dv "$BINARY" 2>&1
-        shell: bash
-
-      - name: Smoke test (macOS native)
-        if: startsWith(matrix.target, 'x86_64-apple') || startsWith(matrix.target, 'aarch64-apple')
-        run: |
-          set -euo pipefail
-          BINARY=target/${{ matrix.target }}/release/hyphae
-          echo "--- L0: version check ---"
-          "$BINARY" --version
-          echo "--- L1: sqlite smoke (stats) ---"
-          "$BINARY" stats
-          echo "--- L2: MCP initialize ---"
-          printf '%s' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"release-smoke","version":"0.1"}}}' \
-            | "$BINARY" serve 2>&1 | tee smoke-${{ matrix.target }}.log
-          grep -q 'protocolVersion' smoke-${{ matrix.target }}.log
+          for LOG in build-${{ matrix.target }}-*.log; do
+            [ -f "$LOG" ] || continue
+            echo "--- $LOG ---"
+            grep -E 'running: .*clang|running: .*cc|cargo:warning=' "$LOG" | sed -n '1,120p' || true
+          done
         shell: bash
 
       - name: Upload macOS diagnostics
@@ -158,28 +191,16 @@ jobs:
         with:
           name: hyphae-${{ matrix.target }}-diagnostics
           path: |
-            build-${{ matrix.target }}.log
-            smoke-${{ matrix.target }}.log
-
-      - name: Package (unix)
-        if: matrix.archive == 'tar.gz'
-        run: |
-          cd target/${{ matrix.target }}/release
-          tar czf ../../../hyphae-${{ matrix.target }}.tar.gz hyphae
-        shell: bash
-
-      - name: Package (windows)
-        if: matrix.archive == 'zip'
-        run: |
-          cd target/${{ matrix.target }}/release
-          7z a ../../../hyphae-${{ matrix.target }}.zip hyphae.exe
-        shell: bash
+            build-${{ matrix.target }}-*.log
+            smoke-${{ matrix.target }}-*.log
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7.0.0
         with:
           name: hyphae-${{ matrix.target }}
-          path: hyphae-${{ matrix.target }}.${{ matrix.archive }}
+          path: |
+            hyphae-${{ matrix.target }}.${{ matrix.archive }}
+            hyphae-${{ matrix.target }}-embeddings.${{ matrix.archive }}
 
   packages:
     name: Linux packages

@@ -206,7 +206,11 @@ fn main() -> Result<()> {
             commands::self_update::run(*check)?;
             return Ok(());
         }
-        Commands::Backup { output } => {
+        Commands::Backup { output, list } => {
+            if *list {
+                commands::backup::cmd_backup_list()?;
+                return Ok(());
+            }
             let cfg = config::load_config()?;
             let resolved_db_path =
                 paths::resolve_db_path(cli.db.clone(), cfg.store.path.as_deref());
@@ -245,7 +249,7 @@ fn main() -> Result<()> {
     let embedder = init_embedder(&cfg.embeddings.model);
     let embedding_dims = embedder.as_ref().map(|e| e.dimensions()).unwrap_or(384);
 
-    let store = open_store(Some(resolved_db_path), embedding_dims)?;
+    let store = open_store(Some(resolved_db_path.clone()), embedding_dims)?;
 
     let embedder_ref: Option<&dyn Embedder> = embedder.as_ref().map(|e| e.as_ref());
 
@@ -475,6 +479,7 @@ fn main() -> Result<()> {
             above_threshold,
             dry_run,
             yes,
+            no_backup,
         } => {
             commands::consolidate::cmd_consolidate(
                 &store,
@@ -484,7 +489,9 @@ fn main() -> Result<()> {
                 above_threshold,
                 dry_run,
                 yes,
+                no_backup,
                 resolved_project,
+                resolved_db_path.as_path(),
             )?;
         }
 
@@ -558,6 +565,7 @@ fn main() -> Result<()> {
             before,
             dry_run,
             force,
+            no_backup,
         } => {
             commands::purge::cmd_purge(
                 &store,
@@ -565,7 +573,9 @@ fn main() -> Result<()> {
                 before.clone(),
                 dry_run,
                 force,
+                no_backup,
                 resolved_project,
+                resolved_db_path.as_path(),
             )?;
         }
 

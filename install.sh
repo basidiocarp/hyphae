@@ -1,12 +1,16 @@
 #!/bin/sh
 # hyphae installer - https://github.com/basidiocarp/hyphae
-# Usage: curl -fsSL https://github.com/basidiocarp/hyphae/main/install.sh | sh
+# Usage:
+#   curl -fsSL https://github.com/basidiocarp/hyphae/main/install.sh | sh
+#   curl -fsSL https://github.com/basidiocarp/hyphae/main/install.sh | sh -s -- --embeddings
 
 set -e
 
 REPO="basidiocarp/hyphae"
 BINARY_NAME="hyphae"
 INSTALL_DIR="/usr/local/bin"
+VARIANT="slim"
+ASSET_SUFFIX=""
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -17,10 +21,47 @@ info() { printf "${GREEN}[INFO]${NC} %s\n" "$1"; }
 warn() { printf "${YELLOW}[WARN]${NC} %s\n" "$1"; }
 error() { printf "${RED}[ERROR]${NC} %s\n" "$1"; exit 1; }
 
+usage() {
+    cat <<'EOF'
+hyphae installer
+
+Usage:
+  sh install.sh [--slim|--embeddings] [--help]
+
+Options:
+  --slim        Install the smaller prebuilt binary without local embeddings.
+  --embeddings  Install the prebuilt binary with the default embeddings feature.
+  --help        Show this help text.
+EOF
+}
+
+parse_args() {
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --slim)
+                VARIANT="slim"
+                ASSET_SUFFIX=""
+                ;;
+            --embeddings)
+                VARIANT="embeddings"
+                ASSET_SUFFIX="-embeddings"
+                ;;
+            --help|-h)
+                usage
+                exit 0
+                ;;
+            *)
+                error "Unknown argument: $1"
+                ;;
+        esac
+        shift
+    done
+}
+
 detect_os() {
     case "$(uname -s)" in
         Darwin*) OS="darwin"; TARGET_SUFFIX="apple-darwin";;
-        Linux*)  OS="linux";  TARGET_SUFFIX="unknown-linux-gnu";;
+        Linux*)  OS="linux";  TARGET_SUFFIX="unknown-linux-musl";;
         *)       error "Unsupported OS: $(uname -s). hyphae supports macOS and Linux.";;
     esac
 }
@@ -44,8 +85,9 @@ install() {
     TARGET="${ARCH}-${TARGET_SUFFIX}"
     info "Detected: ${OS} ${ARCH}"
     info "Version: ${VERSION}"
+    info "Variant: ${VARIANT}"
 
-    DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}/${BINARY_NAME}-${TARGET}.tar.gz"
+    DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}/${BINARY_NAME}-${TARGET}${ASSET_SUFFIX}.tar.gz"
     TEMP_DIR=$(mktemp -d)
     ARCHIVE="${TEMP_DIR}/${BINARY_NAME}.tar.gz"
 
@@ -80,6 +122,7 @@ verify() {
 
 main() {
     info "Installing ${BINARY_NAME}..."
+    parse_args "$@"
     detect_os
     detect_arch
     get_latest_version
@@ -89,4 +132,4 @@ main() {
     info "Installation complete! Run '${BINARY_NAME} --help' to get started."
 }
 
-main
+main "$@"

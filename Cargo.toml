@@ -8,6 +8,13 @@ members = [
   "crates/hyphae-ingest",
 ]
 
+[profile.dev]
+opt-level = 1
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 3
+
 [profile.release]
 opt-level = 3
 lto = true
@@ -17,7 +24,7 @@ strip = true
 
 [workspace.dependencies]
 # Database
-rusqlite = { version = "0.39", features = ["bundled", "modern_sqlite"] }
+rusqlite = { version = "0.39", features = ["bundled"] }
 sqlite-vec = "0.1"
 zerocopy = { version = "0.8", features = ["derive"] }
 

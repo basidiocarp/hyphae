@@ -23,14 +23,14 @@ Write scope:
   helper is needed
 - `hyphae/crates/hyphae-mcp/src/tools/schema.rs` if input schema/help needs
   updates
-- `hyphae/docs/MCP-TOOLS.md`
-- `hyphae/docs/FEATURES.md`
-- `hyphae/docs/GUIDE.md`
+- `hyphae/docs/mcp-tools.md`
+- `hyphae/docs/features.md`
+- `hyphae/docs/guide.md`
 
 Read-only context:
 
-- `hyphae/docs/ARCHITECTURE.md`
-- `hyphae/docs/INTERNALS.md`
+- `hyphae/docs/architecture.md`
+- `hyphae/docs/internals.md`
 - `hyphae/crates/hyphae-mcp/src/tools/context.rs`
 - `hyphae/crates/hyphae-store/src/store/context.rs`
 - `hyphae/crates/hyphae-mcp/src/tools/mod.rs`
@@ -88,7 +88,7 @@ Tests should make the context-aware behavior obvious. For example:
 Run:
 
 ```bash
-cd /Users/williamnewton/projects/claude-mycelium/hyphae
+cd /Users/williamnewton/projects/basidiocarp/hyphae
 cargo test -p hyphae-mcp -p hyphae-store -p hyphae-cli
 cargo fmt --all --check
 ```

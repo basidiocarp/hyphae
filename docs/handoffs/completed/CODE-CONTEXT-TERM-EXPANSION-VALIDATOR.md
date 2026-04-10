@@ -23,9 +23,9 @@ Read-only review scope:
 - `hyphae/crates/hyphae-store/src/store/context.rs`
 - `hyphae/crates/hyphae-mcp/src/tools/memory.rs`
 - any touched docs among:
-  - `hyphae/docs/MCP-TOOLS.md`
-  - `hyphae/docs/FEATURES.md`
-  - `hyphae/docs/GUIDE.md`
+  - `hyphae/docs/mcp-tools.md`
+  - `hyphae/docs/features.md`
+  - `hyphae/docs/guide.md`
 
 You may run tests, but do not edit files.
 
@@ -51,7 +51,7 @@ Look for concrete issues in this order:
 Run:
 
 ```bash
-cd /Users/williamnewton/projects/claude-mycelium/hyphae
+cd /Users/williamnewton/projects/basidiocarp/hyphae
 cargo test -p hyphae-store -p hyphae-mcp -p hyphae-cli
 cargo fmt --all --check
 ```

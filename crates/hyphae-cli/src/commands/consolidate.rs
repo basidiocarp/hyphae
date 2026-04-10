@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::io::{self, Write};
+use std::path::Path;
 
 use anyhow::{Result, bail};
 use hyphae_core::{ConsolidationConfig, Importance, Memory, MemoryStore};
@@ -21,7 +22,9 @@ pub(crate) fn cmd_consolidate(
     above_threshold: Option<usize>,
     dry_run: bool,
     yes: bool,
+    no_backup: bool,
     project: Option<String>,
+    db_path: &Path,
 ) -> Result<()> {
     if let Some(topic) = topic {
         let memories = store.get_by_topic(&topic, project.as_deref())?;
@@ -38,6 +41,11 @@ pub(crate) fn cmd_consolidate(
         if dry_run {
             print_single_topic_preview(&target);
             return Ok(());
+        }
+
+        if !no_backup {
+            let backup_path = crate::commands::backup::auto_backup(db_path)?;
+            eprintln!("Auto-backup created at {}", backup_path.display());
         }
 
         let consolidated = build_consolidated_memory(&topic, &memories);
@@ -75,6 +83,11 @@ pub(crate) fn cmd_consolidate(
     if !yes && !prompt_confirmation(&targets)? {
         println!("Consolidation cancelled.");
         return Ok(());
+    }
+
+    if !no_backup {
+        let backup_path = crate::commands::backup::auto_backup(db_path)?;
+        eprintln!("Auto-backup created at {}", backup_path.display());
     }
 
     for target in targets {
@@ -250,6 +263,7 @@ fn truncate_summary(summary: &str, max_chars: usize) -> String {
 mod tests {
     use super::*;
     use hyphae_core::{Importance, Memory, MemoryStore};
+    use std::path::Path;
 
     fn test_store() -> SqliteStore {
         SqliteStore::in_memory().expect("in-memory store")
@@ -359,7 +373,9 @@ mod tests {
             None,
             false,
             true,
+            true,
             None,
+            Path::new("/tmp/hyphae-consolidate-test.db"),
         )
         .unwrap();
 

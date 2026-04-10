@@ -552,5 +552,5 @@ The identity fields must be provided together. Supplying only one of them return
 
 ## See also
 
-- **[CLI-REFERENCE.md](CLI-REFERENCE.md)** — All CLI commands with syntax, option tables, and examples
-- **[FEATURES.md](FEATURES.md)** — Conceptual guides: Memory vs Memoir, multi-session workflows, topic organization, consolidation, importance levels, decay model, and complete configuration reference
+- **[cli-reference.md](cli-reference.md)** — All CLI commands with syntax, option tables, and examples
+- **[features.md](features.md)** — Conceptual guides: Memory vs Memoir, multi-session workflows, topic organization, consolidation, importance levels, decay model, and complete configuration reference

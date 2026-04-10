@@ -1,5 +1,6 @@
 use chrono::DateTime;
 use std::io::{self, Write};
+use std::path::Path;
 
 use hyphae_store::SqliteStore;
 
@@ -60,16 +61,18 @@ pub fn cmd_purge(
     before: Option<String>,
     dry_run: bool,
     force: bool,
+    no_backup: bool,
     _resolved_project: Option<String>,
+    db_path: &Path,
 ) -> anyhow::Result<()> {
     if project.is_none() && before.is_none() {
         anyhow::bail!("must specify either --project or --before");
     }
 
     if let Some(proj) = project {
-        purge_by_project(store, &proj, dry_run, force)?;
+        purge_by_project(store, &proj, dry_run, force, no_backup, db_path)?;
     } else if let Some(before_str) = before {
-        purge_before_date(store, &before_str, dry_run, force)?;
+        purge_before_date(store, &before_str, dry_run, force, no_backup, db_path)?;
     }
 
     Ok(())
@@ -80,6 +83,8 @@ fn purge_by_project(
     project: &str,
     dry_run: bool,
     force: bool,
+    no_backup: bool,
+    db_path: &Path,
 ) -> anyhow::Result<()> {
     // Count items to delete
     let memories_count = store.count_memories_by_project(project)?;
@@ -106,6 +111,11 @@ fn purge_by_project(
         return Ok(());
     }
 
+    if !no_backup {
+        let backup_path = crate::commands::backup::auto_backup(db_path)?;
+        eprintln!("Auto-backup created at {}", backup_path.display());
+    }
+
     // Perform deletion
     let (mem_del, ses_del, chk_del, doc_del) = store.purge_project(project)?;
 
@@ -125,6 +135,8 @@ fn purge_before_date(
     before_str: &str,
     dry_run: bool,
     force: bool,
+    no_backup: bool,
+    db_path: &Path,
 ) -> anyhow::Result<()> {
     // Parse date
     let before_dt = DateTime::parse_from_rfc3339(&format!("{before_str}T00:00:00+00:00"))
@@ -162,6 +174,11 @@ fn purge_before_date(
     if !prompt_confirmation(&stats, force)? {
         println!("Purge cancelled.");
         return Ok(());
+    }
+
+    if !no_backup {
+        let backup_path = crate::commands::backup::auto_backup(db_path)?;
+        eprintln!("Auto-backup created at {}", backup_path.display());
     }
 
     // Perform deletion

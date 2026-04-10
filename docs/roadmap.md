@@ -1,6 +1,6 @@
 # Hyphae Roadmap
 
-This page is the Hyphae-specific backlog. The workspace [ROADMAP.md](../../docs/ROADMAP.md) keeps the ecosystem sequencing and cross-repo priorities.
+This page is the Hyphae-specific backlog. The workspace [ROADMAP.md](../../docs/workspace/ROADMAP.md) keeps the ecosystem sequencing and cross-repo priorities.
 
 ## Recently Shipped
 
@@ -13,7 +13,7 @@ This page is the Hyphae-specific backlog. The workspace [ROADMAP.md](../../docs/
 
 ### Recall effectiveness and outcome ranking
 
-Hyphae should rank recalled context by observed usefulness, not just similarity. The work in [FEEDBACK-LOOP-DESIGN.md](FEEDBACK-LOOP-DESIGN.md) is the immediate path to making memory selection smarter across the ecosystem.
+Hyphae should rank recalled context by observed usefulness, not just similarity. The work in [feedback-loop-design.md](feedback-loop-design.md) is the immediate path to making memory selection smarter across the ecosystem.
 
 ### Context-aware recall
 

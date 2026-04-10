@@ -51,8 +51,11 @@ adds hybrid retrieval, document indexing, and session tracking.
 ## Quick Start
 
 ```bash
-# Quick install
+# Quick install: smaller binary without local embeddings
 curl -fsSL https://raw.githubusercontent.com/basidiocarp/hyphae/main/install.sh | sh
+
+# Quick install: prebuilt binary with embeddings enabled
+curl -fsSL https://raw.githubusercontent.com/basidiocarp/hyphae/main/install.sh | sh -s -- --embeddings
 
 # Recommended: full ecosystem setup
 stipe init
@@ -67,7 +70,14 @@ cargo install --path crates/hyphae-cli
 
 # Smaller build without embeddings
 cargo build --release --no-default-features
+
+# Full build with embeddings
+cargo build --release
 ```
+
+Prebuilt release archives now ship both variants:
+- `hyphae-<target>.tar.gz` or `.zip`: slim build without local embeddings
+- `hyphae-<target>-embeddings.tar.gz` or `.zip`: default build with embeddings
 
 ---
 
@@ -185,24 +195,34 @@ responses. Logs go to stderr so they do not corrupt the MCP transport.
 
 ## Documentation
 
-- [docs/GUIDE.md](docs/GUIDE.md): quickstart, concepts, and configuration
-- [docs/FEATURES.md](docs/FEATURES.md): feature overview and behavior
-- [docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md): CLI commands and examples
-- [docs/MCP-TOOLS.md](docs/MCP-TOOLS.md): MCP tool reference
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): internals, schema, and search pipeline
-- [docs/SETUP-BY-TOOL.md](docs/SETUP-BY-TOOL.md): per-editor setup instructions
-- [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md): common issues and fixes
-- [docs/FEEDBACK-LOOP-DESIGN.md](docs/FEEDBACK-LOOP-DESIGN.md): closed-loop learning design notes
-- [docs/TRAINING-DATA.md](docs/TRAINING-DATA.md): export formats and training data guidance
+- [docs/README.md](docs/README.md): docs index and reading order
+- [docs/guide.md](docs/guide.md): quickstart, concepts, and configuration
+- [docs/features.md](docs/features.md): feature overview and behavior
+- [docs/cli-reference.md](docs/cli-reference.md): CLI commands and examples
+- [docs/mcp-tools.md](docs/mcp-tools.md): MCP tool reference
+- [docs/architecture.md](docs/architecture.md): internals, schema, and search pipeline
+- [docs/setup-by-tool.md](docs/setup-by-tool.md): per-editor setup instructions
+- [docs/troubleshooting.md](docs/troubleshooting.md): common issues and fixes
+- [docs/feedback-loop-design.md](docs/feedback-loop-design.md): closed-loop learning design notes
+- [docs/training-data.md](docs/training-data.md): export formats and training data guidance
 
 ## Development
 
 ```bash
 cargo build --release
+cargo nextest run
 cargo test
 cargo clippy
 cargo fmt
 ```
+
+- Prefer `cargo nextest run` for the normal test loop.
+- The workspace `profile.dev` is tuned for faster iteration with line-tables-only
+  debug info.
+- If you add `criterion` here, start with the retrieval hot paths in
+  `hyphae-store` rather than broad repo-wide benches.
+- Use whole-command timing for end-to-end investigation, for example
+  `time cargo run -p hyphae-cli -- doctor`.
 
 ## License
 

@@ -4,6 +4,22 @@ All notable changes to Hyphae are documented in this file.
 
 ## [Unreleased]
 
+## [0.10.8] - 2026-04-09
+
+### Added
+
+- **Backup and restore flow**: The CLI now supports backup creation, listing,
+  restore validation, and safer path handling for local database recovery.
+- **Retrieval benchmarking**: Added a Criterion bench for retrieval hot paths
+  so hybrid ranking and unified search performance can be tracked directly.
+
+### Changed
+
+- **Release variants**: The release and install surfaces now document the slim
+  and embeddings-enabled binary split more explicitly.
+- **Docs structure**: Operator and maintainer docs now follow the lowercase
+  path layout with a central `docs/README.md` and refreshed guide references.
+
 ## [0.10.6] - 2026-04-08
 
 ### Changed
