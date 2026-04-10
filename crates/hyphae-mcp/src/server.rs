@@ -18,6 +18,7 @@ const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const PROTOCOL_VERSION: &str = "2024-11-05";
 const CONTEXT_RESOURCE_URI: &str = "hyphae://context/current";
 const COMPACT_RESOURCE_URI: &str = "hyphae://artifacts/compact/current";
+const COUNCIL_RESOURCE_URI: &str = "hyphae://artifacts/council/current";
 const UNDERSTANDING_RESOURCE_URI: &str = "hyphae://artifacts/project-understanding/current";
 
 /// Escalating nudge thresholds for store reminders.
@@ -319,6 +320,12 @@ fn handle_resources_list(id: Value, store: &SqliteStore, project: Option<&str>) 
                     "mimeType": "application/json"
                 },
                 {
+                    "uri": COUNCIL_RESOURCE_URI,
+                    "name": format!("Hyphae Council Artifacts ({label})"),
+                    "description": "Typed council lifecycle artifacts for the current project, including participant prompts and captured timeline breadcrumbs.",
+                    "mimeType": "application/json"
+                },
+                {
                     "uri": UNDERSTANDING_RESOURCE_URI,
                     "name": format!("Hyphae Project Understanding ({label})"),
                     "description": "Typed project-understanding bundle exported from the current project's code memoir.",
@@ -375,6 +382,22 @@ fn handle_resources_read(
             match tools::context::redacted_json_text(&json!({
                 "project": project_name,
                 "artifact_type": "compact_summary",
+                "artifacts": artifacts,
+            })) {
+                Ok(text) => text,
+                Err(message) => return JsonRpcResponse::err(id, -32603, message),
+            }
+        }
+        COUNCIL_RESOURCE_URI => {
+            let artifacts = match store.list_council_artifacts(Some(project_name), 5) {
+                Ok(artifacts) => artifacts,
+                Err(error) => {
+                    return JsonRpcResponse::err(id, -32603, format!("db error: {error}"));
+                }
+            };
+            match tools::context::redacted_json_text(&json!({
+                "project": project_name,
+                "artifact_type": "council_lifecycle",
                 "artifacts": artifacts,
             })) {
                 Ok(text) => text,
@@ -650,8 +673,9 @@ mod tests {
         let resp = handle_resources_list(json!(21), &store, Some("demo"));
         let result = resp.result.unwrap();
         let resources = result["resources"].as_array().unwrap();
-        assert_eq!(resources.len(), 3);
+        assert_eq!(resources.len(), 4);
         assert_eq!(resources[0]["uri"], CONTEXT_RESOURCE_URI);
+        assert_eq!(resources[2]["uri"], COUNCIL_RESOURCE_URI);
     }
 
     #[test]
@@ -681,6 +705,26 @@ mod tests {
         let text = result["contents"][0]["text"].as_str().unwrap();
         assert!(text.contains("[REDACTED]"));
         assert!(!text.contains("sk1234567890abcdefghij"));
+    }
+
+    #[test]
+    fn test_handle_resources_read_returns_council_artifacts() {
+        let store = SqliteStore::in_memory().unwrap();
+        let memory = hyphae_core::Memory::builder(
+            "session/council-lifecycle".to_string(),
+            r#"{"session_id":"ses_123","event_name":"user_prompt_submit","summary":"council lifecycle captured from prompt","metadata":{"prompt_excerpt":"/council review api_key: sk1234567890abcdefghij"}} "#.trim().to_string(),
+            hyphae_core::Importance::High,
+        )
+        .project("demo".to_string())
+        .build();
+        <SqliteStore as hyphae_core::MemoryStore>::store(&store, memory).unwrap();
+
+        let params = Some(json!({ "uri": COUNCIL_RESOURCE_URI }));
+        let resp = handle_resources_read(json!(24), &params, &store, Some("demo"));
+        let result = resp.result.unwrap();
+        let text = result["contents"][0]["text"].as_str().unwrap();
+        assert!(text.contains("council_lifecycle"));
+        assert!(text.contains("[REDACTED]"));
     }
 
     #[test]

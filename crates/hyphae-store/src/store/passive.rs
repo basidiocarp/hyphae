@@ -1,10 +1,12 @@
 use chrono::Utc;
 use serde::Serialize;
+use serde_json::Value;
 
 use hyphae_core::{MemoirStore, MemoryStore, SCOPED_IDENTITY_SCHEMA_VERSION, ScopedIdentity};
 
 use super::SqliteStore;
 
+const COUNCIL_TOPIC: &str = "session/council-lifecycle";
 const DEFAULT_SESSION_LIMIT: i64 = 5;
 const DEFAULT_MEMORY_LIMIT: usize = 5;
 const DEFAULT_CONCEPT_LIMIT: usize = 8;
@@ -50,12 +52,29 @@ pub struct ProjectUnderstandingBundle {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct CouncilArtifact {
+    pub artifact_type: &'static str,
+    pub topic: String,
+    pub session_id: Option<String>,
+    pub event_name: String,
+    pub summary: String,
+    pub host: Option<String>,
+    pub status: Option<String>,
+    pub prompt_excerpt: Option<String>,
+    pub transcript_path: Option<String>,
+    pub updated_at: String,
+    pub importance: String,
+    pub keywords: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct PassiveContextBundle {
     pub schema_version: &'static str,
     pub scoped_identity: ScopedIdentity,
     pub project: Option<String>,
     pub generated_at: String,
     pub compact_summaries: Vec<CompactSummaryArtifact>,
+    pub council_artifacts: Vec<CouncilArtifact>,
     pub project_context: Vec<PassiveMemoryItem>,
     pub decisions: Vec<PassiveMemoryItem>,
     pub understanding: Option<ProjectUnderstandingBundle>,
@@ -123,6 +142,69 @@ impl SqliteStore {
         }))
     }
 
+    pub fn list_council_artifacts(
+        &self,
+        project: Option<&str>,
+        limit: usize,
+    ) -> hyphae_core::HyphaeResult<Vec<CouncilArtifact>> {
+        let memories = self.get_by_topic(COUNCIL_TOPIC, project)?;
+
+        Ok(memories
+            .into_iter()
+            .take(limit)
+            .map(|memory| {
+                let parsed = serde_json::from_str::<Value>(&memory.summary).ok();
+                let metadata = parsed
+                    .as_ref()
+                    .and_then(|value| value.get("metadata"))
+                    .and_then(Value::as_object);
+
+                CouncilArtifact {
+                    artifact_type: "council_lifecycle",
+                    topic: memory.topic,
+                    session_id: parsed
+                        .as_ref()
+                        .and_then(|value| value.get("session_id"))
+                        .and_then(Value::as_str)
+                        .map(ToOwned::to_owned),
+                    event_name: parsed
+                        .as_ref()
+                        .and_then(|value| value.get("event_name"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("council_lifecycle")
+                        .to_string(),
+                    summary: parsed
+                        .as_ref()
+                        .and_then(|value| value.get("summary"))
+                        .and_then(Value::as_str)
+                        .unwrap_or(&memory.summary)
+                        .to_string(),
+                    host: parsed
+                        .as_ref()
+                        .and_then(|value| value.get("host"))
+                        .and_then(Value::as_str)
+                        .map(ToOwned::to_owned),
+                    status: parsed
+                        .as_ref()
+                        .and_then(|value| value.get("status"))
+                        .and_then(Value::as_str)
+                        .map(ToOwned::to_owned),
+                    prompt_excerpt: metadata
+                        .and_then(|meta| meta.get("prompt_excerpt"))
+                        .and_then(Value::as_str)
+                        .map(ToOwned::to_owned),
+                    transcript_path: metadata
+                        .and_then(|meta| meta.get("transcript_path"))
+                        .and_then(Value::as_str)
+                        .map(ToOwned::to_owned),
+                    updated_at: memory.updated_at.to_rfc3339(),
+                    importance: memory.importance.to_string(),
+                    keywords: memory.keywords,
+                }
+            })
+            .collect())
+    }
+
     pub fn passive_context_bundle(
         &self,
         project: Option<&str>,
@@ -130,8 +212,10 @@ impl SqliteStore {
         let compact_summaries =
             self.list_compact_summary_artifacts(project, DEFAULT_SESSION_LIMIT as usize)?;
 
-        let (project_context, decisions, understanding) = match project {
+        let (council_artifacts, project_context, decisions, understanding) = match project {
             Some(project) => {
+                let council_artifacts =
+                    self.list_council_artifacts(Some(project), DEFAULT_MEMORY_LIMIT)?;
                 let project_context = self
                     .get_by_topic(&format!("context/{project}"), Some(project))?
                     .into_iter()
@@ -159,9 +243,9 @@ impl SqliteStore {
                     .collect();
 
                 let understanding = self.project_understanding_bundle(project, DEFAULT_CONCEPT_LIMIT)?;
-                (project_context, decisions, understanding)
+                (council_artifacts, project_context, decisions, understanding)
             }
-            None => (Vec::new(), Vec::new(), None),
+            None => (Vec::new(), Vec::new(), Vec::new(), None),
         };
 
         Ok(PassiveContextBundle {
@@ -170,6 +254,7 @@ impl SqliteStore {
             project: project.map(ToOwned::to_owned),
             generated_at: Utc::now().to_rfc3339(),
             compact_summaries,
+            council_artifacts,
             project_context,
             decisions,
             understanding,
@@ -225,6 +310,25 @@ mod tests {
     }
 
     #[test]
+    fn test_list_council_artifacts_parses_normalized_payloads() {
+        let store = test_store();
+        let council_memory = Memory::builder(
+            COUNCIL_TOPIC.to_string(),
+            r#"{"session_id":"ses_123","event_name":"user_prompt_submit","summary":"council lifecycle captured from prompt","host":"claude_code","status":"captured","metadata":{"prompt_excerpt":"/council review this task","transcript_path":"/tmp/transcript.jsonl"}}"#.to_string(),
+            Importance::High,
+        )
+        .project("demo".to_string())
+        .build();
+        store.store(council_memory).unwrap();
+
+        let artifacts = store.list_council_artifacts(Some("demo"), 5).unwrap();
+        assert_eq!(artifacts.len(), 1);
+        assert_eq!(artifacts[0].artifact_type, "council_lifecycle");
+        assert_eq!(artifacts[0].session_id.as_deref(), Some("ses_123"));
+        assert_eq!(artifacts[0].prompt_excerpt.as_deref(), Some("/council review this task"));
+    }
+
+    #[test]
     fn test_passive_context_bundle_combines_sessions_memories_and_understanding() {
         let store = test_store();
         let (session_id, _) = store.session_start("demo", Some("task")).unwrap();
@@ -238,6 +342,17 @@ mod tests {
         store
             .store(make_memory("decisions/demo", "decision note", "demo"))
             .unwrap();
+        store
+            .store(
+                Memory::builder(
+                    COUNCIL_TOPIC.to_string(),
+                    r#"{"session_id":"ses_123","event_name":"user_prompt_submit","summary":"council lifecycle captured from prompt"}"#.to_string(),
+                    Importance::High,
+                )
+                .project("demo".to_string())
+                .build(),
+            )
+            .unwrap();
 
         let memoir = Memoir::new("code:demo".into(), "demo memoir".into());
         let memoir_id = store.create_memoir(memoir).unwrap();
@@ -246,6 +361,7 @@ mod tests {
 
         let bundle = store.passive_context_bundle(Some("demo")).unwrap();
         assert_eq!(bundle.compact_summaries.len(), 1);
+        assert_eq!(bundle.council_artifacts.len(), 1);
         assert_eq!(bundle.project_context.len(), 1);
         assert_eq!(bundle.decisions.len(), 1);
         assert!(bundle.understanding.is_some());
