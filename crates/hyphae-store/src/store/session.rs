@@ -6,7 +6,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::path::Path;
 
-use hyphae_core::{Embedder, HyphaeError, HyphaeResult, Memory, MemoryStore};
+use hyphae_core::{Embedder, HyphaeError, HyphaeResult, Memory, MemoryStore, ScopedIdentity};
 
 use super::SqliteStore;
 
@@ -26,6 +26,18 @@ pub struct Session {
     pub files_modified: Option<String>,
     pub errors: Option<String>,
     pub status: String,
+}
+
+impl Session {
+    pub fn scoped_identity(&self) -> ScopedIdentity {
+        ScopedIdentity::new(
+            Some(&self.project),
+            self.project_root.as_deref(),
+            self.worktree_id.as_deref(),
+            self.scope.as_deref(),
+            self.runtime_session_id.as_deref(),
+        )
+    }
 }
 
 /// A session timeline event in the Cap-compatible read contract.
@@ -63,6 +75,18 @@ pub struct SessionTimelineRecord {
     pub last_activity_at: String,
     pub recall_count: usize,
     pub outcome_count: usize,
+}
+
+impl SessionTimelineRecord {
+    pub fn scoped_identity(&self) -> ScopedIdentity {
+        ScopedIdentity::new(
+            Some(&self.project),
+            self.project_root.as_deref(),
+            self.worktree_id.as_deref(),
+            self.scope.as_deref(),
+            self.runtime_session_id.as_deref(),
+        )
+    }
 }
 
 #[derive(Debug, Clone)]

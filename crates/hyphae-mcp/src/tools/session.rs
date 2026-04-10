@@ -6,7 +6,7 @@
 use serde_json::{Value, json};
 use spore::logging::workflow_span;
 
-use hyphae_core::Embedder;
+use hyphae_core::{Embedder, SCOPED_IDENTITY_SCHEMA_VERSION, ScopedIdentity};
 use hyphae_store::SqliteStore;
 
 use crate::protocol::ToolResult;
@@ -49,8 +49,16 @@ pub(crate) fn tool_session_start(
     ) {
         Ok((session_id, started_at, recalled_context)) => ToolResult::text(
             json!({
+                "schema_version": SCOPED_IDENTITY_SCHEMA_VERSION,
                 "session_id": session_id,
                 "started_at": started_at,
+                "scoped_identity": ScopedIdentity::new(
+                    Some(project),
+                    project_root,
+                    worktree_id,
+                    scope,
+                    runtime_session_id,
+                ),
                 "recalled_context": recalled_context
                     .iter()
                     .map(|(memory, score)| json!({
@@ -88,6 +96,11 @@ pub(crate) fn tool_session_end(
         .get("errors_encountered")
         .and_then(Value::as_i64)
         .map(|n| n.to_string());
+    let scoped_identity = match store.session_status(session_id) {
+        Ok(Some(session)) => Some(session.scoped_identity()),
+        Ok(None) => None,
+        Err(e) => return ToolResult::error(format!("failed to query session: {e}")),
+    };
 
     match store.session_end(
         session_id,
@@ -97,8 +110,10 @@ pub(crate) fn tool_session_end(
     ) {
         Ok((project, _started_at, task, _ended_at, duration_minutes)) => ToolResult::text(
             json!({
+                "schema_version": SCOPED_IDENTITY_SCHEMA_VERSION,
                 "stored": true,
                 "project": project,
+                "scoped_identity": scoped_identity,
                 "task": task,
                 "duration_minutes": duration_minutes,
             })
@@ -150,10 +165,18 @@ pub(crate) fn tool_session_context(
 
             ToolResult::text(
                 json!({
+                    "schema_version": SCOPED_IDENTITY_SCHEMA_VERSION,
                     "project": project,
                     "project_root": project_root,
                     "worktree_id": worktree_id,
                     "scope": scope,
+                    "scoped_identity": ScopedIdentity::new(
+                        Some(project),
+                        project_root,
+                        worktree_id,
+                        scope,
+                        None,
+                    ),
                     "sessions": session_values,
                     "count": count,
                 })
@@ -186,8 +209,13 @@ mod tests {
         assert!(!result.is_error, "session_start should succeed");
         let text = &result.content[0].text;
         let parsed: Value = serde_json::from_str(text).expect("valid JSON");
+        assert_eq!(parsed["schema_version"].as_str(), Some("1.0"));
         assert!(parsed["session_id"].as_str().unwrap().starts_with("ses_"));
         assert!(parsed["started_at"].is_string());
+        assert_eq!(
+            parsed["scoped_identity"]["project"].as_str(),
+            Some("test-project")
+        );
         assert!(parsed["recalled_context"].as_array().unwrap().is_empty());
     }
 
@@ -229,6 +257,7 @@ mod tests {
 
         let text = &result.content[0].text;
         let parsed: Value = serde_json::from_str(text).expect("valid JSON");
+        assert_eq!(parsed["schema_version"].as_str(), Some("1.0"));
         let recalled = parsed["recalled_context"].as_array().unwrap();
         assert!(!recalled.is_empty());
         assert_eq!(recalled[0]["topic"].as_str(), Some("session_scope"));
@@ -274,6 +303,10 @@ mod tests {
         assert!(!result.is_error);
 
         let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
+        assert_eq!(
+            parsed["scoped_identity"]["project_root"].as_str(),
+            Some("/repo/test-project")
+        );
         let session_id = parsed["session_id"].as_str().unwrap();
         let session = store.session_status(session_id).unwrap().unwrap();
         assert_eq!(session.project_root.as_deref(), Some("/repo/test-project"));
@@ -376,7 +409,12 @@ mod tests {
         );
         let end_parsed: Value = serde_json::from_str(&end_result.content[0].text).unwrap();
         assert!(end_parsed["stored"].as_bool().unwrap());
+        assert_eq!(end_parsed["schema_version"].as_str(), Some("1.0"));
         assert_eq!(end_parsed["project"].as_str(), Some("test-proj"));
+        assert_eq!(
+            end_parsed["scoped_identity"]["project"].as_str(),
+            Some("test-proj")
+        );
         assert_eq!(end_parsed["task"].as_str(), None);
 
         let session_memories = store

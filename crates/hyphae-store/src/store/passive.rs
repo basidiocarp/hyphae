@@ -1,7 +1,7 @@
 use chrono::Utc;
 use serde::Serialize;
 
-use hyphae_core::{MemoirStore, MemoryStore};
+use hyphae_core::{MemoirStore, MemoryStore, SCOPED_IDENTITY_SCHEMA_VERSION, ScopedIdentity};
 
 use super::SqliteStore;
 
@@ -51,6 +51,8 @@ pub struct ProjectUnderstandingBundle {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PassiveContextBundle {
+    pub schema_version: &'static str,
+    pub scoped_identity: ScopedIdentity,
     pub project: Option<String>,
     pub generated_at: String,
     pub compact_summaries: Vec<CompactSummaryArtifact>,
@@ -163,6 +165,8 @@ impl SqliteStore {
         };
 
         Ok(PassiveContextBundle {
+            schema_version: SCOPED_IDENTITY_SCHEMA_VERSION,
+            scoped_identity: ScopedIdentity::from_project(project),
             project: project.map(ToOwned::to_owned),
             generated_at: Utc::now().to_rfc3339(),
             compact_summaries,

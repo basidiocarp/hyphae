@@ -596,7 +596,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
     // Context gathering
     tools.push(json!({
         "name": "hyphae_gather_context",
-        "description": "Gather relevant context for a task from across all Hyphae stores (memories, errors, sessions, code). Returns ranked results within a token budget. Use at the start of a task to bootstrap context.",
+        "description": "Gather relevant context for a task from across all Hyphae stores (memories, errors, sessions, code). Returns ranked results within a token budget together with a scoped_identity envelope so downstream tools can tell which project/worktree/scope produced the context.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -828,7 +828,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
     // Session lifecycle tools
     tools.push(json!({
         "name": "hyphae_session_start",
-        "description": "Start a new coding session. Creates a session record that tracks project work. Call at the beginning of a task to enable session lifecycle tracking. Returns a session_id for use with hyphae_session_end.",
+        "description": "Start a new coding session. Creates a session record that tracks project work. Call at the beginning of a task to enable session lifecycle tracking. Returns a session_id plus a scoped_identity envelope for downstream coordination.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -892,7 +892,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
 
     tools.push(json!({
         "name": "hyphae_session_context",
-        "description": "Get recent session history for a project. Returns the last N sessions with their summaries, tasks, and status. Use at the start of a new session to understand recent project context.",
+        "description": "Get recent session history for a project. Returns the last N sessions with their summaries, tasks, and status, plus a scoped_identity envelope that makes the queried identity explicit.",
         "inputSchema": {
             "type": "object",
             "properties": {

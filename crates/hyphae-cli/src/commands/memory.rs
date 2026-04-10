@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::{Args, Subcommand, ValueEnum};
 use hyphae_core::{
     ConsolidationConfig, Embedder, GitContext, Memory, MemoryId, MemorySource, MemoryStore,
-    SessionHost,
+    ScopedIdentity, SessionHost,
 };
 use hyphae_store::{SearchOrder as StoreSearchOrder, SqliteStore, TopicMemoryOrder};
 use regex::Regex;
@@ -58,6 +58,7 @@ pub enum SearchOrder {
 #[derive(Serialize)]
 struct StoreStatsPayload {
     project: Option<String>,
+    scoped_identity: ScopedIdentity,
     total_memories: usize,
     total_topics: usize,
     avg_weight: f32,
@@ -77,6 +78,7 @@ struct TopicCountPayload {
 #[derive(Serialize)]
 struct TopicsPayload {
     project: Option<String>,
+    scoped_identity: ScopedIdentity,
     total_topics: usize,
     total_memories: usize,
     topics: Vec<TopicCountPayload>,
@@ -121,12 +123,14 @@ enum MemorySourcePayload {
 #[derive(Serialize)]
 struct MemoryLookupPayload {
     project: Option<String>,
+    scoped_identity: ScopedIdentity,
     memory: MemoryPayload,
 }
 
 #[derive(Serialize)]
 struct TopicMemoriesPayload {
     project: Option<String>,
+    scoped_identity: ScopedIdentity,
     topic: String,
     total: usize,
     memories: Vec<MemoryPayload>,
@@ -135,6 +139,7 @@ struct TopicMemoriesPayload {
 #[derive(Serialize)]
 struct SearchPayload {
     project: Option<String>,
+    scoped_identity: ScopedIdentity,
     query: String,
     topic: Option<String>,
     limit: usize,
@@ -163,6 +168,7 @@ struct TopicHealthPayload {
 #[derive(Serialize)]
 struct HealthPayload {
     project: Option<String>,
+    scoped_identity: ScopedIdentity,
     requested_topic: Option<String>,
     total_topics: usize,
     topics_needing_consolidation: usize,
@@ -571,6 +577,7 @@ fn stats_payload(
     let stats = store.stats_with_options(project, include_invalidated)?;
     Ok(StoreStatsPayload {
         project: project.map(str::to_string),
+        scoped_identity: ScopedIdentity::from_project(project),
         total_memories: stats.total_memories,
         total_topics: stats.total_topics,
         avg_weight: stats.avg_weight,
@@ -588,6 +595,7 @@ fn topics_payload(
     let total_memories = topics.iter().map(|(_, count)| *count).sum();
     Ok(TopicsPayload {
         project: project.map(str::to_string),
+        scoped_identity: ScopedIdentity::from_project(project),
         total_topics: topics.len(),
         total_memories,
         topics: topics
@@ -625,6 +633,7 @@ fn memory_lookup_payload(
 
     Ok(MemoryLookupPayload {
         project: project.map(str::to_string),
+        scoped_identity: ScopedIdentity::from_project(project),
         memory: to_memory_payload(&memory),
     })
 }
@@ -646,6 +655,7 @@ fn topic_memories_payload(
     let limited_memories = memories.into_iter().take(limit).collect::<Vec<_>>();
     Ok(TopicMemoriesPayload {
         project: project.map(str::to_string),
+        scoped_identity: ScopedIdentity::from_project(project),
         topic: topic.to_string(),
         total,
         memories: limited_memories.iter().map(to_memory_payload).collect(),
@@ -676,6 +686,7 @@ fn search_payload(
     )?;
     Ok(SearchPayload {
         project: project.map(str::to_string),
+        scoped_identity: ScopedIdentity::from_project(project),
         query: query.to_string(),
         topic: topic.map(str::to_string),
         limit,
@@ -728,6 +739,7 @@ fn health_payload(
 
     Ok(HealthPayload {
         project: project.map(str::to_string),
+        scoped_identity: ScopedIdentity::from_project(project),
         requested_topic: requested_topic.map(str::to_string),
         total_topics: topics.len(),
         topics_needing_consolidation,

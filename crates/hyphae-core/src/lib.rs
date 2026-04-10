@@ -6,6 +6,7 @@ pub mod error;
 pub mod fastembed_embedder;
 pub mod git_context;
 pub mod http_embedder;
+pub mod identity;
 pub mod ids;
 pub mod memoir;
 pub mod memoir_store;
@@ -21,6 +22,10 @@ pub use error::{HyphaeError, HyphaeResult};
 pub use fastembed_embedder::FastEmbedder;
 pub use git_context::{GitContext, detect_git_context_from};
 pub use http_embedder::HttpEmbedder;
+pub use identity::{
+    BACKUP_EXPORT_SCHEMA_VERSION, BackupExportManifest, SCOPED_IDENTITY_SCHEMA_VERSION,
+    ScopedIdentity,
+};
 pub use ids::*;
 pub use memoir::{Concept, ConceptLink, Confidence, Label, Memoir, MemoirStats, Relation};
 pub use memoir_store::{ConceptInput, LinkInput, MemoirStore, UpsertReport};

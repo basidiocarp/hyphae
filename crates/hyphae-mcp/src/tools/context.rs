@@ -9,7 +9,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use spore::logging::workflow_span;
 
-use hyphae_core::{MemoirStore, MemoryStore, detect_secrets};
+use hyphae_core::{MemoirStore, MemoryStore, SCOPED_IDENTITY_SCHEMA_VERSION, ScopedIdentity, detect_secrets};
 use hyphae_store::SqliteStore;
 
 use crate::protocol::ToolResult;
@@ -236,6 +236,8 @@ pub(crate) fn tool_gather_context(
     let tokens_used = chars_used / CHARS_PER_TOKEN;
 
     let response = json!({
+        "schema_version": SCOPED_IDENTITY_SCHEMA_VERSION,
+        "scoped_identity": ScopedIdentity::new(project_arg, project_root, worktree_id, scope, None),
         "context": truncated,
         "tokens_used": tokens_used,
         "tokens_budget": token_budget,
@@ -429,7 +431,9 @@ mod tests {
         );
         assert!(!result.is_error, "should succeed on empty store");
         let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
+        assert_eq!(parsed["schema_version"].as_str(), Some("1.0"));
         assert_eq!(parsed["tokens_budget"], 2000);
+        assert!(parsed["scoped_identity"].is_object());
         assert!(parsed["context"].as_array().unwrap().is_empty());
     }
 
@@ -455,6 +459,7 @@ mod tests {
         assert!(!result.is_error);
         let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
         let ctx = parsed["context"].as_array().unwrap();
+        assert_eq!(parsed["scoped_identity"]["project"].as_str(), None);
         assert!(!ctx.is_empty(), "should find the auth memory");
         assert_eq!(ctx[0]["source"], "memory");
     }
@@ -497,6 +502,15 @@ mod tests {
         assert!(!result.is_error);
         let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
         let ctx = parsed["context"].as_array().unwrap();
+        assert_eq!(parsed["scoped_identity"]["project"].as_str(), Some("demo"));
+        assert_eq!(
+            parsed["scoped_identity"]["project_root"].as_str(),
+            Some("/repo/demo/wt-alpha")
+        );
+        assert_eq!(
+            parsed["scoped_identity"]["worktree_id"].as_str(),
+            Some("wt-alpha")
+        );
         assert_eq!(ctx.len(), 1);
         let content = ctx[0]["content"].as_str().unwrap();
         assert!(content.contains("Alpha worktree gather target"));

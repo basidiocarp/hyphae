@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Args;
+use hyphae_core::ScopedIdentity;
 use hyphae_mcp::tools::call_tool;
 use hyphae_store::SqliteStore;
 use serde_json::{Value, json};
@@ -54,15 +55,27 @@ fn effective_project<'a>(
     }
 }
 
+fn normalize_identity<'a>(
+    project_root: Option<&'a str>,
+    worktree_id: Option<&'a str>,
+) -> (Option<&'a str>, Option<&'a str>) {
+    match (project_root, worktree_id) {
+        (Some(project_root), Some(worktree_id)) => (Some(project_root), Some(worktree_id)),
+        _ => (None, None),
+    }
+}
+
 fn gather_context_payload(
     store: &SqliteStore,
     args: &GatherContextArgs,
     project: Option<&str>,
 ) -> Result<String> {
+    let (project_root, worktree_id) =
+        normalize_identity(args.project_root.as_deref(), args.worktree_id.as_deref());
     let tool_args = json!({
         "task": args.task,
-        "project_root": args.project_root,
-        "worktree_id": args.worktree_id,
+        "project_root": project_root,
+        "worktree_id": worktree_id,
         "scope": args.scope,
         "token_budget": args.token_budget,
         "include": (!args.include.is_empty()).then_some(args.include.as_slice()),
@@ -102,6 +115,8 @@ fn gather_context_envelope(
     project: Option<&str>,
 ) -> Result<String> {
     let payload = gather_context_payload(store, args, project)?;
+    let (project_root, worktree_id) =
+        normalize_identity(args.project_root.as_deref(), args.worktree_id.as_deref());
     let Value::Object(mut record) =
         serde_json::from_str::<Value>(&payload).context("gather-context returned invalid JSON")?
     else {
@@ -110,6 +125,17 @@ fn gather_context_envelope(
     record.insert(
         "schema_version".to_string(),
         Value::String(GATHER_CONTEXT_SCHEMA_VERSION.to_string()),
+    );
+    let scoped_identity = ScopedIdentity::new(
+        project,
+        project_root,
+        worktree_id,
+        args.scope.as_deref(),
+        None,
+    );
+    record.insert(
+        "scoped_identity".to_string(),
+        serde_json::to_value(scoped_identity).context("failed to serialize scoped identity")?,
     );
     serde_json::to_string(&Value::Object(record))
         .context("failed to serialize gather-context envelope")
@@ -155,6 +181,7 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&payload).unwrap();
 
         assert_eq!(parsed["schema_version"].as_str(), Some("1.0"));
+        assert_eq!(parsed["scoped_identity"]["project"].as_str(), Some("demo"));
         assert_eq!(parsed["tokens_budget"].as_i64(), Some(2000));
         assert_eq!(parsed["sources_queried"].as_array().unwrap().len(), 1);
         assert_eq!(parsed["sources_queried"][0].as_str(), Some("memories"));
@@ -212,6 +239,15 @@ mod tests {
         let context = parsed["context"].as_array().unwrap();
 
         assert_eq!(parsed["schema_version"].as_str(), Some("1.0"));
+        assert_eq!(
+            parsed["scoped_identity"]["project_root"].as_str(),
+            Some("/repo/demo")
+        );
+        assert_eq!(
+            parsed["scoped_identity"]["worktree_id"].as_str(),
+            Some("wt-alpha")
+        );
+        assert_eq!(parsed["scoped_identity"]["scope"].as_str(), Some("worker-a"));
         assert_eq!(context.len(), 1);
         assert!(
             context[0]["content"]
@@ -250,5 +286,20 @@ mod tests {
 
         assert_eq!(effective_project(&args, Some("demo")), None);
         assert_eq!(effective_project(&args, None), None);
+    }
+
+    #[test]
+    fn test_gather_context_payload_normalizes_partial_identity_in_envelope() {
+        let store = test_store();
+
+        let mut args = gather_args("login");
+        args.project_root = Some("/repo/demo".to_string());
+        args.include = vec!["sessions".to_string()];
+
+        let payload = gather_context_envelope(&store, &args, Some("demo")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&payload).unwrap();
+
+        assert!(parsed["scoped_identity"]["project_root"].is_null());
+        assert!(parsed["scoped_identity"]["worktree_id"].is_null());
     }
 }
