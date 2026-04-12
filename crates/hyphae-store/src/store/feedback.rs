@@ -86,6 +86,66 @@ fn aggregate_effectiveness(rows: &[(f32, String)]) -> f32 {
 }
 
 impl SqliteStore {
+    pub fn recompute_recall_effectiveness(&self, session_id: &str) -> HyphaeResult<usize> {
+        let session_state: Option<(String, Option<String>)> = self
+            .conn
+            .query_row(
+                "SELECT status, ended_at
+                 FROM sessions
+                 WHERE id = ?1",
+                params![session_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|e| HyphaeError::Database(format!("failed to validate session: {e}")))?;
+
+        let Some((status, ended_at)) = session_state else {
+            return Err(HyphaeError::NotFound(format!("session '{session_id}'")));
+        };
+
+        if status != "completed" || ended_at.is_none() {
+            return Err(HyphaeError::Validation(format!(
+                "session '{session_id}' is not completed"
+            )));
+        }
+
+        self.score_recall_effectiveness(session_id)
+    }
+
+    pub fn recompute_recall_effectiveness_all(&self) -> HyphaeResult<usize> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id
+                 FROM sessions
+                 WHERE status = 'completed'
+                   AND ended_at IS NOT NULL
+                 ORDER BY ended_at ASC",
+            )
+            .map_err(|e| {
+                HyphaeError::Database(format!(
+                    "failed to prepare completed session recompute query: {e}"
+                ))
+            })?;
+
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| {
+                HyphaeError::Database(format!("failed to query completed sessions: {e}"))
+            })?;
+
+        let session_ids = rows.collect::<Result<Vec<_>, _>>().map_err(|e| {
+            HyphaeError::Database(format!("failed to collect completed sessions: {e}"))
+        })?;
+
+        let mut written = 0usize;
+        for session_id in session_ids {
+            written += self.score_recall_effectiveness(&session_id)?;
+        }
+
+        Ok(written)
+    }
+
     fn latest_recall_event_id_for_session(
         &self,
         session_id: &str,
