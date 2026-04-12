@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use chrono::{DateTime, Duration, Utc};
@@ -19,6 +20,54 @@ pub struct EvaluationWindow {
     pub total_session_length: usize,
     pub session_count: usize,
     pub recalled_memory_count: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct RecallEffectivenessRow {
+    pub memory_id: String,
+    pub effectiveness: f32,
+}
+
+#[derive(Debug, Clone)]
+struct RecallEffectivenessOccurrence {
+    memory_id: String,
+    recalled_at: Option<DateTime<Utc>>,
+    effectiveness: Option<f32>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RecallEffectivenessWindow {
+    pub recalled_memory_count: usize,
+    pub scored_memory_count: usize,
+    pub non_zero_score_count: usize,
+    pub total_effectiveness: f64,
+    pub top_recalled_memories: Vec<RecallEffectivenessRow>,
+}
+
+impl RecallEffectivenessWindow {
+    #[must_use]
+    pub fn non_zero_score_fraction(&self) -> f64 {
+        if self.recalled_memory_count == 0 {
+            return 0.0;
+        }
+        self.non_zero_score_count as f64 / self.recalled_memory_count as f64
+    }
+
+    #[must_use]
+    pub fn average_effectiveness(&self) -> f64 {
+        if self.scored_memory_count == 0 {
+            return 0.0;
+        }
+        self.total_effectiveness / self.scored_memory_count as f64
+    }
+
+    #[must_use]
+    pub fn score_coverage(&self) -> f64 {
+        if self.recalled_memory_count == 0 {
+            return 0.0;
+        }
+        self.scored_memory_count as f64 / self.recalled_memory_count as f64
+    }
 }
 
 impl EvaluationWindow {
@@ -383,6 +432,190 @@ fn merge_recalled_memory_counts(
     count
 }
 
+fn recall_effectiveness_by_event_id(
+    store: &SqliteStore,
+    recall_event_ids: &[String],
+) -> HyphaeResult<HashMap<(String, String), f32>> {
+    if recall_event_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let placeholders: Vec<String> = (1..=recall_event_ids.len())
+        .map(|i| format!("?{i}"))
+        .collect();
+    let sql = format!(
+        "SELECT recall_event_id, memory_id, effectiveness
+         FROM recall_effectiveness
+         WHERE recall_event_id IN ({})",
+        placeholders.join(",")
+    );
+
+    let mut stmt = store.conn.prepare_cached(&sql).map_err(|e| {
+        hyphae_core::HyphaeError::Database(format!(
+            "failed to prepare recall-effectiveness window query: {e}"
+        ))
+    })?;
+
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(recall_event_ids.iter()), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, f32>(2)?,
+            ))
+        })
+        .map_err(|e| {
+            hyphae_core::HyphaeError::Database(format!(
+                "failed to query recall-effectiveness window rows: {e}"
+            ))
+        })?;
+
+    let mut scores = HashMap::new();
+    for row in rows {
+        let (recall_event_id, memory_id, effectiveness) = row.map_err(|e| {
+            hyphae_core::HyphaeError::Database(format!(
+                "failed to read recall-effectiveness window row: {e}"
+            ))
+        })?;
+        scores.insert((recall_event_id, memory_id), effectiveness);
+    }
+
+    Ok(scores)
+}
+
+fn recall_effectiveness_occurrences_in_window(
+    legacy_recalled_memories: &[Memory],
+    structured_recall_events: &[super::feedback::RecallEventRecord],
+    effectiveness_by_event: &HashMap<(String, String), f32>,
+) -> Vec<RecallEffectivenessOccurrence> {
+    let mut structured_occurrences = Vec::new();
+    for event in structured_recall_events {
+        let recalled_at = parse_timestamp(&event.recalled_at);
+        for memory_id in &event.memory_ids {
+            structured_occurrences.push(RecallEffectivenessOccurrence {
+                memory_id: memory_id.clone(),
+                recalled_at,
+                effectiveness: effectiveness_by_event
+                    .get(&(event.id.clone(), memory_id.clone()))
+                    .copied(),
+            });
+        }
+    }
+
+    let mut merged_occurrences = structured_occurrences.clone();
+    let mut used_structured = vec![false; structured_occurrences.len()];
+
+    for legacy in legacy_recalled_memories {
+        let legacy_id = legacy.id.to_string();
+        let matched = structured_occurrences
+            .iter()
+            .enumerate()
+            .any(|(index, occurrence)| {
+                if used_structured[index] {
+                    return false;
+                }
+
+                let Some(recalled_at) = occurrence.recalled_at else {
+                    return false;
+                };
+
+                if occurrence.memory_id == legacy_id
+                    && timestamps_match(recalled_at, legacy.last_accessed)
+                {
+                    used_structured[index] = true;
+                    true
+                } else {
+                    false
+                }
+            });
+
+        if !matched {
+            merged_occurrences.push(RecallEffectivenessOccurrence {
+                memory_id: legacy_id,
+                recalled_at: Some(legacy.last_accessed),
+                effectiveness: None,
+            });
+        }
+    }
+
+    merged_occurrences
+}
+
+pub fn collect_recall_effectiveness_window(
+    store: &SqliteStore,
+    days_ago_start: i64,
+    days_ago_end: i64,
+    project: Option<&str>,
+) -> HyphaeResult<RecallEffectivenessWindow> {
+    let legacy_recalled_memories =
+        legacy_recalled_memories_in_window(store, project, days_ago_start, days_ago_end)?;
+    let structured_recall_events =
+        structured_recall_events_in_window(store, project, days_ago_start, days_ago_end)?;
+    let recall_event_ids: Vec<String> = structured_recall_events
+        .iter()
+        .map(|event| event.id.clone())
+        .collect();
+    let effectiveness_by_event = recall_effectiveness_by_event_id(store, &recall_event_ids)?;
+    let scored_occurrences = recall_effectiveness_occurrences_in_window(
+        &legacy_recalled_memories,
+        &structured_recall_events,
+        &effectiveness_by_event,
+    );
+
+    let recalled_memory_count = scored_occurrences.len();
+    let scored_memory_count = scored_occurrences
+        .iter()
+        .filter(|occurrence| occurrence.effectiveness.is_some())
+        .count();
+    let non_zero_score_count = scored_occurrences
+        .iter()
+        .filter(|occurrence| {
+            occurrence
+                .effectiveness
+                .is_some_and(|effectiveness| effectiveness.abs() > f32::EPSILON)
+        })
+        .count();
+    let total_effectiveness = scored_occurrences
+        .iter()
+        .filter_map(|occurrence| occurrence.effectiveness.map(|effectiveness| effectiveness as f64))
+        .sum();
+
+    let mut top_by_memory: HashMap<String, (f64, usize)> = HashMap::new();
+    for occurrence in &scored_occurrences {
+        let Some(effectiveness) = occurrence.effectiveness else {
+            continue;
+        };
+        let entry = top_by_memory
+            .entry(occurrence.memory_id.clone())
+            .or_insert((0.0, 0));
+        entry.0 += effectiveness as f64;
+        entry.1 += 1;
+    }
+
+    let mut scored_rows: Vec<RecallEffectivenessRow> = top_by_memory
+        .into_iter()
+        .map(|(memory_id, (total, count))| RecallEffectivenessRow {
+            memory_id,
+            effectiveness: (total / count as f64) as f32,
+        })
+        .collect();
+
+    scored_rows.sort_by(|a, b| {
+        b.effectiveness
+            .partial_cmp(&a.effectiveness)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| a.memory_id.cmp(&b.memory_id))
+    });
+
+    Ok(RecallEffectivenessWindow {
+        recalled_memory_count,
+        scored_memory_count,
+        non_zero_score_count,
+        total_effectiveness,
+        top_recalled_memories: scored_rows.into_iter().take(5).collect(),
+    })
+}
+
 pub fn collect_evaluation_window(
     store: &SqliteStore,
     days_ago_start: i64,
@@ -743,5 +976,252 @@ mod tests {
         let window = collect_evaluation_window(&store, 0, 2, Some("demo-project")).unwrap();
 
         assert_eq!(window.recalled_memory_count, 2);
+    }
+
+    #[test]
+    fn test_collect_recall_effectiveness_window_reports_non_zero_scores_and_top_entries() {
+        let store = test_store();
+        let (session_id, _) = store
+            .session_start("demo-project", Some("evaluate structured path"))
+            .unwrap();
+
+        let scored = Memory::builder(
+            "context/demo-project".to_string(),
+            "high value recall".to_string(),
+            Importance::Medium,
+        )
+        .project("demo-project".to_string())
+        .build();
+        let scored_id = scored.id.to_string();
+        store.store(scored).unwrap();
+
+        store
+            .log_recall_event(
+                Some(&session_id),
+                "high value recall",
+                &[scored_id.clone()],
+                Some("demo-project"),
+            )
+            .unwrap();
+        store
+            .log_outcome_signal(
+                Some(&session_id),
+                "test_passed",
+                2,
+                Some("manual"),
+                Some("demo-project"),
+            )
+            .unwrap();
+        store
+            .log_outcome_signal(
+                Some(&session_id),
+                "build_passed",
+                2,
+                Some("manual"),
+                Some("demo-project"),
+            )
+            .unwrap();
+
+        let zero = Memory::builder(
+            "context/demo-project".to_string(),
+            "quiet recall".to_string(),
+            Importance::Medium,
+        )
+        .project("demo-project".to_string())
+        .build();
+        let zero_id = zero.id.to_string();
+        store.store(zero).unwrap();
+        store
+            .log_recall_event(
+                Some(&session_id),
+                "quiet recall",
+                &[zero_id.clone()],
+                Some("demo-project"),
+            )
+            .unwrap();
+
+        store
+            .session_end(&session_id, Some("done"), None, Some("0"))
+            .unwrap();
+
+        let report =
+            collect_recall_effectiveness_window(&store, 0, 1, Some("demo-project")).unwrap();
+
+        assert_eq!(report.recalled_memory_count, 2);
+        assert_eq!(report.scored_memory_count, 2);
+        assert_eq!(report.non_zero_score_count, 1);
+        assert!(report.non_zero_score_fraction() > 0.0);
+        assert!(report.average_effectiveness() > 0.0);
+        assert_eq!(report.top_recalled_memories.len(), 2);
+        assert_eq!(report.top_recalled_memories[0].memory_id, scored_id);
+        assert!(
+            report.top_recalled_memories[0].effectiveness
+                >= report.top_recalled_memories[1].effectiveness
+        );
+    }
+
+    #[test]
+    fn test_collect_recall_effectiveness_window_ignores_scores_outside_window() {
+        let store = test_store();
+
+        let memory = Memory::builder(
+            "context/demo-project".to_string(),
+            "recalled memory".to_string(),
+            Importance::Medium,
+        )
+        .project("demo-project".to_string())
+        .build();
+        let memory_id = memory.id.to_string();
+        store.store(memory).unwrap();
+
+        let (stale_session_id, _) = store
+            .session_start("demo-project", Some("stale scored recall"))
+            .unwrap();
+        store
+            .log_recall_event(
+                Some(&stale_session_id),
+                "stale scored recall",
+                std::slice::from_ref(&memory_id),
+                Some("demo-project"),
+            )
+            .unwrap();
+        store
+            .log_outcome_signal(
+                Some(&stale_session_id),
+                "test_passed",
+                2,
+                Some("manual"),
+                Some("demo-project"),
+            )
+            .unwrap();
+        store
+            .log_outcome_signal(
+                Some(&stale_session_id),
+                "build_passed",
+                2,
+                Some("manual"),
+                Some("demo-project"),
+            )
+            .unwrap();
+        store
+            .session_end(&stale_session_id, Some("done"), None, Some("0"))
+            .unwrap();
+
+        let stale_timestamp = (Utc::now() - Duration::days(10)).to_rfc3339();
+        store
+            .conn
+            .execute(
+                "UPDATE recall_events
+                 SET recalled_at = ?1
+                 WHERE session_id = ?2",
+                params![stale_timestamp, stale_session_id],
+            )
+            .unwrap();
+        store
+            .conn
+            .execute(
+                "UPDATE recall_effectiveness
+                 SET computed_at = ?1
+                 WHERE recall_event_id IN (
+                     SELECT id FROM recall_events WHERE session_id = ?2
+                 )",
+                params![stale_timestamp, stale_session_id],
+            )
+            .unwrap();
+
+        let (current_session_id, _) = store
+            .session_start("demo-project", Some("fresh unscored recall"))
+            .unwrap();
+        store
+            .log_recall_event(
+                Some(&current_session_id),
+                "fresh unscored recall",
+                std::slice::from_ref(&memory_id),
+                Some("demo-project"),
+            )
+            .unwrap();
+
+        let report =
+            collect_recall_effectiveness_window(&store, 0, 1, Some("demo-project")).unwrap();
+
+        assert_eq!(report.recalled_memory_count, 1);
+        assert_eq!(report.scored_memory_count, 0);
+        assert_eq!(report.non_zero_score_count, 0);
+        assert_eq!(report.average_effectiveness(), 0.0);
+        assert!(report.top_recalled_memories.is_empty());
+    }
+
+    #[test]
+    fn test_collect_recall_effectiveness_window_weights_repeated_recalls_by_occurrence() {
+        let store = test_store();
+
+        let repeated = Memory::builder(
+            "context/demo-project".to_string(),
+            "repeated recall".to_string(),
+            Importance::Medium,
+        )
+        .project("demo-project".to_string())
+        .build();
+        let repeated_id = repeated.id.to_string();
+        store.store(repeated).unwrap();
+
+        let quiet = Memory::builder(
+            "context/demo-project".to_string(),
+            "quiet recall".to_string(),
+            Importance::Medium,
+        )
+        .project("demo-project".to_string())
+        .build();
+        let quiet_id = quiet.id.to_string();
+        store.store(quiet).unwrap();
+
+        let first_event = store
+            .log_recall_event(
+                None,
+                "repeat-1",
+                std::slice::from_ref(&repeated_id),
+                Some("demo-project"),
+            )
+            .unwrap();
+        let second_event = store
+            .log_recall_event(
+                None,
+                "repeat-2",
+                std::slice::from_ref(&repeated_id),
+                Some("demo-project"),
+            )
+            .unwrap();
+        let _quiet_event = store
+            .log_recall_event(
+                None,
+                "quiet",
+                std::slice::from_ref(&quiet_id),
+                Some("demo-project"),
+            )
+            .unwrap();
+
+        let computed_at = Utc::now().to_rfc3339();
+        for recall_event_id in [&first_event, &second_event] {
+            store
+                .conn
+                .execute(
+                    "INSERT INTO recall_effectiveness
+                        (memory_id, recall_event_id, effectiveness, signal_count, computed_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![repeated_id, recall_event_id, 0.5_f32, 2_i64, computed_at],
+                )
+                .unwrap();
+        }
+
+        let report =
+            collect_recall_effectiveness_window(&store, 0, 1, Some("demo-project")).unwrap();
+
+        assert_eq!(report.recalled_memory_count, 3);
+        assert_eq!(report.scored_memory_count, 2);
+        assert_eq!(report.non_zero_score_count, 2);
+        assert!((report.non_zero_score_fraction() - (2.0 / 3.0)).abs() < 1e-6);
+        assert!((report.average_effectiveness() - 0.5).abs() < 1e-6);
+        assert_eq!(report.top_recalled_memories[0].memory_id, repeated_id);
+        assert_eq!(report.top_recalled_memories[0].effectiveness, 0.5);
     }
 }

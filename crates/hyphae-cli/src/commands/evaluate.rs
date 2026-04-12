@@ -1,5 +1,9 @@
 use anyhow::Result;
-use hyphae_store::{EvaluationWindow, SqliteStore, collect_evaluation_window};
+use hyphae_core::{Memory, MemoryId, MemoryStore};
+use hyphae_store::{
+    EvaluationWindow, RecallEffectivenessWindow, SqliteStore, collect_evaluation_window,
+    collect_recall_effectiveness_window,
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Trend Detection
@@ -57,6 +61,85 @@ fn collect_window_data(
         days_ago_end,
         project,
     )?)
+}
+
+fn truncate_text(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let truncated: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
+}
+
+fn memory_display_label(memory: &Memory) -> String {
+    let topic = memory.topic.trim();
+    let summary = memory.summary.trim();
+
+    let label = match (topic.is_empty(), summary.is_empty()) {
+        (true, true) => memory.id.to_string(),
+        (true, false) => summary.to_string(),
+        (false, true) => topic.to_string(),
+        (false, false) => format!("{topic}: {summary}"),
+    };
+
+    truncate_text(&label, 88)
+}
+
+fn recall_effectiveness_lines(
+    store: &SqliteStore,
+    report: &RecallEffectivenessWindow,
+    days: i64,
+) -> Vec<String> {
+    let mut lines = vec![
+        format!("Recall effectiveness (last {days} days)"),
+        format!("{:<25} {:>14} {:>14}", "Metric", "Window", "Coverage"),
+        format!(
+            "{:<25} {:>14} {:>14}",
+            "-".repeat(25),
+            "-".repeat(14),
+            "-".repeat(14)
+        ),
+        format!(
+            "{:<25} {:>13.0}% {:>13.0}%",
+            "Non-zero score rate",
+            report.non_zero_score_fraction() * 100.0,
+            report.score_coverage() * 100.0
+        ),
+        format!(
+            "{:<25} {:>14.2} {:>14}",
+            "Average effectiveness",
+            report.average_effectiveness(),
+            format!(
+                "{}/{}",
+                report.scored_memory_count, report.recalled_memory_count
+            )
+        ),
+    ];
+
+    if report.top_recalled_memories.is_empty() {
+        lines.push("Top recalled memories: none".to_string());
+        return lines;
+    }
+
+    lines.push("Top recalled memories by effectiveness".to_string());
+    for (index, row) in report.top_recalled_memories.iter().enumerate() {
+        let memory_label = store
+            .get(&MemoryId::from(row.memory_id.as_str()))
+            .ok()
+            .flatten()
+            .map(|memory| memory_display_label(&memory))
+            .unwrap_or_else(|| row.memory_id.clone());
+        lines.push(format!(
+            "{:>2}. {:>8.2} {}",
+            index + 1,
+            row.effectiveness,
+            memory_label
+        ));
+    }
+
+    lines
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -208,6 +291,12 @@ pub(crate) fn cmd_evaluate(store: &SqliteStore, days: i64, project: Option<Strin
 
     println!("Overall: {}", assessment);
 
+    let recall_report = collect_recall_effectiveness_window(store, 0, days, project_ref)?;
+    println!();
+    for line in recall_effectiveness_lines(store, &recall_report, days) {
+        println!("{line}");
+    }
+
     Ok(())
 }
 
@@ -234,7 +323,6 @@ fn format_trend_with_pct(trend: Trend, pct: f64, lower_is_better: bool) -> Strin
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hyphae_core::MemoryStore;
 
     fn test_store() -> SqliteStore {
         SqliteStore::in_memory().expect("in-memory store")
@@ -365,5 +453,104 @@ mod tests {
 
         assert_eq!(window.session_count, 2);
         assert!(window.total_session_length > 0);
+    }
+
+    #[test]
+    fn test_recall_effectiveness_lines_render_scores_and_top_memories() {
+        let store = test_store();
+
+        let (session_id, _) = store
+            .session_start("demo-project", Some("structured session"))
+            .unwrap();
+
+        let recalled = hyphae_core::Memory::builder(
+            "demo-project".to_string(),
+            "recalled memory".to_string(),
+            hyphae_core::Importance::Medium,
+        )
+        .project("demo-project".to_string())
+        .build();
+        let recalled_id = recalled.id.to_string();
+        store.store(recalled).unwrap();
+
+        store
+            .log_recall_event(
+                Some(&session_id),
+                "recalled memory",
+                std::slice::from_ref(&recalled_id),
+                Some("demo-project"),
+            )
+            .unwrap();
+        store
+            .log_outcome_signal(
+                Some(&session_id),
+                "test_passed",
+                2,
+                Some("cortina.post_tool_use"),
+                Some("demo-project"),
+            )
+            .unwrap();
+        store
+            .log_outcome_signal(
+                Some(&session_id),
+                "build_passed",
+                2,
+                Some("cortina.post_tool_use"),
+                Some("demo-project"),
+            )
+            .unwrap();
+
+        let quiet = hyphae_core::Memory::builder(
+            "demo-project".to_string(),
+            "quiet memory".to_string(),
+            hyphae_core::Importance::Medium,
+        )
+        .project("demo-project".to_string())
+        .build();
+        let quiet_id = quiet.id.to_string();
+        store.store(quiet).unwrap();
+        store
+            .log_recall_event(
+                Some(&session_id),
+                "quiet memory",
+                std::slice::from_ref(&quiet_id),
+                Some("demo-project"),
+            )
+            .unwrap();
+
+        store
+            .session_end(&session_id, Some("done"), None, Some("0"))
+            .unwrap();
+
+        let report =
+            collect_recall_effectiveness_window(&store, 0, 1, Some("demo-project")).unwrap();
+        let lines = recall_effectiveness_lines(&store, &report, 1);
+
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("Recall effectiveness"))
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("Non-zero score rate") && line.contains("50"))
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("Average effectiveness"))
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("Average effectiveness") && line.contains("0.50"))
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("Top recalled memories by effectiveness"))
+        );
+        assert!(lines.iter().any(|line| line.contains("recalled memory")));
     }
 }
