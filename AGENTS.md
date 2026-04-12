@@ -79,6 +79,7 @@ Current direction:
 - When a boundary crosses repos, update `../septa/`, the receiver, and the emitter together.
 - Prefer real fixtures and stored examples over synthetic stand-ins for search and ingest behavior.
 - Keep memoir and episodic-memory behavior distinct unless the change intentionally spans both.
+- Validate septa contracts after changing any cross-project payload: `cd septa && bash validate-all.sh`
 
 ---
 

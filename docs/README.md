@@ -11,6 +11,7 @@ Start with:
 - [mcp-tools.md](mcp-tools.md): MCP tool reference
 - [architecture.md](architecture.md): crate layout, schema boundaries, and
   search pipeline
+- [scope.md](scope.md): what hyphae owns, what it doesn't, and frozen features
 - [setup-by-tool.md](setup-by-tool.md): host-specific setup notes
 - [troubleshooting.md](troubleshooting.md): common failures and recovery paths
 - [roadmap.md](roadmap.md): Hyphae-specific backlog
