@@ -1,3 +1,4 @@
+pub mod memory_protocol;
 pub mod protocol;
 pub mod server;
 mod text;

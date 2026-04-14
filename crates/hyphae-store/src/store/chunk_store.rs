@@ -12,7 +12,7 @@ use super::search::sanitize_fts_query;
 
 // Prefixed chunk columns for JOIN queries
 const C_CHUNK_COLS: &str = "c.id, c.document_id, c.chunk_index, c.content, c.source_path, \
-     c.source_type, c.language, c.heading, c.line_start, c.line_end, c.created_at";
+     c.source_type, c.language, c.heading, c.line_start, c.line_end, c.created_at, c.chunk_strategy";
 
 impl ChunkStore for SqliteStore {
     fn store_document(&self, doc: Document) -> HyphaeResult<DocumentId> {
@@ -54,7 +54,7 @@ impl ChunkStore for SqliteStore {
             let now = chunk.created_at.to_rfc3339();
             tx.prepare_cached(&format!(
                 "INSERT OR REPLACE INTO chunks ({CHUNK_COLS}) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"
             ))
             .map_err(|e| HyphaeError::Database(e.to_string()))?
             .execute(params![
@@ -69,6 +69,7 @@ impl ChunkStore for SqliteStore {
                 chunk.metadata.line_start,
                 chunk.metadata.line_end,
                 now,
+                chunk.metadata.chunk_strategy,
             ])
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
@@ -224,7 +225,7 @@ impl ChunkStore for SqliteStore {
                 params![sanitized, limit as i64, project, offset as i64],
                 |row| {
                     let chunk = row_to_chunk(row)?;
-                    let rank: f32 = row.get(11)?;
+                    let rank: f32 = row.get(12)?;
                     Ok((chunk, rank))
                 },
             )
@@ -347,7 +348,7 @@ impl ChunkStore for SqliteStore {
                 Ok(mut stmt) => {
                     match stmt.query_map(params![sanitized, pool_size as i64, project], |row| {
                         let chunk = row_to_chunk(row)?;
-                        let rank: f32 = row.get(11)?;
+                        let rank: f32 = row.get(12)?;
                         Ok((chunk, rank))
                     }) {
                         Ok(rows) => {
@@ -464,6 +465,7 @@ pub(crate) mod test_helpers {
                 heading: None,
                 line_start: None,
                 line_end: None,
+                chunk_strategy: None,
             },
             embedding: None,
             created_at: Utc::now(),

@@ -72,6 +72,9 @@ pub struct ChunkMetadata {
     pub heading: Option<String>,
     pub line_start: Option<u32>,
     pub line_end: Option<u32>,
+    /// Which chunking strategy produced this chunk (e.g. "by_ast", "by_function").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chunk_strategy: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,11 +117,13 @@ mod tests {
             heading: None,
             line_start: None,
             line_end: None,
+            chunk_strategy: None,
         };
         assert!(meta.language.is_none());
         assert!(meta.heading.is_none());
         assert!(meta.line_start.is_none());
         assert!(meta.line_end.is_none());
+        assert!(meta.chunk_strategy.is_none());
         assert_eq!(meta.source_type, SourceType::Text);
     }
 }

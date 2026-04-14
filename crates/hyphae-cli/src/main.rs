@@ -57,6 +57,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::CodexNotify { .. } => "codex_notify",
         Commands::Completions { .. } => "completions",
         Commands::Project(_) => "project",
+        Commands::Protocol => "protocol",
         Commands::Init { .. } => "init",
         Commands::Bench { .. } => "bench",
         Commands::SelfUpdate { .. } => "self_update",
@@ -68,6 +69,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::IngestSessions { .. } => "ingest_sessions",
         Commands::Purge { .. } => "purge",
         Commands::AuditSecrets { .. } => "audit_secrets",
+        Commands::Audit { .. } => "audit",
         Commands::Changelog { .. } => "changelog",
     }
 }
@@ -85,6 +87,7 @@ fn all_projects_allowed(command: &Commands) -> bool {
         | Commands::Activity
         | Commands::Analytics
         | Commands::Config
+        | Commands::Protocol
         | Commands::TestEmbed { .. }
         | Commands::SearchDocs { .. }
         | Commands::ListSources { .. }
@@ -98,6 +101,7 @@ fn all_projects_allowed(command: &Commands) -> bool {
         | Commands::Evaluate { .. }
         | Commands::Backup { .. }
         | Commands::Restore { .. }
+        | Commands::Audit { .. }
         | Commands::AuditSecrets { .. }
         | Commands::Changelog { .. } => true,
         Commands::Project(args) => matches!(
@@ -269,10 +273,25 @@ fn main() -> Result<()> {
             include_invalidated,
             order,
             json,
+            raw,
         } => {
+            let effective_query = if raw {
+                query
+            } else {
+                let sanitized = hyphae_core::sanitize_query(&query);
+                if sanitized.was_sanitized {
+                    tracing::debug!(
+                        original = %query,
+                        sanitized = %sanitized.text,
+                        removed = ?sanitized.removed,
+                        "query sanitized before search"
+                    );
+                }
+                if sanitized.text.is_empty() { query } else { sanitized.text }
+            };
             commands::memory::cmd_search(
                 &store,
-                query,
+                effective_query,
                 topic,
                 limit,
                 include_invalidated,
@@ -345,6 +364,9 @@ fn main() -> Result<()> {
         }
 
         Commands::Config => unreachable!("handled in early-return block"),
+        Commands::Protocol => {
+            commands::protocol::cmd_protocol(resolved_project.as_deref())?;
+        }
         Commands::Completions { .. } => unreachable!("handled in early-return block"),
         Commands::Init { .. } => unreachable!("handled in early-return block"),
         Commands::SelfUpdate { .. } => unreachable!("handled in early-return block"),
@@ -551,6 +573,10 @@ fn main() -> Result<()> {
             unreachable!("handled in early-return block")
         }
 
+        Commands::Audit { command } => {
+            commands::audit::dispatch(&store, command)?;
+        }
+
         Commands::AuditSecrets { topic, detailed } => {
             commands::audit_secrets::cmd_audit_secrets(
                 &store,
@@ -619,6 +645,7 @@ mod tests {
             include_invalidated: false,
             order: crate::commands::memory::SearchOrder::Weight,
             json: true,
+            raw: false,
         }));
         assert!(all_projects_allowed(&Commands::Session(SessionArgs {
             command: SessionCommand::List {

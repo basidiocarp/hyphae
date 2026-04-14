@@ -268,6 +268,7 @@ pub(crate) fn tool_store_command_output(
         heading: None,
         line_start: None,
         line_end: None,
+        chunk_strategy: None,
     };
     let strategy = ChunkStrategy::ByStructuredOutput {
         output_type,
@@ -845,6 +846,7 @@ mod tests {
                     line_start: None,
                     line_end: None,
                     language: None,
+                    chunk_strategy: None,
                 },
                 embedding: None,
                 created_at: chrono::Utc::now(),

@@ -5,6 +5,7 @@ pub use hyphae_core::ChunkStore;
 pub use store::SHARED_PROJECT;
 pub use store::SqliteStore;
 pub use store::UnifiedSearchResult;
+pub use store::audit::{AuditEntry, AuditOperation};
 pub use store::evaluation::{
     EvaluationWindow, RecallEffectivenessRow, RecallEffectivenessWindow, collect_evaluation_window,
     collect_recall_effectiveness_window,

@@ -1,5 +1,6 @@
 pub mod activity;
 pub mod analytics;
+pub mod audit;
 pub mod audit_secrets;
 pub mod backup;
 pub mod bench;
@@ -17,6 +18,7 @@ pub mod lessons;
 pub mod memoir;
 pub mod memory;
 pub mod project;
+pub mod protocol;
 pub mod prune;
 pub mod purge;
 pub mod self_update;

@@ -344,6 +344,7 @@ mod tests {
                 line_start: None,
                 line_end: None,
                 language: None,
+                chunk_strategy: None,
             },
             embedding: None,
             created_at: Utc::now(),

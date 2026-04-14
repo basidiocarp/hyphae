@@ -1397,6 +1397,7 @@ dependencies = [
  "hyphae-core",
  "regex",
  "serde_json",
+ "spore",
  "tempfile",
  "thiserror",
  "tracing",

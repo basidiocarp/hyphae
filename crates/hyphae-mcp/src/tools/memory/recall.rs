@@ -2,7 +2,7 @@ use chrono::Utc;
 use serde_json::Value;
 use spore::logging::workflow_span;
 
-use hyphae_core::{Embedder, Memory, MemoryStore};
+use hyphae_core::{Embedder, Memory, MemoryStore, sanitize_query};
 use hyphae_store::{SqliteStore, context};
 
 use crate::protocol::ToolResult;
@@ -232,6 +232,28 @@ fn collect_shared_candidates(
     }
 }
 
+/// Build transparency metadata header for recall responses.
+fn transparency_header(
+    sanitized: &hyphae_core::sanitize::SanitizedQuery,
+    result_count: usize,
+    search_mode: &str,
+) -> String {
+    if !sanitized.was_sanitized {
+        return String::new();
+    }
+    let mut parts = Vec::new();
+    parts.push("query_sanitized: true".to_string());
+    if !sanitized.removed.is_empty() {
+        parts.push(format!("removed: [{}]", sanitized.removed.join(", ")));
+    }
+    if sanitized.was_truncated {
+        parts.push("truncated: true".to_string());
+    }
+    parts.push(format!("result_count: {result_count}"));
+    parts.push(format!("search_mode: {search_mode}"));
+    format!("[recall-meta: {}]\n", parts.join(", "))
+}
+
 fn compute_consolidation_hint(
     store: &SqliteStore,
     query_topic: Option<&str>,
@@ -367,10 +389,42 @@ pub(crate) fn tool_recall(
         tracing::warn!("auto-decay failed: {e}");
     }
 
-    let query = match get_str(args, "query") {
+    let raw_query = match get_str(args, "query") {
         Some(q) => q,
         None => return ToolResult::error("missing required field: query".into()),
     };
+    let skip_sanitize = args
+        .get("raw")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    // Sanitize query unless --raw is requested
+    let sanitized = if skip_sanitize {
+        hyphae_core::sanitize::SanitizedQuery {
+            text: raw_query.to_string(),
+            was_sanitized: false,
+            removed: Vec::new(),
+            was_truncated: false,
+        }
+    } else {
+        let s = sanitize_query(raw_query);
+        if s.was_sanitized {
+            tracing::debug!(
+                original = raw_query,
+                sanitized = %s.text,
+                removed = ?s.removed,
+                "query sanitized before recall"
+            );
+        }
+        s
+    };
+    let query: &str = if sanitized.text.is_empty() && !raw_query.is_empty() {
+        // Sanitization stripped everything — fall back to raw query
+        raw_query
+    } else {
+        &sanitized.text
+    };
+
     let limit = get_bounded_i64(args, "limit", 5, 1, 100) as usize;
     let offset = get_bounded_i64(args, "offset", 0, 0, 10000) as usize;
     let topic = get_str(args, "topic");
@@ -455,7 +509,11 @@ pub(crate) fn tool_recall(
                     return ToolResult::text("No memories found.".into());
                 }
 
-                let mut output = String::new();
+                let mut output = transparency_header(
+                    &sanitized,
+                    scored_results.len(),
+                    "hybrid",
+                );
                 if compact {
                     for (mem, _) in &scored_results {
                         output.push_str(&format!("[{}] {}\n", mem.topic, mem.summary));
@@ -528,7 +586,15 @@ pub(crate) fn tool_recall(
         return ToolResult::text("No memories found.".into());
     }
 
-    let mut output = String::new();
+    let mut output = transparency_header(
+        &sanitized,
+        results.len(),
+        if heuristics.prefer_context_aware_recall() {
+            "context_aware_fts"
+        } else {
+            "fts"
+        },
+    );
     if compact {
         for mem in &results {
             output.push_str(&format!("[{}] {}\n", mem.topic, mem.summary));

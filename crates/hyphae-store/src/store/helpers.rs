@@ -247,7 +247,7 @@ pub(crate) const LINK_COLS: &str = "id, source_id, target_id, relation, weight, 
 pub(crate) const DOCUMENT_COLS: &str = "id, source_path, source_type, chunk_count, created_at, updated_at, project, runtime_session_id";
 
 pub(crate) const CHUNK_COLS: &str = "id, document_id, chunk_index, content, source_path, \
-     source_type, language, heading, line_start, line_end, created_at";
+     source_type, language, heading, line_start, line_end, created_at, chunk_strategy";
 
 pub(crate) fn row_to_document(row: &rusqlite::Row) -> rusqlite::Result<Document> {
     // Column order: id(0), source_path(1), source_type(2), chunk_count(3),
@@ -269,7 +269,7 @@ pub(crate) fn row_to_document(row: &rusqlite::Row) -> rusqlite::Result<Document>
 pub(crate) fn row_to_chunk(row: &rusqlite::Row) -> rusqlite::Result<Chunk> {
     // Column order: id(0), document_id(1), chunk_index(2), content(3),
     //   source_path(4), source_type(5), language(6), heading(7),
-    //   line_start(8), line_end(9), created_at(10)
+    //   line_start(8), line_end(9), created_at(10), chunk_strategy(11)
     let source_type_str: String = row.get(5)?;
     let source_type: SourceType = source_type_str.parse().unwrap_or_default();
     let metadata = ChunkMetadata {
@@ -279,6 +279,7 @@ pub(crate) fn row_to_chunk(row: &rusqlite::Row) -> rusqlite::Result<Chunk> {
         heading: row.get(7)?,
         line_start: row.get(8)?,
         line_end: row.get(9)?,
+        chunk_strategy: row.get(11)?,
     };
     Ok(Chunk {
         id: row.get::<_, String>(0)?.into(),

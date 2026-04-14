@@ -178,7 +178,8 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
             heading TEXT,
             line_start INTEGER,
             line_end INTEGER,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            chunk_strategy TEXT
         );
 
         CREATE INDEX IF NOT EXISTS idx_chunks_document_id ON chunks(document_id);
@@ -818,6 +819,39 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         "
         CREATE INDEX IF NOT EXISTS idx_outcome_signals_recall_event
             ON outcome_signals(recall_event_id);
+        ",
+    )
+    .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+    // Migration: add chunk_strategy column to chunks
+    let has_chunk_strategy: bool = tx
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('chunks') WHERE name='chunk_strategy'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if !has_chunk_strategy {
+        tx.execute_batch("ALTER TABLE chunks ADD COLUMN chunk_strategy TEXT;")
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    }
+
+    // Audit log table — append-only record of all memory mutations
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS audit_log (
+            id TEXT PRIMARY KEY,
+            timestamp TEXT NOT NULL,
+            operation TEXT NOT NULL,
+            memory_id TEXT NOT NULL,
+            topic TEXT,
+            content_hash TEXT,
+            metadata_json TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_audit_log_operation ON audit_log(operation);
+        CREATE INDEX IF NOT EXISTS idx_audit_log_memory_id ON audit_log(memory_id);
         ",
     )
     .map_err(|e| HyphaeError::Database(e.to_string()))?;

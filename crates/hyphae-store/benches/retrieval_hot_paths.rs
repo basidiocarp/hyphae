@@ -95,6 +95,7 @@ fn make_chunk(document_id: &hyphae_core::DocumentId, index: usize) -> Chunk {
             heading: Some(format!("Bench Section {index}")),
             line_start: Some(1),
             line_end: Some(8),
+            chunk_strategy: None,
         },
         embedding: Some(chunk_embedding(index)),
         created_at,

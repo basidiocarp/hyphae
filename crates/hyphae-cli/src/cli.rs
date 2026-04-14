@@ -63,6 +63,9 @@ pub(crate) enum Commands {
         /// Emit structured JSON instead of human-readable text
         #[arg(long)]
         json: bool,
+        /// Skip query sanitization (pass query as-is)
+        #[arg(long)]
+        raw: bool,
     },
 
     /// Invalidate a memory without deleting it
@@ -222,6 +225,9 @@ pub(crate) enum Commands {
         #[arg(short, long, value_enum, default_value_t = crate::init::InitMode::Mcp)]
         mode: crate::init::InitMode,
     },
+
+    /// Show the project-aware Hyphae memory-use protocol as JSON
+    Protocol,
 
     /// Watch a directory and auto-ingest file changes
     Watch {
@@ -409,6 +415,12 @@ pub(crate) enum Commands {
         detailed: bool,
     },
 
+    /// View and manage the memory mutation audit log
+    Audit {
+        #[command(subcommand)]
+        command: AuditCommand,
+    },
+
     /// Purge memories and related data (GDPR/retention compliance)
     Purge {
         /// Delete all memories for a specific project
@@ -436,6 +448,30 @@ pub(crate) enum Commands {
         /// Only show activity since this date (YYYY-MM-DD HH:MM:SS)
         #[arg(long)]
         since: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum AuditCommand {
+    /// List recent audit log entries
+    List {
+        /// Only show entries since this date (ISO 8601 or YYYY-MM-DD)
+        #[arg(long)]
+        since: Option<String>,
+        /// Filter by operation type (store, update, delete, invalidate, decay, prune, prune_expired, consolidate)
+        #[arg(long)]
+        operation: Option<String>,
+        /// Maximum entries to show
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+        /// Emit structured JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
+    /// Rollback a single mutation by audit ID
+    Rollback {
+        /// The audit entry ID to rollback
+        audit_id: String,
     },
 }
 

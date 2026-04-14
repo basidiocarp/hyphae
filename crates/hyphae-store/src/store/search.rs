@@ -12,7 +12,7 @@ use super::{SHARED_PROJECT, SqliteStore, context};
 #[derive(Debug, Clone)]
 pub enum UnifiedSearchResult {
     Memory { memory: Box<Memory>, score: f32 },
-    Chunk { chunk: Chunk, score: f32 },
+    Chunk { chunk: Box<Chunk>, score: f32 },
 }
 
 impl UnifiedSearchResult {
@@ -269,7 +269,7 @@ impl SqliteStore {
                 } else {
                     chunk_map
                         .remove(&key)
-                        .map(|chunk| UnifiedSearchResult::Chunk { chunk, score })
+                        .map(|chunk| UnifiedSearchResult::Chunk { chunk: Box::new(chunk), score })
                 }
             })
             .collect();
@@ -489,6 +489,7 @@ mod tests {
                 heading: None,
                 line_start: Some(1),
                 line_end: Some(10),
+                chunk_strategy: None,
             },
             embedding: None,
             created_at: chrono::Utc::now(),

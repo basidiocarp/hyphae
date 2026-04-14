@@ -1,5 +1,6 @@
 pub mod chunker;
 pub mod readers;
+pub mod rhizome;
 pub mod session;
 pub mod transcript;
 
@@ -28,6 +29,7 @@ pub fn ingest_file(
         heading: None,
         line_start: None,
         line_end: None,
+        chunk_strategy: None,
     };
 
     let strategy = ChunkStrategy::for_source_type(&source_type);
@@ -214,9 +216,18 @@ mod tests {
         let (doc, chunks) = ingest_file(&path, None).unwrap();
 
         assert_eq!(doc.source_type, SourceType::Code);
-        assert_eq!(chunks.len(), 2);
-        assert!(chunks[0].content.contains("fn alpha()"));
-        assert!(chunks[1].content.contains("fn beta()"));
+        // When rhizome is available, ByAst may produce more chunks (including
+        // gap chunks between symbols). When unavailable, ByFunction splits on
+        // double newlines producing exactly 2.
+        assert!(
+            chunks.len() >= 2,
+            "expected at least 2 chunks, got {}",
+            chunks.len()
+        );
+        let has_alpha = chunks.iter().any(|c| c.content.contains("fn alpha()"));
+        let has_beta = chunks.iter().any(|c| c.content.contains("fn beta()"));
+        assert!(has_alpha, "should contain fn alpha()");
+        assert!(has_beta, "should contain fn beta()");
     }
 
     #[test]

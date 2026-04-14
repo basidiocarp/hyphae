@@ -82,6 +82,19 @@ pub enum ChunkStrategy {
     ByFunction {
         language: String,
     },
+    /// AST-level chunking using rhizome symbol boundaries.
+    ///
+    /// Falls back to `ByFunction` when rhizome is unavailable or returns no
+    /// symbols for the file. When fallback fires, `chunk_strategy` in the
+    /// resulting chunk metadata still records `"by_ast"` (what was requested)
+    /// rather than `"by_function"` (what executed). This lets callers
+    /// distinguish intentional `ByFunction` usage from a degraded `ByAst` path.
+    ByAst {
+        language: String,
+        /// Symbol boundaries pre-fetched from rhizome. When `None`, the chunker
+        /// will attempt to call rhizome at chunk time.
+        symbols: Option<Vec<crate::rhizome::SymbolBoundary>>,
+    },
     ByStructuredOutput {
         output_type: OutputType,
         max_tokens: usize,
@@ -92,13 +105,37 @@ impl ChunkStrategy {
     pub fn for_source_type(source_type: &SourceType) -> Self {
         match source_type {
             SourceType::Markdown => ChunkStrategy::ByHeading { max_tokens: 500 },
-            SourceType::Code => ChunkStrategy::ByFunction {
-                language: "generic".into(),
-            },
+            SourceType::Code => {
+                // Intentional double check: `is_available()` is cheap (OnceLock-backed)
+                // and serves as early routing so callers get `ByFunction` without
+                // constructing a `ByAst` variant that would only fall back later.
+                if crate::rhizome::is_available() {
+                    ChunkStrategy::ByAst {
+                        language: "generic".into(),
+                        symbols: None,
+                    }
+                } else {
+                    ChunkStrategy::ByFunction {
+                        language: "generic".into(),
+                    }
+                }
+            }
             _ => ChunkStrategy::SlidingWindow {
                 size: 500,
                 overlap: 50,
             },
+        }
+    }
+
+    /// Return the strategy name as a string, suitable for recording in chunk metadata.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            ChunkStrategy::SlidingWindow { .. } => "sliding_window",
+            ChunkStrategy::ByHeading { .. } => "by_heading",
+            ChunkStrategy::ByFunction { .. } => "by_function",
+            ChunkStrategy::ByAst { .. } => "by_ast",
+            ChunkStrategy::ByStructuredOutput { .. } => "by_structured_output",
         }
     }
 }
@@ -109,8 +146,9 @@ impl ChunkStrategy {
 /// creating the parent `Document`.
 pub fn chunk_text(content: &str, metadata: ChunkMetadata, strategy: ChunkStrategy) -> Vec<Chunk> {
     let placeholder_doc_id = DocumentId::from("pending");
+    let strategy_name = strategy.name().to_string();
 
-    match strategy {
+    let mut chunks = match strategy {
         ChunkStrategy::SlidingWindow { size, overlap } => {
             chunk_sliding_window(content, &metadata, &placeholder_doc_id, size, overlap)
         }
@@ -120,6 +158,10 @@ pub fn chunk_text(content: &str, metadata: ChunkMetadata, strategy: ChunkStrateg
         ChunkStrategy::ByFunction { ref language } => {
             chunk_by_function(content, &metadata, &placeholder_doc_id, language)
         }
+        ChunkStrategy::ByAst {
+            ref language,
+            symbols,
+        } => chunk_by_ast(content, &metadata, &placeholder_doc_id, language, symbols),
         ChunkStrategy::ByStructuredOutput {
             ref output_type,
             max_tokens,
@@ -130,7 +172,14 @@ pub fn chunk_text(content: &str, metadata: ChunkMetadata, strategy: ChunkStrateg
             output_type,
             max_tokens,
         ),
+    };
+
+    // Record which strategy produced these chunks
+    for chunk in &mut chunks {
+        chunk.metadata.chunk_strategy = Some(strategy_name.clone());
     }
+
+    chunks
 }
 
 fn chunk_sliding_window(
@@ -304,6 +353,143 @@ fn chunk_by_function(
             created_at: Utc::now(),
         });
         chunk_index += 1;
+    }
+
+    chunks
+}
+
+/// Chunk code using AST symbol boundaries from rhizome.
+///
+/// When `pre_fetched` is `Some`, uses those boundaries directly. Otherwise,
+/// attempts to resolve the file from `metadata.source_path` and call rhizome.
+/// Falls back to `chunk_by_function` when rhizome is unavailable or returns no
+/// symbols.
+fn chunk_by_ast(
+    content: &str,
+    metadata: &ChunkMetadata,
+    doc_id: &DocumentId,
+    language: &str,
+    pre_fetched: Option<Vec<crate::rhizome::SymbolBoundary>>,
+) -> Vec<Chunk> {
+    let symbols = match pre_fetched {
+        Some(s) if !s.is_empty() => s,
+        _ => {
+            // Try to get symbols from rhizome via the source path
+            let path = std::path::Path::new(&metadata.source_path);
+            match crate::rhizome::get_symbol_boundaries(path) {
+                Ok(s) if !s.is_empty() => s,
+                Ok(_) => {
+                    tracing::debug!(
+                        path = %metadata.source_path,
+                        "rhizome returned no symbols, falling back to ByFunction"
+                    );
+                    return chunk_by_function(content, metadata, doc_id, language);
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        path = %metadata.source_path,
+                        error = %e,
+                        "rhizome unavailable, falling back to ByFunction"
+                    );
+                    return chunk_by_function(content, metadata, doc_id, language);
+                }
+            }
+        }
+    };
+
+    let lines: Vec<&str> = content.lines().collect();
+    if lines.is_empty() {
+        return vec![];
+    }
+
+    // Sort symbols by line_start to process in order
+    let mut sorted = symbols;
+    sorted.sort_by_key(|s| s.line_start);
+
+    let mut chunks = Vec::new();
+    let mut chunk_index: u32 = 0;
+    let mut covered_up_to: usize = 0;
+
+    for sym in &sorted {
+        // Rhizome lines are 1-based; convert to 0-based index
+        let start = sym.line_start.saturating_sub(1) as usize;
+        let end = (sym.line_end as usize).min(lines.len());
+
+        if start >= lines.len() || start >= end {
+            continue;
+        }
+
+        // Capture any gap (code between previous symbol end and this symbol start)
+        if start > covered_up_to {
+            let gap_content = lines[covered_up_to..start].join("\n");
+            let trimmed = gap_content.trim();
+            if !trimmed.is_empty() {
+                let mut chunk_meta = metadata.clone();
+                chunk_meta.language = Some(language.to_string());
+                chunk_meta.line_start = Some(covered_up_to as u32 + 1);
+                chunk_meta.line_end = Some(start as u32);
+
+                chunks.push(Chunk {
+                    id: ChunkId::new(),
+                    document_id: doc_id.clone(),
+                    chunk_index,
+                    content: trimmed.to_string(),
+                    metadata: chunk_meta,
+                    embedding: None,
+                    created_at: Utc::now(),
+                });
+                chunk_index += 1;
+            }
+        }
+
+        let symbol_content = lines[start..end].join("\n");
+        let trimmed = symbol_content.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let mut chunk_meta = metadata.clone();
+        chunk_meta.language = Some(language.to_string());
+        chunk_meta.heading = Some(format!("{} {}", sym.kind, sym.name));
+        chunk_meta.line_start = Some(sym.line_start);
+        chunk_meta.line_end = Some(sym.line_end);
+
+        chunks.push(Chunk {
+            id: ChunkId::new(),
+            document_id: doc_id.clone(),
+            chunk_index,
+            content: trimmed.to_string(),
+            metadata: chunk_meta,
+            embedding: None,
+            created_at: Utc::now(),
+        });
+        chunk_index += 1;
+
+        if end > covered_up_to {
+            covered_up_to = end;
+        }
+    }
+
+    // Capture any trailing content after the last symbol
+    if covered_up_to < lines.len() {
+        let trailing = lines[covered_up_to..].join("\n");
+        let trimmed = trailing.trim();
+        if !trimmed.is_empty() {
+            let mut chunk_meta = metadata.clone();
+            chunk_meta.language = Some(language.to_string());
+            chunk_meta.line_start = Some(covered_up_to as u32 + 1);
+            chunk_meta.line_end = Some(lines.len() as u32);
+
+            chunks.push(Chunk {
+                id: ChunkId::new(),
+                document_id: doc_id.clone(),
+                chunk_index,
+                content: trimmed.to_string(),
+                metadata: chunk_meta,
+                embedding: None,
+                created_at: Utc::now(),
+            });
+        }
     }
 
     chunks
@@ -528,6 +714,7 @@ mod tests {
             heading: None,
             line_start: None,
             line_end: None,
+            chunk_strategy: None,
         }
     }
 
@@ -582,6 +769,7 @@ mod tests {
             heading: None,
             line_start: None,
             line_end: None,
+            chunk_strategy: None,
         };
 
         let chunks = chunk_text(markdown, meta, ChunkStrategy::ByHeading { max_tokens: 500 });
@@ -607,6 +795,7 @@ mod tests {
             heading: None,
             line_start: None,
             line_end: None,
+            chunk_strategy: None,
         };
 
         let chunks = chunk_text(&markdown, meta, ChunkStrategy::ByHeading { max_tokens: 20 });
@@ -629,6 +818,7 @@ mod tests {
             heading: None,
             line_start: None,
             line_end: None,
+            chunk_strategy: None,
         };
 
         let chunks = chunk_text(
@@ -669,10 +859,13 @@ mod tests {
             ChunkStrategy::for_source_type(&SourceType::Markdown),
             ChunkStrategy::ByHeading { max_tokens: 500 }
         ));
-        assert!(matches!(
-            ChunkStrategy::for_source_type(&SourceType::Code),
-            ChunkStrategy::ByFunction { .. }
-        ));
+        // Code returns ByAst when rhizome is available, ByFunction otherwise
+        let code_strategy = ChunkStrategy::for_source_type(&SourceType::Code);
+        assert!(
+            matches!(code_strategy, ChunkStrategy::ByAst { .. } | ChunkStrategy::ByFunction { .. }),
+            "expected ByAst or ByFunction for Code, got {:?}",
+            code_strategy
+        );
         assert!(matches!(
             ChunkStrategy::for_source_type(&SourceType::Text),
             ChunkStrategy::SlidingWindow {
@@ -1004,5 +1197,432 @@ diff --git a/c.rs b/c.rs
                 "chunk indices should be sequential"
             );
         }
+    }
+
+    // --- ByAst chunking tests ---
+
+    #[test]
+    fn test_chunk_by_ast_with_pre_fetched_symbols() {
+        use crate::rhizome::SymbolBoundary;
+
+        let code = "\
+use std::io;
+
+fn hello() {
+    println!(\"hello\");
+}
+
+fn world() {
+    println!(\"world\");
+}
+
+fn main() {
+    hello();
+    world();
+}";
+        let meta = ChunkMetadata {
+            source_path: "main.rs".to_string(),
+            source_type: SourceType::Code,
+            language: None,
+            heading: None,
+            line_start: None,
+            line_end: None,
+            chunk_strategy: None,
+        };
+
+        let symbols = vec![
+            SymbolBoundary {
+                name: "hello".to_string(),
+                kind: "fn".to_string(),
+                line_start: 3,
+                line_end: 5,
+            },
+            SymbolBoundary {
+                name: "world".to_string(),
+                kind: "fn".to_string(),
+                line_start: 7,
+                line_end: 9,
+            },
+            SymbolBoundary {
+                name: "main".to_string(),
+                kind: "fn".to_string(),
+                line_start: 11,
+                line_end: 14,
+            },
+        ];
+
+        let chunks = chunk_text(
+            code,
+            meta,
+            ChunkStrategy::ByAst {
+                language: "rust".into(),
+                symbols: Some(symbols),
+            },
+        );
+
+        // Should produce chunks: leading import, hello, world, main
+        assert!(
+            chunks.len() >= 3,
+            "expected at least 3 chunks for 3 functions, got {}",
+            chunks.len()
+        );
+
+        // Check that function chunks have proper headings
+        let fn_chunks: Vec<_> = chunks
+            .iter()
+            .filter(|c| c.metadata.heading.is_some())
+            .collect();
+        assert_eq!(fn_chunks.len(), 3, "expected 3 symbol chunks with headings");
+        assert_eq!(
+            fn_chunks[0].metadata.heading.as_deref(),
+            Some("fn hello")
+        );
+        assert_eq!(
+            fn_chunks[1].metadata.heading.as_deref(),
+            Some("fn world")
+        );
+        assert_eq!(
+            fn_chunks[2].metadata.heading.as_deref(),
+            Some("fn main")
+        );
+
+        // Verify line ranges are set
+        assert_eq!(fn_chunks[0].metadata.line_start, Some(3));
+        assert_eq!(fn_chunks[0].metadata.line_end, Some(5));
+
+        // Verify language is set on all chunks
+        for chunk in &chunks {
+            assert_eq!(chunk.metadata.language.as_deref(), Some("rust"));
+        }
+
+        // Verify strategy is recorded
+        for chunk in &chunks {
+            assert_eq!(
+                chunk.metadata.chunk_strategy.as_deref(),
+                Some("by_ast")
+            );
+        }
+
+        // Verify sequential indices
+        for (i, chunk) in chunks.iter().enumerate() {
+            assert_eq!(chunk.chunk_index, i as u32);
+        }
+    }
+
+    #[test]
+    fn test_chunk_by_ast_falls_back_with_empty_symbols() {
+        let code = "fn hello() {\n    println!(\"hello\");\n}\n\nfn world() {\n    println!(\"world\");\n}";
+        let meta = ChunkMetadata {
+            source_path: "nonexistent.rs".to_string(),
+            source_type: SourceType::Code,
+            language: None,
+            heading: None,
+            line_start: None,
+            line_end: None,
+            chunk_strategy: None,
+        };
+
+        // Empty pre-fetched symbols should trigger fallback to ByFunction
+        let chunks = chunk_text(
+            code,
+            meta,
+            ChunkStrategy::ByAst {
+                language: "rust".into(),
+                symbols: Some(vec![]),
+            },
+        );
+
+        // Fallback to ByFunction splits on double newlines
+        assert_eq!(chunks.len(), 2);
+        assert!(chunks[0].content.contains("fn hello()"));
+        assert!(chunks[1].content.contains("fn world()"));
+
+        // Strategy should still record as by_ast since that's what was requested
+        // (even though it fell back internally)
+        for chunk in &chunks {
+            assert_eq!(
+                chunk.metadata.chunk_strategy.as_deref(),
+                Some("by_ast")
+            );
+        }
+    }
+
+    #[test]
+    fn test_chunk_by_ast_falls_back_when_rhizome_unavailable() {
+        let code = "fn hello() {\n    println!(\"hello\");\n}\n\nfn world() {\n    println!(\"world\");\n}";
+        let meta = ChunkMetadata {
+            source_path: "/tmp/definitely_not_a_real_file_12345.rs".to_string(),
+            source_type: SourceType::Code,
+            language: None,
+            heading: None,
+            line_start: None,
+            line_end: None,
+            chunk_strategy: None,
+        };
+
+        // No pre-fetched symbols and file doesn't exist, so rhizome will fail.
+        // This tests the fallback path.
+        let chunks = chunk_text(
+            code,
+            meta,
+            ChunkStrategy::ByAst {
+                language: "rust".into(),
+                symbols: None,
+            },
+        );
+
+        // Should fall back to ByFunction and produce chunks
+        assert!(!chunks.is_empty(), "should produce chunks via fallback");
+        assert_eq!(chunks.len(), 2);
+    }
+
+    #[test]
+    fn test_chunk_by_ast_captures_gaps_and_trailing() {
+        use crate::rhizome::SymbolBoundary;
+
+        let code = "\
+// Module header comment
+use std::io;
+
+fn only_function() {
+    // body
+}
+
+// Trailing comment";
+
+        let meta = ChunkMetadata {
+            source_path: "gap_test.rs".to_string(),
+            source_type: SourceType::Code,
+            language: None,
+            heading: None,
+            line_start: None,
+            line_end: None,
+            chunk_strategy: None,
+        };
+
+        let symbols = vec![SymbolBoundary {
+            name: "only_function".to_string(),
+            kind: "fn".to_string(),
+            line_start: 4,
+            line_end: 6,
+        }];
+
+        let chunks = chunk_text(
+            code,
+            meta,
+            ChunkStrategy::ByAst {
+                language: "rust".into(),
+                symbols: Some(symbols),
+            },
+        );
+
+        // Should produce: leading gap, function, trailing gap
+        assert_eq!(
+            chunks.len(),
+            3,
+            "expected leading gap + function + trailing, got {}",
+            chunks.len()
+        );
+
+        // Leading gap has no heading (gap content)
+        assert!(chunks[0].metadata.heading.is_none());
+        assert!(chunks[0].content.contains("Module header"));
+
+        // Function chunk has heading
+        assert_eq!(
+            chunks[1].metadata.heading.as_deref(),
+            Some("fn only_function")
+        );
+        assert!(chunks[1].content.contains("fn only_function()"));
+
+        // Trailing content
+        assert!(chunks[2].content.contains("Trailing comment"));
+    }
+
+    #[test]
+    fn test_chunk_by_ast_empty_content() {
+        use crate::rhizome::SymbolBoundary;
+
+        let meta = make_metadata();
+        let chunks = chunk_text(
+            "",
+            meta,
+            ChunkStrategy::ByAst {
+                language: "rust".into(),
+                symbols: Some(vec![SymbolBoundary {
+                    name: "foo".to_string(),
+                    kind: "fn".to_string(),
+                    line_start: 1,
+                    line_end: 5,
+                }]),
+            },
+        );
+        assert!(chunks.is_empty());
+    }
+
+    /// Documents behavior with overlapping/nested symbol boundaries.
+    ///
+    /// **Assumption**: rhizome returns non-overlapping top-level symbols. The
+    /// chunker does NOT deduplicate overlapping ranges — it emits every symbol
+    /// as its own chunk. If nested symbols are present (e.g. a function inside
+    /// a module), lines covered by both the outer and inner symbol will appear
+    /// in multiple chunks. This is acceptable because rhizome's contract is to
+    /// return non-overlapping top-level symbols; overlapping input is a
+    /// boundary violation, not a normal case.
+    #[test]
+    fn test_chunk_by_ast_overlapping_symbol_boundaries() {
+        use crate::rhizome::SymbolBoundary;
+
+        let code = "\
+mod mymod {
+    fn inner_a() {
+        // body a
+    }
+
+    fn inner_b() {
+        // body b
+    }
+}
+
+fn standalone() {
+    // body
+}";
+
+        let meta = ChunkMetadata {
+            source_path: "overlap.rs".to_string(),
+            source_type: SourceType::Code,
+            language: None,
+            heading: None,
+            line_start: None,
+            line_end: None,
+            chunk_strategy: None,
+        };
+
+        // Simulate overlapping boundaries: module spans 1-9, inner functions at 2-4 and 6-8
+        let symbols = vec![
+            SymbolBoundary {
+                name: "mymod".to_string(),
+                kind: "mod".to_string(),
+                line_start: 1,
+                line_end: 9,
+            },
+            SymbolBoundary {
+                name: "inner_a".to_string(),
+                kind: "fn".to_string(),
+                line_start: 2,
+                line_end: 4,
+            },
+            SymbolBoundary {
+                name: "inner_b".to_string(),
+                kind: "fn".to_string(),
+                line_start: 6,
+                line_end: 8,
+            },
+            SymbolBoundary {
+                name: "standalone".to_string(),
+                kind: "fn".to_string(),
+                line_start: 11,
+                line_end: 13,
+            },
+        ];
+
+        let chunks = chunk_text(
+            code,
+            meta,
+            ChunkStrategy::ByAst {
+                language: "rust".into(),
+                symbols: Some(symbols),
+            },
+        );
+
+        // All four symbols are emitted as separate chunks. The chunker does not
+        // skip inner symbols that fall within an already-covered outer range.
+        let headings: Vec<Option<&str>> = chunks
+            .iter()
+            .map(|c| c.metadata.heading.as_deref())
+            .collect();
+        assert!(
+            headings.contains(&Some("mod mymod")),
+            "should contain module chunk"
+        );
+        assert!(
+            headings.contains(&Some("fn inner_a")),
+            "should contain inner_a chunk"
+        );
+        assert!(
+            headings.contains(&Some("fn inner_b")),
+            "should contain inner_b chunk"
+        );
+        assert!(
+            headings.contains(&Some("fn standalone")),
+            "should contain standalone function"
+        );
+
+        // With overlapping symbols, content IS duplicated — inner symbols
+        // re-emit lines already covered by the outer module. This is expected
+        // given the assumption that rhizome returns non-overlapping top-level symbols.
+        let total_content_lines: usize = chunks.iter().map(|c| c.content.lines().count()).sum();
+        let source_lines = code.lines().count();
+        assert!(
+            total_content_lines > source_lines,
+            "overlapping symbols cause content duplication ({total_content_lines} > {source_lines})"
+        );
+    }
+
+    #[test]
+    fn test_chunk_strategy_name() {
+        assert_eq!(
+            ChunkStrategy::SlidingWindow {
+                size: 100,
+                overlap: 10
+            }
+            .name(),
+            "sliding_window"
+        );
+        assert_eq!(
+            ChunkStrategy::ByHeading { max_tokens: 500 }.name(),
+            "by_heading"
+        );
+        assert_eq!(
+            ChunkStrategy::ByFunction {
+                language: "rust".into()
+            }
+            .name(),
+            "by_function"
+        );
+        assert_eq!(
+            ChunkStrategy::ByAst {
+                language: "rust".into(),
+                symbols: None,
+            }
+            .name(),
+            "by_ast"
+        );
+        assert_eq!(
+            ChunkStrategy::ByStructuredOutput {
+                output_type: OutputType::Generic,
+                max_tokens: 500,
+            }
+            .name(),
+            "by_structured_output"
+        );
+    }
+
+    #[test]
+    fn test_chunk_text_records_strategy() {
+        let meta = make_metadata();
+        let chunks = chunk_text(
+            "hello world",
+            meta,
+            ChunkStrategy::SlidingWindow {
+                size: 500,
+                overlap: 50,
+            },
+        );
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(
+            chunks[0].metadata.chunk_strategy.as_deref(),
+            Some("sliding_window")
+        );
     }
 }

@@ -11,6 +11,7 @@ pub mod ids;
 pub mod memoir;
 pub mod memoir_store;
 pub mod memory;
+pub mod sanitize;
 pub mod secrets;
 pub mod store;
 
@@ -33,5 +34,6 @@ pub use memory::{
     ConsolidationConfig, ConsolidationTopicRule, DEFAULT_CONSOLIDATION_THRESHOLD, Importance,
     Memory, MemoryBuilder, MemorySource, SessionHost, StoreStats, TopicHealth, Weight,
 };
+pub use sanitize::{SanitizedQuery, sanitize_query};
 pub use secrets::detect_secrets;
 pub use store::MemoryStore;

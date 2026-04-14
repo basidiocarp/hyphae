@@ -6,6 +6,7 @@ use tracing::{debug, error};
 use hyphae_core::{ConsolidationConfig, Embedder, MemoryStore};
 use hyphae_store::SqliteStore;
 
+use crate::memory_protocol::{PROTOCOL_RESOURCE_URI, protocol_surface_json};
 use crate::protocol::{JsonRpcMessage, JsonRpcResponse};
 use crate::tools;
 
@@ -308,6 +309,12 @@ fn handle_resources_list(id: Value, store: &SqliteStore, project: Option<&str>) 
         json!({
             "resources": [
                 {
+                    "uri": PROTOCOL_RESOURCE_URI,
+                    "name": format!("Hyphae Memory Protocol ({label})"),
+                    "description": "Canonical project-aware Hyphae memory-use contract for host injection and session start surfaces.",
+                    "mimeType": "application/json"
+                },
+                {
                     "uri": CONTEXT_RESOURCE_URI,
                     "name": format!("Hyphae Passive Context ({label})"),
                     "description": "Bounded project/session context bundle built from recent summaries, context memories, decisions, and project understanding.",
@@ -365,6 +372,12 @@ fn handle_resources_read(
     };
 
     let text = match uri {
+        PROTOCOL_RESOURCE_URI => match protocol_surface_json(Some(project_name)) {
+            Ok(text) => text,
+            Err(error) => {
+                return JsonRpcResponse::err(id, -32603, format!("serialization error: {error}"));
+            }
+        },
         CONTEXT_RESOURCE_URI => match tools::context::passive_context_resource_text(
             store,
             Some(project_name),
@@ -673,9 +686,10 @@ mod tests {
         let resp = handle_resources_list(json!(21), &store, Some("demo"));
         let result = resp.result.unwrap();
         let resources = result["resources"].as_array().unwrap();
-        assert_eq!(resources.len(), 4);
-        assert_eq!(resources[0]["uri"], CONTEXT_RESOURCE_URI);
-        assert_eq!(resources[2]["uri"], COUNCIL_RESOURCE_URI);
+        assert_eq!(resources.len(), 5);
+        assert_eq!(resources[0]["uri"], PROTOCOL_RESOURCE_URI);
+        assert_eq!(resources[1]["uri"], CONTEXT_RESOURCE_URI);
+        assert_eq!(resources[3]["uri"], COUNCIL_RESOURCE_URI);
     }
 
     #[test]
@@ -705,6 +719,19 @@ mod tests {
         let text = result["contents"][0]["text"].as_str().unwrap();
         assert!(text.contains("[REDACTED]"));
         assert!(!text.contains("sk1234567890abcdefghij"));
+    }
+
+    #[test]
+    fn test_handle_resources_read_returns_protocol_surface() {
+        let store = SqliteStore::in_memory().unwrap();
+        let params = Some(json!({ "uri": PROTOCOL_RESOURCE_URI }));
+        let resp = handle_resources_read(json!(22), &params, &store, Some("demo"));
+        let result = resp.result.unwrap();
+        let text = result["contents"][0]["text"].as_str().unwrap();
+        let payload: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(payload["schema_version"], "1.0");
+        assert_eq!(payload["artifact_type"], "memory_protocol");
+        assert_eq!(payload["project"], "demo");
     }
 
     #[test]
