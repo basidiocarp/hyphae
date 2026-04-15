@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 const ARCHIVE_SCHEMA_VERSION: &str = "1.0";
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn cmd_export(
     store: &SqliteStore,
     output: PathBuf,
