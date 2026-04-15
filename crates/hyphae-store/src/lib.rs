@@ -10,6 +10,10 @@ pub use store::evaluation::{
     EvaluationWindow, RecallEffectivenessRow, RecallEffectivenessWindow, collect_evaluation_window,
     collect_recall_effectiveness_window,
 };
+pub use store::export::{
+    ArchiveFilter, ArchiveIdentity, ArchiveMemoirConceptRecord, ArchiveMemoirLinkRecord,
+    ArchiveMemoirRecord, ArchiveMemoryRecord, ArchiveSessionRecord, HyphaeArchive,
+};
 pub use store::insights::{
     HyphaeActivitySnapshot, HyphaeAnalytics, LessonCategory, LessonRecord, RecentMemoryActivity,
 };

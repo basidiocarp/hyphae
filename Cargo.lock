@@ -1347,7 +1347,7 @@ dependencies = [
 
 [[package]]
 name = "hyphae-cli"
-version = "0.10.8"
+version = "0.10.9"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1375,7 +1375,7 @@ dependencies = [
 
 [[package]]
 name = "hyphae-core"
-version = "0.10.8"
+version = "0.10.9"
 dependencies = [
  "chrono",
  "directories",
@@ -1390,7 +1390,7 @@ dependencies = [
 
 [[package]]
 name = "hyphae-ingest"
-version = "0.10.8"
+version = "0.10.9"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1406,7 +1406,7 @@ dependencies = [
 
 [[package]]
 name = "hyphae-mcp"
-version = "0.10.8"
+version = "0.10.9"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1423,7 +1423,7 @@ dependencies = [
 
 [[package]]
 name = "hyphae-store"
-version = "0.10.8"
+version = "0.10.9"
 dependencies = [
  "chrono",
  "criterion",

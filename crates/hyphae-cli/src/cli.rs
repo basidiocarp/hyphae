@@ -389,6 +389,36 @@ pub(crate) enum Commands {
         days: i64,
     },
 
+    /// Export memories, memoirs, and sessions to a portable archive
+    Export {
+        /// Output file path for the archive
+        output: PathBuf,
+        /// Only export specific topic
+        #[arg(long)]
+        topic: Option<String>,
+        /// Only export memories created after this date (ISO 8601 or YYYY-MM-DD)
+        #[arg(long)]
+        since: Option<String>,
+        /// Only export memories created before this date (ISO 8601 or YYYY-MM-DD)
+        #[arg(long)]
+        until: Option<String>,
+        /// Include memoirs in the export
+        #[arg(long)]
+        include_memoirs: bool,
+        /// Include sessions in the export
+        #[arg(long)]
+        include_sessions: bool,
+        /// Only export memories with weight at or above this threshold
+        #[arg(long)]
+        min_weight: Option<f32>,
+        /// Pretty-print JSON output
+        #[arg(long)]
+        pretty: bool,
+        /// Overwrite output file if it exists
+        #[arg(long)]
+        overwrite: bool,
+    },
+
     /// Backup the database
     Backup {
         /// Output path for backup file (defaults to hyphae-backup-{timestamp}.db)
@@ -581,6 +611,62 @@ mod tests {
                 no_backup: true,
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn test_export_command_parses() {
+        let cli = Cli::try_parse_from([
+            "hyphae",
+            "export",
+            "/tmp/archive.json",
+            "--topic",
+            "decisions",
+            "--since",
+            "2026-04-01T00:00:00Z",
+            "--include-memoirs",
+            "--include-sessions",
+            "--min-weight",
+            "0.7",
+            "--pretty",
+            "--overwrite",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Export {
+                ref output,
+                ref topic,
+                ref since,
+                include_memoirs: true,
+                include_sessions: true,
+                min_weight: Some(weight),
+                pretty: true,
+                overwrite: true,
+                ..
+            } if output.ends_with("archive.json")
+                && topic == &Some("decisions".to_string())
+                && since == &Some("2026-04-01T00:00:00Z".to_string())
+                && (weight - 0.7).abs() < f32::EPSILON
+        ));
+    }
+
+    #[test]
+    fn test_export_command_defaults() {
+        let cli = Cli::try_parse_from(["hyphae", "export", "/tmp/archive.json"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Export {
+                ref output,
+                topic: None,
+                since: None,
+                until: None,
+                include_memoirs: false,
+                include_sessions: false,
+                min_weight: None,
+                pretty: false,
+                overwrite: false,
+            } if output.ends_with("archive.json")
         ));
     }
 }

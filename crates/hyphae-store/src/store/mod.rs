@@ -2,6 +2,7 @@ pub mod audit;
 mod chunk_store;
 pub mod context;
 pub mod evaluation;
+pub mod export;
 mod feedback;
 mod helpers;
 pub mod insights;

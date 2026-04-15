@@ -64,6 +64,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Doctor { .. } => "doctor",
         Commands::ExportTraining { .. } => "export_training",
         Commands::Evaluate { .. } => "evaluate",
+        Commands::Export { .. } => "export",
         Commands::Backup { .. } => "backup",
         Commands::Restore { .. } => "restore",
         Commands::IngestSessions { .. } => "ingest_sessions",
@@ -99,6 +100,7 @@ fn all_projects_allowed(command: &Commands) -> bool {
         | Commands::Doctor { .. }
         | Commands::ExportTraining { .. }
         | Commands::Evaluate { .. }
+        | Commands::Export { .. }
         | Commands::Backup { .. }
         | Commands::Restore { .. }
         | Commands::Audit { .. }
@@ -567,6 +569,32 @@ fn main() -> Result<()> {
 
         Commands::Evaluate { days } => {
             commands::evaluate::cmd_evaluate(&store, days, resolved_project)?;
+        }
+
+        Commands::Export {
+            output,
+            topic,
+            since,
+            until,
+            include_memoirs,
+            include_sessions,
+            min_weight,
+            pretty,
+            overwrite,
+        } => {
+            commands::export::cmd_export(
+                &store,
+                output.clone(),
+                resolved_project.map(|p| p.to_string()),
+                topic.clone(),
+                since.clone(),
+                until.clone(),
+                include_memoirs,
+                include_sessions,
+                min_weight,
+                pretty,
+                overwrite,
+            )?;
         }
 
         Commands::Backup { .. } | Commands::Restore { .. } => {
