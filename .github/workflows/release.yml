@@ -48,7 +48,7 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - uses: actions/cache@v5.0.4
+      - uses: actions/cache@v5.0.5
         if: matrix.target != 'aarch64-apple-darwin'
         with:
           path: |
@@ -224,7 +224,7 @@ jobs:
           path: artifacts
 
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/cache@v5.0.4
+      - uses: actions/cache@v5.0.5
         with:
           path: |
             ~/.cargo/registry
