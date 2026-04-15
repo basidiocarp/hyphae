@@ -192,7 +192,7 @@ jobs:
 
       - name: Upload macOS diagnostics
         if: failure() && (startsWith(matrix.target, 'x86_64-apple') || startsWith(matrix.target, 'aarch64-apple'))
-        uses: actions/upload-artifact@v7.0.0
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: hyphae-${{ matrix.target }}-diagnostics
           path: |
@@ -200,7 +200,7 @@ jobs:
             smoke-${{ matrix.target }}-*.log
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7.0.0
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: hyphae-${{ matrix.target }}
           # The -embeddings archive only exists for non-musl targets; tell the
@@ -249,13 +249,13 @@ jobs:
         run: cargo generate-rpm -p crates/hyphae-cli
 
       - name: Upload DEB
-        uses: actions/upload-artifact@v7.0.0
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: hyphae-deb
           path: target/debian/*.deb
 
       - name: Upload RPM
-        uses: actions/upload-artifact@v7.0.0
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: hyphae-rpm
           path: target/generate-rpm/*.rpm
