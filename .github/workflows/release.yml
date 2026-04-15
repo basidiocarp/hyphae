@@ -168,7 +168,12 @@ jobs:
           fi
 
           build_variant "slim" "" "--no-default-features"
-          build_variant "embeddings" "-embeddings" ""
+          # ort-sys ships no pre-built ONNX Runtime for musl targets and
+          # fastembed needs ort, so the embeddings variant cannot be built
+          # on *-musl. Slim is the shipped Linux build.
+          if [[ "${{ matrix.target }}" != *-musl ]]; then
+            build_variant "embeddings" "-embeddings" ""
+          fi
         shell: bash
 
       - name: Inspect macOS build diagnostics
@@ -198,6 +203,9 @@ jobs:
         uses: actions/upload-artifact@v7.0.0
         with:
           name: hyphae-${{ matrix.target }}
+          # The -embeddings archive only exists for non-musl targets; tell the
+          # action to ignore the missing path rather than fail the upload.
+          if-no-files-found: ignore
           path: |
             hyphae-${{ matrix.target }}.${{ matrix.archive }}
             hyphae-${{ matrix.target }}-embeddings.${{ matrix.archive }}

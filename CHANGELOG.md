@@ -4,24 +4,36 @@ All notable changes to Hyphae are documented in this file.
 
 ## [Unreleased]
 
-## [0.10.10] - 2026-04-15
+## [0.10.11] - 2026-04-15
 
 ### Fixed
 
-- **Release builds for musl targets**: The `fastembed` dependency now uses
-  `hf-hub-rustls-tls` instead of the default `hf-hub-native-tls`, so release
-  builds no longer require OpenSSL development headers for the target. The
-  previous 0.10.9 tag failed to publish assets because both
-  `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl` jobs failed to
-  find OpenSSL headers; this release supersedes that tag with the same
-  feature content.
+- **Release builds on musl**: The `embeddings` variant is no longer built
+  for `*-musl` targets. `ort-sys` (via `fastembed`) has no pre-built ONNX
+  Runtime binaries for musl, and building from source is impractical in
+  the release container. Linux musl targets continue to ship the slim
+  binary (consistent with the 0.10.7 release surface); the embeddings
+  variant is still produced for Darwin and Windows targets.
+
+## [0.10.10] - 2026-04-15 [TAGGED BUT NOT PUBLISHED]
+
+Tag `v0.10.10` exists but its Release workflow failed to produce binaries.
+The `fastembed` feature change resolved the `openssl-sys` issue, exposing
+the underlying `ort-sys` no-musl-binaries problem; that is addressed in
+0.10.11. Fastembed feature and 0.10.9 content still ship here.
+
+### Fixed
+
+- **fastembed TLS backend**: The `fastembed` dependency now uses
+  `hf-hub-rustls-tls` instead of the default `hf-hub-native-tls`, so the
+  transitive `openssl-sys` dependency is gone.
 
 ## [0.10.9] - 2026-04-15 [TAGGED BUT NOT PUBLISHED]
 
 Tag `v0.10.9` exists but its Release workflow failed to produce binaries
 because the `embeddings` variant pulled in `openssl-sys` transitively and
 could not cross-compile to musl targets. Content intended for this release
-ships in 0.10.10.
+ships in 0.10.11.
 
 ### Added
 
