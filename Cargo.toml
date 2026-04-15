@@ -29,7 +29,12 @@ sqlite-vec = "0.1"
 zerocopy = { version = "0.8", features = ["derive"] }
 
 # Embeddings (optional)
-fastembed = "4"
+# Use rustls-tls to avoid pulling in openssl-sys (cross-compile to
+# aarch64-unknown-linux-musl fails without OpenSSL headers for the target).
+fastembed = { version = "4", default-features = false, features = [
+    "ort-download-binaries",
+    "hf-hub-rustls-tls",
+] }
 
 # Regex
 regex = "1"

@@ -4,6 +4,25 @@ All notable changes to Hyphae are documented in this file.
 
 ## [Unreleased]
 
+## [0.10.10] - 2026-04-15
+
+### Fixed
+
+- **Release builds for musl targets**: The `fastembed` dependency now uses
+  `hf-hub-rustls-tls` instead of the default `hf-hub-native-tls`, so release
+  builds no longer require OpenSSL development headers for the target. The
+  previous 0.10.9 tag failed to publish assets because both
+  `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl` jobs failed to
+  find OpenSSL headers; this release supersedes that tag with the same
+  feature content.
+
+## [0.10.9] - 2026-04-15 [TAGGED BUT NOT PUBLISHED]
+
+Tag `v0.10.9` exists but its Release workflow failed to produce binaries
+because the `embeddings` variant pulled in `openssl-sys` transitively and
+could not cross-compile to musl targets. Content intended for this release
+ships in 0.10.10.
+
 ### Added
 
 - **Passive MCP resources**: Added bounded `resources/list` and `resources/read`
