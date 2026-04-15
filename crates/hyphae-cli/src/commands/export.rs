@@ -183,6 +183,7 @@ pub(crate) fn cmd_export(
     let filter = ArchiveFilter {
         topic: topic.clone(),
         since: since.clone(),
+        until: until.clone(),
         importance_minimum: min_weight.map(|w| w.to_string()),
     };
 

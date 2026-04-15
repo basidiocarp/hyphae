@@ -33,6 +33,7 @@ pub struct ArchiveIdentity {
 pub struct ArchiveFilter {
     pub topic: Option<String>,
     pub since: Option<String>,
+    pub until: Option<String>,
     pub importance_minimum: Option<String>,
 }
 
