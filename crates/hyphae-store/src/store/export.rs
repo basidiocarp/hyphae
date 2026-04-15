@@ -104,41 +104,19 @@ impl SqliteStore {
         until: Option<&str>,
         min_weight: Option<f32>,
     ) -> HyphaeResult<Vec<Memory>> {
-        let topic_clause = if topic.is_some() {
-            "AND topic = ?"
-        } else {
-            ""
-        };
-
-        let since_clause = if since.is_some() {
-            "AND created_at >= ?"
-        } else {
-            ""
-        };
-
-        let until_clause = if until.is_some() {
-            "AND created_at <= ?"
-        } else {
-            ""
-        };
-
-        let weight_clause = if min_weight.is_some() {
-            "AND weight >= ?"
-        } else {
-            ""
-        };
-
         use super::helpers::SELECT_COLS;
 
+        // Static SQL with positional (col = ? OR ? IS NULL) pattern.
+        // All 10 params are always bound — no ordering drift risk.
         let sql = format!(
             "SELECT {SELECT_COLS}
              FROM memories
              WHERE invalidated_at IS NULL
                AND (project = ? OR ? IS NULL)
-               {topic_clause}
-               {since_clause}
-               {until_clause}
-               {weight_clause}
+               AND (topic = ? OR ? IS NULL)
+               AND (created_at >= ? OR ? IS NULL)
+               AND (created_at <= ? OR ? IS NULL)
+               AND (weight >= ? OR ? IS NULL)
              ORDER BY created_at DESC"
         );
 
@@ -147,29 +125,20 @@ impl SqliteStore {
             .prepare(&sql)
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
-        // Build parameter list dynamically
-        let mut param_list: Vec<&dyn rusqlite::ToSql> = vec![
-            &project,
-            &project, // repeated for the "OR ? IS NULL" part
-        ];
-        if topic.is_some() {
-            param_list.push(&topic);
-        }
-        if since.is_some() {
-            param_list.push(&since);
-        }
-        if until.is_some() {
-            param_list.push(&until);
-        }
-        if min_weight.is_some() {
-            param_list.push(&min_weight);
-        }
-
         let rows = stmt
-            .query_map(param_list.as_slice(), |row| {
-                use super::helpers::row_to_memory;
-                row_to_memory(row)
-            })
+            .query_map(
+                params![
+                    project, project,
+                    topic, topic,
+                    since, since,
+                    until, until,
+                    min_weight, min_weight,
+                ],
+                |row| {
+                    use super::helpers::row_to_memory;
+                    row_to_memory(row)
+                },
+            )
             .map_err(|e| HyphaeError::Database(format!("query_map failed: {}", e)))?;
 
         let mut results = Vec::new();

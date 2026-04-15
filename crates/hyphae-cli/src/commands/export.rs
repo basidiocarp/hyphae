@@ -70,7 +70,9 @@ pub(crate) fn cmd_export(
         })
         .collect();
 
-    // Query memoirs if requested
+    // Query memoirs if requested.
+    // Note: memoirs are globally scoped (no project column in the schema),
+    // so the --project filter does not apply to memoir export.
     let mut memoir_records = Vec::new();
     if include_memoirs {
         let memoirs = store
