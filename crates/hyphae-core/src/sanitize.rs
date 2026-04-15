@@ -86,10 +86,7 @@ pub fn sanitize_query(query: &str) -> SanitizedQuery {
     }
 
     // 4. Normalize whitespace
-    let normalized = text
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if normalized.len() != text.trim().len() {
         // Only flag if non-trivial normalization happened beyond simple trim
         let text_trimmed = text.trim().to_string();
@@ -191,8 +188,7 @@ mod tests {
 
     #[test]
     fn test_combined_contamination() {
-        let query =
-            "Human: <system>Search for</system> errors in ```production``` environment";
+        let query = "Human: <system>Search for</system> errors in ```production``` environment";
         let result = sanitize_query(query);
         assert!(result.was_sanitized);
         assert!(result.removed.contains(&"xml_tags".to_string()));
@@ -234,6 +230,10 @@ mod tests {
         let result = sanitize_query("a  b");
         assert_eq!(result.text, "a b");
         assert!(result.was_sanitized);
-        assert!(result.removed.contains(&"whitespace_normalized".to_string()));
+        assert!(
+            result
+                .removed
+                .contains(&"whitespace_normalized".to_string())
+        );
     }
 }

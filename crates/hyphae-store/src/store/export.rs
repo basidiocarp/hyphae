@@ -5,8 +5,8 @@ use serde::Serialize;
 
 use hyphae_core::{HyphaeError, HyphaeResult, Memory};
 
-use super::session::Session;
 use super::SqliteStore;
+use super::session::Session;
 
 /// Top-level archive payload structure.
 #[derive(Debug, Clone, Serialize)]
@@ -129,11 +129,8 @@ impl SqliteStore {
         let rows = stmt
             .query_map(
                 params![
-                    project, project,
-                    topic, topic,
-                    since, since,
-                    until, until,
-                    min_weight, min_weight,
+                    project, project, topic, topic, since, since, until, until, min_weight,
+                    min_weight,
                 ],
                 |row| {
                     use super::helpers::row_to_memory;
@@ -176,23 +173,26 @@ impl SqliteStore {
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         let rows = stmt
-            .query_map(params![project, project, since, since, until, until], |row| {
-                Ok(Session {
-                    id: row.get(0)?,
-                    project: row.get(1)?,
-                    project_root: row.get(2)?,
-                    worktree_id: row.get(3)?,
-                    scope: row.get(4)?,
-                    runtime_session_id: row.get(5)?,
-                    task: row.get(6)?,
-                    started_at: row.get(7)?,
-                    ended_at: row.get(8)?,
-                    summary: row.get(9)?,
-                    files_modified: row.get(10)?,
-                    errors: row.get(11)?,
-                    status: row.get(12)?,
-                })
-            })
+            .query_map(
+                params![project, project, since, since, until, until],
+                |row| {
+                    Ok(Session {
+                        id: row.get(0)?,
+                        project: row.get(1)?,
+                        project_root: row.get(2)?,
+                        worktree_id: row.get(3)?,
+                        scope: row.get(4)?,
+                        runtime_session_id: row.get(5)?,
+                        task: row.get(6)?,
+                        started_at: row.get(7)?,
+                        ended_at: row.get(8)?,
+                        summary: row.get(9)?,
+                        files_modified: row.get(10)?,
+                        errors: row.get(11)?,
+                        status: row.get(12)?,
+                    })
+                },
+            )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         let mut results = Vec::new();

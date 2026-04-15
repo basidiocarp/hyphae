@@ -77,9 +77,7 @@ pub(crate) fn cmd_export(
     // so the --project filter does not apply to memoir export.
     let mut memoir_records = Vec::new();
     if include_memoirs {
-        let memoirs = store
-            .list_memoirs()
-            .context("failed to query memoirs")?;
+        let memoirs = store.list_memoirs().context("failed to query memoirs")?;
 
         for memoir in memoirs {
             let concepts = store
@@ -127,11 +125,7 @@ pub(crate) fn cmd_export(
     let mut session_records = Vec::new();
     if include_sessions {
         let sessions = store
-            .export_sessions_for_archive(
-                project.as_deref(),
-                since.as_deref(),
-                until.as_deref(),
-            )
+            .export_sessions_for_archive(project.as_deref(), since.as_deref(), until.as_deref())
             .context("failed to query sessions")?;
 
         session_records = sessions
@@ -140,27 +134,21 @@ pub(crate) fn cmd_export(
                 // Note: files_modified and errors are stored as comma-separated strings
                 // in SQLite. Paths or messages containing commas will be split incorrectly.
                 // A future migration to JSON array storage would fix this.
-                let files_modified = session
-                    .files_modified
-                    .as_ref()
-                    .and_then(|fm| {
-                        if fm.is_empty() {
-                            None
-                        } else {
-                            Some(fm.split(',').map(|s| s.to_string()).collect())
-                        }
-                    });
+                let files_modified = session.files_modified.as_ref().and_then(|fm| {
+                    if fm.is_empty() {
+                        None
+                    } else {
+                        Some(fm.split(',').map(|s| s.to_string()).collect())
+                    }
+                });
 
-                let errors = session
-                    .errors
-                    .as_ref()
-                    .and_then(|e| {
-                        if e.is_empty() {
-                            None
-                        } else {
-                            Some(e.split(',').map(|s| s.to_string()).collect())
-                        }
-                    });
+                let errors = session.errors.as_ref().and_then(|e| {
+                    if e.is_empty() {
+                        None
+                    } else {
+                        Some(e.split(',').map(|s| s.to_string()).collect())
+                    }
+                });
 
                 ArchiveSessionRecord {
                     id: session.id.clone(),
@@ -286,8 +274,8 @@ mod tests {
         assert!(output_path.exists(), "output file should exist");
 
         let content = fs::read_to_string(&output_path).unwrap();
-        let obj: serde_json::Value = serde_json::from_str(&content)
-            .expect("output should be valid JSON");
+        let obj: serde_json::Value =
+            serde_json::from_str(&content).expect("output should be valid JSON");
 
         assert_eq!(obj["schema_version"], "1.0");
         assert!(obj["exported_at"].is_string());

@@ -126,7 +126,11 @@ impl SqliteStore {
             .map(|concept| ProjectUnderstandingConcept {
                 name: concept.name,
                 definition: concept.definition,
-                labels: concept.labels.into_iter().map(|label| label.to_string()).collect(),
+                labels: concept
+                    .labels
+                    .into_iter()
+                    .map(|label| label.to_string())
+                    .collect(),
                 confidence: concept.confidence.value(),
             })
             .collect();
@@ -242,7 +246,8 @@ impl SqliteStore {
                     })
                     .collect();
 
-                let understanding = self.project_understanding_bundle(project, DEFAULT_CONCEPT_LIMIT)?;
+                let understanding =
+                    self.project_understanding_bundle(project, DEFAULT_CONCEPT_LIMIT)?;
                 (council_artifacts, project_context, decisions, understanding)
             }
             None => (Vec::new(), Vec::new(), Vec::new(), None),
@@ -265,7 +270,7 @@ impl SqliteStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hyphae_core::{Concept, Importance, Memory, Memoir, MemoryStore};
+    use hyphae_core::{Concept, Importance, Memoir, Memory, MemoryStore};
 
     fn test_store() -> SqliteStore {
         SqliteStore::in_memory().unwrap()
@@ -285,7 +290,9 @@ mod tests {
             .session_end(&session_id, Some("compact summary"), None, Some("0"))
             .unwrap();
 
-        let artifacts = store.list_compact_summary_artifacts(Some("demo"), 5).unwrap();
+        let artifacts = store
+            .list_compact_summary_artifacts(Some("demo"), 5)
+            .unwrap();
         assert_eq!(artifacts.len(), 1);
         assert_eq!(artifacts[0].artifact_type, "compact_summary");
         assert_eq!(artifacts[0].summary, "compact summary");
@@ -325,7 +332,10 @@ mod tests {
         assert_eq!(artifacts.len(), 1);
         assert_eq!(artifacts[0].artifact_type, "council_lifecycle");
         assert_eq!(artifacts[0].session_id.as_deref(), Some("ses_123"));
-        assert_eq!(artifacts[0].prompt_excerpt.as_deref(), Some("/council review this task"));
+        assert_eq!(
+            artifacts[0].prompt_excerpt.as_deref(),
+            Some("/council review this task")
+        );
     }
 
     #[test]

@@ -101,7 +101,12 @@ mod tests {
         assert_eq!(surface.schema_version, "1.0");
         assert_eq!(surface.project.as_deref(), Some("demo"));
         assert_eq!(surface.scoped_identity.project.as_deref(), Some("demo"));
-        assert!(surface.store.project_topics.contains(&"context/demo".to_string()));
+        assert!(
+            surface
+                .store
+                .project_topics
+                .contains(&"context/demo".to_string())
+        );
         assert!(
             surface
                 .store
@@ -116,7 +121,10 @@ mod tests {
         assert!(surface.project.is_none());
         assert_eq!(
             surface.store.project_topics,
-            vec!["context/{project}".to_string(), "decisions/{project}".to_string()]
+            vec![
+                "context/{project}".to_string(),
+                "decisions/{project}".to_string()
+            ]
         );
     }
 
@@ -127,6 +135,9 @@ mod tests {
         assert_eq!(parsed["schema_version"].as_str(), Some("1.0"));
         assert_eq!(parsed["artifact_type"].as_str(), Some("memory_protocol"));
         assert_eq!(parsed["project"].as_str(), Some("demo"));
-        assert_eq!(parsed["resources"][0]["uri"].as_str(), Some(PROTOCOL_RESOURCE_URI));
+        assert_eq!(
+            parsed["resources"][0]["uri"].as_str(),
+            Some(PROTOCOL_RESOURCE_URI)
+        );
     }
 }

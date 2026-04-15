@@ -289,7 +289,11 @@ fn main() -> Result<()> {
                         "query sanitized before search"
                     );
                 }
-                if sanitized.text.is_empty() { query } else { sanitized.text }
+                if sanitized.text.is_empty() {
+                    query
+                } else {
+                    sanitized.text
+                }
             };
             commands::memory::cmd_search(
                 &store,

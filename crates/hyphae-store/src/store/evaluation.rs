@@ -577,7 +577,11 @@ pub fn collect_recall_effectiveness_window(
         .count();
     let total_effectiveness = scored_occurrences
         .iter()
-        .filter_map(|occurrence| occurrence.effectiveness.map(|effectiveness| effectiveness as f64))
+        .filter_map(|occurrence| {
+            occurrence
+                .effectiveness
+                .map(|effectiveness| effectiveness as f64)
+        })
         .sum();
 
     let mut top_by_memory: HashMap<String, (f64, usize)> = HashMap::new();

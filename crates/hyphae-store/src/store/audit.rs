@@ -152,8 +152,7 @@ impl SqliteStore {
         operation: Option<AuditOperation>,
         limit: usize,
     ) -> HyphaeResult<Vec<AuditEntry>> {
-        let sql =
-            "SELECT id, timestamp, operation, memory_id, topic, content_hash, metadata_json
+        let sql = "SELECT id, timestamp, operation, memory_id, topic, content_hash, metadata_json
              FROM audit_log
              WHERE (?1 IS NULL OR timestamp >= ?1)
                AND (?2 IS NULL OR operation = ?2)
@@ -169,22 +168,19 @@ impl SqliteStore {
         let op_param = operation.map(|o| o.as_str().to_string());
 
         let rows = stmt
-            .query_map(
-                params![since_param, op_param, limit as i64],
-                |row| {
-                    let ts_str: String = row.get(1)?;
-                    let op_str: String = row.get(2)?;
-                    Ok(AuditEntry {
-                        id: row.get(0)?,
-                        timestamp: parse_audit_timestamp(&ts_str)?,
-                        operation: parse_audit_operation(&op_str)?,
-                        memory_id: row.get(3)?,
-                        topic: row.get(4)?,
-                        content_hash: row.get(5)?,
-                        metadata_json: row.get(6)?,
-                    })
-                },
-            )
+            .query_map(params![since_param, op_param, limit as i64], |row| {
+                let ts_str: String = row.get(1)?;
+                let op_str: String = row.get(2)?;
+                Ok(AuditEntry {
+                    id: row.get(0)?,
+                    timestamp: parse_audit_timestamp(&ts_str)?,
+                    operation: parse_audit_operation(&op_str)?,
+                    memory_id: row.get(3)?,
+                    topic: row.get(4)?,
+                    content_hash: row.get(5)?,
+                    metadata_json: row.get(6)?,
+                })
+            })
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         let mut results = Vec::new();
@@ -337,13 +333,7 @@ mod tests {
             .write_audit(AuditOperation::Store, "mem-1", Some("test"), None, None)
             .unwrap();
         store
-            .write_audit(
-                AuditOperation::Update,
-                "mem-1",
-                Some("test"),
-                None,
-                None,
-            )
+            .write_audit(AuditOperation::Update, "mem-1", Some("test"), None, None)
             .unwrap();
 
         let entries = store.audit_list(None, None, 10).unwrap();
@@ -449,10 +439,7 @@ mod tests {
 
         let result = store.audit_rollback(&id);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("cannot rollback"));
+        assert!(result.unwrap_err().to_string().contains("cannot rollback"));
     }
 
     #[test]

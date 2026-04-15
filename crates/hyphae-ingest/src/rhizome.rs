@@ -238,7 +238,9 @@ mod utils [74:0-100:1]
         let kinds: Vec<&str> = symbols.iter().map(|s| s.kind.as_str()).collect();
         assert_eq!(
             kinds,
-            ["fn", "method", "class", "struct", "enum", "trait", "const", "mod"]
+            [
+                "fn", "method", "class", "struct", "enum", "trait", "const", "mod"
+            ]
         );
     }
 }

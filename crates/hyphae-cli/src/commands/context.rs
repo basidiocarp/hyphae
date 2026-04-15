@@ -247,7 +247,10 @@ mod tests {
             parsed["scoped_identity"]["worktree_id"].as_str(),
             Some("wt-alpha")
         );
-        assert_eq!(parsed["scoped_identity"]["scope"].as_str(), Some("worker-a"));
+        assert_eq!(
+            parsed["scoped_identity"]["scope"].as_str(),
+            Some("worker-a")
+        );
         assert_eq!(context.len(), 1);
         assert!(
             context[0]["content"]

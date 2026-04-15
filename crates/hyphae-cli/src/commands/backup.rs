@@ -129,9 +129,14 @@ fn write_backup_manifest(
         size,
         scoped_identity,
     );
-    let serialized = serde_json::to_string_pretty(&manifest).context("failed to serialize backup manifest")?;
-    fs::write(&manifest_path, serialized)
-        .with_context(|| format!("failed to write backup manifest {}", manifest_path.display()))?;
+    let serialized =
+        serde_json::to_string_pretty(&manifest).context("failed to serialize backup manifest")?;
+    fs::write(&manifest_path, serialized).with_context(|| {
+        format!(
+            "failed to write backup manifest {}",
+            manifest_path.display()
+        )
+    })?;
     Ok(manifest_path)
 }
 

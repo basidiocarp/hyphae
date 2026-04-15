@@ -862,7 +862,10 @@ mod tests {
         // Code returns ByAst when rhizome is available, ByFunction otherwise
         let code_strategy = ChunkStrategy::for_source_type(&SourceType::Code);
         assert!(
-            matches!(code_strategy, ChunkStrategy::ByAst { .. } | ChunkStrategy::ByFunction { .. }),
+            matches!(
+                code_strategy,
+                ChunkStrategy::ByAst { .. } | ChunkStrategy::ByFunction { .. }
+            ),
             "expected ByAst or ByFunction for Code, got {:?}",
             code_strategy
         );
@@ -1273,18 +1276,9 @@ fn main() {
             .filter(|c| c.metadata.heading.is_some())
             .collect();
         assert_eq!(fn_chunks.len(), 3, "expected 3 symbol chunks with headings");
-        assert_eq!(
-            fn_chunks[0].metadata.heading.as_deref(),
-            Some("fn hello")
-        );
-        assert_eq!(
-            fn_chunks[1].metadata.heading.as_deref(),
-            Some("fn world")
-        );
-        assert_eq!(
-            fn_chunks[2].metadata.heading.as_deref(),
-            Some("fn main")
-        );
+        assert_eq!(fn_chunks[0].metadata.heading.as_deref(), Some("fn hello"));
+        assert_eq!(fn_chunks[1].metadata.heading.as_deref(), Some("fn world"));
+        assert_eq!(fn_chunks[2].metadata.heading.as_deref(), Some("fn main"));
 
         // Verify line ranges are set
         assert_eq!(fn_chunks[0].metadata.line_start, Some(3));
@@ -1297,10 +1291,7 @@ fn main() {
 
         // Verify strategy is recorded
         for chunk in &chunks {
-            assert_eq!(
-                chunk.metadata.chunk_strategy.as_deref(),
-                Some("by_ast")
-            );
+            assert_eq!(chunk.metadata.chunk_strategy.as_deref(), Some("by_ast"));
         }
 
         // Verify sequential indices
@@ -1340,10 +1331,7 @@ fn main() {
         // Strategy should still record as by_ast since that's what was requested
         // (even though it fell back internally)
         for chunk in &chunks {
-            assert_eq!(
-                chunk.metadata.chunk_strategy.as_deref(),
-                Some("by_ast")
-            );
+            assert_eq!(chunk.metadata.chunk_strategy.as_deref(), Some("by_ast"));
         }
     }
 

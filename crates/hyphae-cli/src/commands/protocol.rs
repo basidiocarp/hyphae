@@ -1,7 +1,10 @@
 use anyhow::Result;
 
 pub(crate) fn cmd_protocol(project: Option<&str>) -> Result<()> {
-    println!("{}", hyphae_mcp::memory_protocol::protocol_surface_json(project)?);
+    println!(
+        "{}",
+        hyphae_mcp::memory_protocol::protocol_surface_json(project)?
+    );
     Ok(())
 }
 

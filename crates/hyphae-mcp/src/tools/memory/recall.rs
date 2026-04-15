@@ -393,10 +393,7 @@ pub(crate) fn tool_recall(
         Some(q) => q,
         None => return ToolResult::error("missing required field: query".into()),
     };
-    let skip_sanitize = args
-        .get("raw")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+    let skip_sanitize = args.get("raw").and_then(|v| v.as_bool()).unwrap_or(false);
 
     // Sanitize query unless --raw is requested
     let sanitized = if skip_sanitize {
@@ -509,11 +506,7 @@ pub(crate) fn tool_recall(
                     return ToolResult::text("No memories found.".into());
                 }
 
-                let mut output = transparency_header(
-                    &sanitized,
-                    scored_results.len(),
-                    "hybrid",
-                );
+                let mut output = transparency_header(&sanitized, scored_results.len(), "hybrid");
                 if compact {
                     for (mem, _) in &scored_results {
                         output.push_str(&format!("[{}] {}\n", mem.topic, mem.summary));

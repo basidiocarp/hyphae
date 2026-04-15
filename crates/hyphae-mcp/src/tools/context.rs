@@ -9,7 +9,9 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use spore::logging::workflow_span;
 
-use hyphae_core::{MemoirStore, MemoryStore, SCOPED_IDENTITY_SCHEMA_VERSION, ScopedIdentity, detect_secrets};
+use hyphae_core::{
+    MemoirStore, MemoryStore, SCOPED_IDENTITY_SCHEMA_VERSION, ScopedIdentity, detect_secrets,
+};
 use hyphae_store::SqliteStore;
 
 use crate::protocol::ToolResult;

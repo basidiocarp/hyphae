@@ -378,13 +378,12 @@ fn handle_resources_read(
                 return JsonRpcResponse::err(id, -32603, format!("serialization error: {error}"));
             }
         },
-        CONTEXT_RESOURCE_URI => match tools::context::passive_context_resource_text(
-            store,
-            Some(project_name),
-        ) {
-            Ok(text) => text,
-            Err(message) => return JsonRpcResponse::err(id, -32603, message),
-        },
+        CONTEXT_RESOURCE_URI => {
+            match tools::context::passive_context_resource_text(store, Some(project_name)) {
+                Ok(text) => text,
+                Err(message) => return JsonRpcResponse::err(id, -32603, message),
+            }
+        }
         COMPACT_RESOURCE_URI => {
             let artifacts = match store.list_compact_summary_artifacts(Some(project_name), 5) {
                 Ok(artifacts) => artifacts,
@@ -766,7 +765,11 @@ mod tests {
         let resp = handle_resources_read(json!(23), &params, &store, None);
         let error = resp.error.expect("resource read should require project");
         assert_eq!(error.code, -32602);
-        assert!(error.message.contains("requires an active or discoverable project context"));
+        assert!(
+            error
+                .message
+                .contains("requires an active or discoverable project context")
+        );
     }
 
     #[test]

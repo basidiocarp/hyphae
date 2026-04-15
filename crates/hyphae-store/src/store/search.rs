@@ -269,7 +269,10 @@ impl SqliteStore {
                 } else {
                     chunk_map
                         .remove(&key)
-                        .map(|chunk| UnifiedSearchResult::Chunk { chunk: Box::new(chunk), score })
+                        .map(|chunk| UnifiedSearchResult::Chunk {
+                            chunk: Box::new(chunk),
+                            score,
+                        })
                 }
             })
             .collect();
