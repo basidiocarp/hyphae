@@ -396,10 +396,10 @@ pub(crate) enum Commands {
         /// Only export specific topic
         #[arg(long)]
         topic: Option<String>,
-        /// Only export memories created after this date (ISO 8601 or YYYY-MM-DD)
+        /// Only include records created or started after this date (ISO 8601)
         #[arg(long)]
         since: Option<String>,
-        /// Only export memories created before this date (ISO 8601 or YYYY-MM-DD)
+        /// Only include records created or started before this date (ISO 8601)
         #[arg(long)]
         until: Option<String>,
         /// Include memoirs in the export

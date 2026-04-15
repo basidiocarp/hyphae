@@ -8,6 +8,8 @@ use hyphae_store::{
 use std::fs;
 use std::path::PathBuf;
 
+const ARCHIVE_SCHEMA_VERSION: &str = "1.0";
+
 pub(crate) fn cmd_export(
     store: &SqliteStore,
     output: PathBuf,
@@ -65,7 +67,7 @@ pub(crate) fn cmd_export(
                 project: mem.project.clone(),
                 weight: Some(mem.weight.value()),
                 created_at: mem.created_at.to_rfc3339(),
-                updated_at: Some(mem.updated_at.to_rfc3339()),
+                updated_at: mem.updated_at.to_rfc3339(),
             }
         })
         .collect();
@@ -135,6 +137,9 @@ pub(crate) fn cmd_export(
         session_records = sessions
             .iter()
             .map(|session| {
+                // Note: files_modified and errors are stored as comma-separated strings
+                // in SQLite. Paths or messages containing commas will be split incorrectly.
+                // A future migration to JSON array storage would fix this.
                 let files_modified = session
                     .files_modified
                     .as_ref()
@@ -178,7 +183,7 @@ pub(crate) fn cmd_export(
     let filter = ArchiveFilter {
         topic: topic.clone(),
         since: since.clone(),
-        importance_minimum: None,
+        importance_minimum: min_weight.map(|w| w.to_string()),
     };
 
     // Build identity
@@ -190,7 +195,7 @@ pub(crate) fn cmd_export(
 
     // Build archive
     let archive = HyphaeArchive {
-        schema_version: "1.0".to_string(),
+        schema_version: ARCHIVE_SCHEMA_VERSION.to_string(),
         exported_at: Utc::now().to_rfc3339(),
         identity,
         filter,
@@ -210,7 +215,8 @@ pub(crate) fn cmd_export(
     fs::write(&output, serialized)
         .with_context(|| format!("failed to write archive to {}", output.display()))?;
 
-    // Print summary to stderr
+    // Summary to stderr — stdout is reserved for machine-readable output.
+    // Scripting consumers should check the exit code and output file existence.
     eprintln!("Archive exported to {}", output.display());
     eprintln!("  Memories: {}", archive.memories.len());
     eprintln!("  Memoirs: {}", archive.memoirs.len());

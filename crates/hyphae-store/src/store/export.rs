@@ -47,7 +47,7 @@ pub struct ArchiveMemoryRecord {
     pub project: Option<String>,
     pub weight: Option<f32>,
     pub created_at: String,
-    pub updated_at: Option<String>,
+    pub updated_at: String,
 }
 
 /// Memoir concept in archive format.
@@ -219,7 +219,7 @@ mod tests {
             project: Some("myproject".to_string()),
             weight: Some(0.85),
             created_at: "2026-04-14T00:00:00Z".to_string(),
-            updated_at: Some("2026-04-14T01:00:00Z".to_string()),
+            updated_at: "2026-04-14T01:00:00Z".to_string(),
         };
         let json = serde_json::to_string(&record).expect("should serialize");
         assert!(json.contains("test-id"));
