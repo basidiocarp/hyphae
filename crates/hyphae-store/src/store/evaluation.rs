@@ -1003,7 +1003,7 @@ mod tests {
             .log_recall_event(
                 Some(&session_id),
                 "high value recall",
-                &[scored_id.clone()],
+                std::slice::from_ref(&scored_id),
                 Some("demo-project"),
             )
             .unwrap();
@@ -1039,7 +1039,7 @@ mod tests {
             .log_recall_event(
                 Some(&session_id),
                 "quiet recall",
-                &[zero_id.clone()],
+                std::slice::from_ref(&zero_id),
                 Some("demo-project"),
             )
             .unwrap();

@@ -207,7 +207,6 @@ impl SqliteStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hyphae_core::{Importance, Memory};
 
     #[test]
     fn test_archive_memory_record_serializes() {

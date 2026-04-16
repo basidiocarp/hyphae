@@ -924,6 +924,60 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }
     }));
 
+    // Artifact tools
+    tools.push(json!({
+        "name": "hyphae_artifact_store",
+        "description": "Store a typed artifact (compact summary, council record, project understanding) into persistent artifact storage",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "artifact_type": {
+                    "type": "string",
+                    "enum": ["compact_summary", "council_lifecycle", "project_understanding"],
+                    "description": "Type of artifact to store"
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project name to associate with the artifact"
+                },
+                "payload": {
+                    "type": "string",
+                    "description": "JSON content of the artifact"
+                },
+                "source_id": {
+                    "type": "string",
+                    "description": "Optional source identifier (e.g. session id, handoff slug)"
+                }
+            },
+            "required": ["artifact_type", "project", "payload"]
+        }
+    }));
+    tools.push(json!({
+        "name": "hyphae_artifact_query",
+        "description": "Query stored artifacts by type and project",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "artifact_type": {
+                    "type": "string",
+                    "enum": ["compact_summary", "council_lifecycle", "project_understanding"],
+                    "description": "Type of artifact to query"
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project name to scope the query"
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "description": "How many results to return"
+                }
+            },
+            "required": ["artifact_type", "project"]
+        }
+    }));
+
     // Onboarding tool
     tools.push(json!({
         "name": "hyphae_onboard",
