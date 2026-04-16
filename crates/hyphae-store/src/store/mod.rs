@@ -1,3 +1,4 @@
+pub mod artifact;
 pub mod audit;
 mod chunk_store;
 pub mod context;

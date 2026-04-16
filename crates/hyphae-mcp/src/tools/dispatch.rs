@@ -9,7 +9,7 @@ use hyphae_store::SqliteStore;
 
 use crate::protocol::ToolResult;
 
-use super::{context, ingest, memoir, memory, session};
+use super::{artifact, context, ingest, memoir, memory, session};
 
 pub fn call_tool(
     store: &SqliteStore,
@@ -117,6 +117,13 @@ pub fn call_tool_with_consolidation(
         "hyphae_session_context" => session::tool_session_context(store, args, trace),
         // Onboarding
         "hyphae_onboard" => super::onboard::tool_onboard(store, project, trace),
+        // Artifact tools
+        "hyphae_artifact_store" => {
+            artifact::tool_artifact_store(store, args, project, trace)
+        }
+        "hyphae_artifact_query" => {
+            artifact::tool_artifact_query(store, args, project, trace)
+        }
         _ => ToolResult::error(format!("unknown tool: {name}")),
     }
 }

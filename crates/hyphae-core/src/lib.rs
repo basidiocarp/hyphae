@@ -1,3 +1,4 @@
+pub mod artifact;
 pub mod chunk;
 pub mod chunk_store;
 pub mod embedder;
@@ -34,6 +35,7 @@ pub use memory::{
     ConsolidationConfig, ConsolidationTopicRule, DEFAULT_CONSOLIDATION_THRESHOLD, Importance,
     Memory, MemoryBuilder, MemorySource, SessionHost, StoreStats, TopicHealth, Weight,
 };
+pub use artifact::{Artifact, ArtifactType, UnknownArtifactType};
 pub use sanitize::{SanitizedQuery, sanitize_query};
 pub use secrets::detect_secrets;
 pub use store::MemoryStore;

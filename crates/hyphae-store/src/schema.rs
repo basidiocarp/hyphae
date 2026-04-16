@@ -837,6 +837,45 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
     }
 
+    // Artifact storage table — typed payloads from the artifact model
+    let artifacts_exists: bool = tx
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='artifacts'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+    if !artifacts_exists {
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS artifacts (
+                artifact_id    TEXT PRIMARY KEY,
+                artifact_type  TEXT NOT NULL,
+                project        TEXT,
+                source_id      TEXT,
+                payload        TEXT NOT NULL,
+                created_at     TEXT NOT NULL,
+                schema_version TEXT NOT NULL DEFAULT '1.0'
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_artifacts_type ON artifacts(artifact_type);
+            CREATE INDEX IF NOT EXISTS idx_artifacts_project ON artifacts(project);
+            CREATE INDEX IF NOT EXISTS idx_artifacts_created_at ON artifacts(created_at);
+            CREATE INDEX IF NOT EXISTS idx_artifacts_type_project ON artifacts(artifact_type, project);
+            ",
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    } else {
+        tx.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_artifacts_type ON artifacts(artifact_type);
+             CREATE INDEX IF NOT EXISTS idx_artifacts_project ON artifacts(project);
+             CREATE INDEX IF NOT EXISTS idx_artifacts_created_at ON artifacts(created_at);
+             CREATE INDEX IF NOT EXISTS idx_artifacts_type_project ON artifacts(artifact_type, project);
+            ",
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    }
+
     // Audit log table — append-only record of all memory mutations
     tx.execute_batch(
         "CREATE TABLE IF NOT EXISTS audit_log (
