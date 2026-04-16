@@ -1,6 +1,6 @@
 [package]
 name = "hyphae-store"
-version = "0.10.13"
+version = "0.10.14"
 edition = "2024"
 rust-version = "1.85"
 description = "SQLite storage backend for Hyphae persistent memory"
