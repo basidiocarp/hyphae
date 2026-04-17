@@ -47,6 +47,64 @@ fn tool_definitions_include_versioned_command_output_contract() {
 }
 
 #[test]
+fn all_tool_definitions_include_annotations() {
+    let defs = tool_definitions(false);
+    let tools = defs["tools"].as_array().expect("tools array");
+
+    for tool in tools {
+        let tool_name = tool["name"]
+            .as_str()
+            .expect("all tools should have a name");
+        assert!(
+            tool["annotations"].is_object(),
+            "tool {tool_name} missing annotations object"
+        );
+
+        let annotations = &tool["annotations"];
+        assert!(
+            annotations["readOnlyHint"].is_boolean(),
+            "tool {tool_name} missing or invalid readOnlyHint"
+        );
+        assert!(
+            annotations["destructiveHint"].is_boolean(),
+            "tool {tool_name} missing or invalid destructiveHint"
+        );
+        assert!(
+            annotations["idempotentHint"].is_boolean(),
+            "tool {tool_name} missing or invalid idempotentHint"
+        );
+    }
+}
+
+#[test]
+fn hyphae_memory_recall_has_correct_annotations() {
+    let defs = tool_definitions(false);
+    let tools = defs["tools"].as_array().expect("tools array");
+    let tool = tools
+        .iter()
+        .find(|t| t["name"] == "hyphae_memory_recall")
+        .expect("hyphae_memory_recall tool");
+
+    assert_eq!(tool["annotations"]["readOnlyHint"], true);
+    assert_eq!(tool["annotations"]["destructiveHint"], false);
+    assert_eq!(tool["annotations"]["idempotentHint"], true);
+}
+
+#[test]
+fn hyphae_memory_forget_has_correct_annotations() {
+    let defs = tool_definitions(false);
+    let tools = defs["tools"].as_array().expect("tools array");
+    let tool = tools
+        .iter()
+        .find(|t| t["name"] == "hyphae_memory_forget")
+        .expect("hyphae_memory_forget tool");
+
+    assert_eq!(tool["annotations"]["readOnlyHint"], false);
+    assert_eq!(tool["annotations"]["destructiveHint"], true);
+    assert_eq!(tool["annotations"]["idempotentHint"], true);
+}
+
+#[test]
 fn search_all_rejects_partial_identity_pair() {
     let store = test_store();
     let result = call_tool(

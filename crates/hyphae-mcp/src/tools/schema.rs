@@ -46,6 +46,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     }
                 },
                 "required": ["topic", "content"]
+            },
+            "annotations": {
+                "readOnlyHint": false,
+                "destructiveHint": false,
+                "idempotentHint": false
             }
         }),
         json!({
@@ -98,6 +103,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     }
                 },
                 "required": ["query"]
+            },
+            "annotations": {
+                "readOnlyHint": true,
+                "destructiveHint": false,
+                "idempotentHint": true
             }
         }),
         json!({
@@ -112,6 +122,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     }
                 },
                 "required": ["id"]
+            },
+            "annotations": {
+                "readOnlyHint": false,
+                "destructiveHint": true,
+                "idempotentHint": true
             }
         }),
         json!({
@@ -135,6 +150,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     }
                 },
                 "required": ["id"]
+            },
+            "annotations": {
+                "readOnlyHint": false,
+                "destructiveHint": true,
+                "idempotentHint": true
             }
         }),
         json!({
@@ -157,6 +177,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                         "description": "Number of invalidated memories to skip"
                     }
                 }
+            },
+            "annotations": {
+                "readOnlyHint": true,
+                "destructiveHint": false,
+                "idempotentHint": true
             }
         }),
         json!({
@@ -176,6 +201,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     }
                 },
                 "required": ["topic", "summary"]
+            },
+            "annotations": {
+                "readOnlyHint": false,
+                "destructiveHint": false,
+                "idempotentHint": true
             }
         }),
         json!({
@@ -184,6 +214,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {}
+            },
+            "annotations": {
+                "readOnlyHint": true,
+                "destructiveHint": false,
+                "idempotentHint": true
             }
         }),
         json!({
@@ -192,6 +227,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {}
+            },
+            "annotations": {
+                "readOnlyHint": true,
+                "destructiveHint": false,
+                "idempotentHint": true
             }
         }),
         json!({
@@ -221,6 +261,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     }
                 },
                 "required": ["id", "content"]
+            },
+            "annotations": {
+                "readOnlyHint": false,
+                "destructiveHint": false,
+                "idempotentHint": true
             }
         }),
         json!({
@@ -234,6 +279,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                         "description": "Check a specific topic (optional — checks all if omitted)"
                     }
                 }
+            },
+            "annotations": {
+                "readOnlyHint": true,
+                "destructiveHint": false,
+                "idempotentHint": true
             }
         }),
         json!({
@@ -250,6 +300,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                         "description": "Total evaluation window in days (splits into two equal halves for comparison)"
                     }
                 }
+            },
+            "annotations": {
+                "readOnlyHint": true,
+                "destructiveHint": false,
+                "idempotentHint": true
             }
         }),
         // Cross-project tools
@@ -272,6 +327,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     }
                 },
                 "required": ["query"]
+            },
+            "annotations": {
+                "readOnlyHint": true,
+                "destructiveHint": false,
+                "idempotentHint": true
             }
         }),
         json!({
@@ -286,6 +346,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     }
                 },
                 "required": ["topic"]
+            },
+            "annotations": {
+                "readOnlyHint": false,
+                "destructiveHint": false,
+                "idempotentHint": true
             }
         }),
         // Memoir tools
@@ -305,6 +370,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     }
                 },
                 "required": ["name"]
+            },
+            "annotations": {
+                "readOnlyHint": false,
+                "destructiveHint": false,
+                "idempotentHint": false
             }
         }),
         json!({
@@ -313,6 +383,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {}
+            },
+            "annotations": {
+                "readOnlyHint": true,
+                "destructiveHint": false,
+                "idempotentHint": true
             }
         }),
         json!({
@@ -327,6 +402,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     }
                 },
                 "required": ["name"]
+            },
+            "annotations": {
+                "readOnlyHint": true,
+                "destructiveHint": false,
+                "idempotentHint": true
             }
         }),
         json!({
@@ -354,6 +434,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     }
                 },
                 "required": ["memoir", "name", "definition"]
+            },
+            "annotations": {
+                "readOnlyHint": false,
+                "destructiveHint": false,
+                "idempotentHint": false
             }
         }),
         json!({
@@ -377,6 +462,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     }
                 },
                 "required": ["memoir", "name", "definition"]
+            },
+            "annotations": {
+                "readOnlyHint": false,
+                "destructiveHint": false,
+                "idempotentHint": true
             }
         }),
         json!({
@@ -404,6 +494,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     }
                 },
                 "required": ["memoir", "query"]
+            },
+            "annotations": {
+                "readOnlyHint": true,
+                "destructiveHint": false,
+                "idempotentHint": true
             }
         }),
         json!({
@@ -431,6 +526,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     }
                 },
                 "required": ["memoir", "from", "to", "relation"]
+            },
+            "annotations": {
+                "readOnlyHint": false,
+                "destructiveHint": false,
+                "idempotentHint": true
             }
         }),
         json!({
@@ -454,6 +554,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     }
                 },
                 "required": ["memoir", "name"]
+            },
+            "annotations": {
+                "readOnlyHint": true,
+                "destructiveHint": false,
+                "idempotentHint": true
             }
         }),
         json!({
@@ -473,6 +578,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     }
                 },
                 "required": ["query"]
+            },
+            "annotations": {
+                "readOnlyHint": true,
+                "destructiveHint": false,
+                "idempotentHint": true
             }
         }),
         json!({
@@ -561,6 +671,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     }
                 },
                 "required": ["schema_version", "project", "nodes", "edges"]
+            },
+            "annotations": {
+                "readOnlyHint": false,
+                "destructiveHint": false,
+                "idempotentHint": true
             }
         }),
         json!({
@@ -589,6 +704,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     }
                 },
                 "required": ["project", "query_type"]
+            },
+            "annotations": {
+                "readOnlyHint": true,
+                "destructiveHint": false,
+                "idempotentHint": true
             }
         }),
     ];
@@ -637,6 +757,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                 }
             },
             "required": ["task"]
+        },
+        "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true
         }
     }));
 
@@ -658,6 +783,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                 }
             },
             "required": ["path"]
+        },
+        "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true
         }
     }));
     tools.push(json!({
@@ -685,6 +815,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                 }
             },
             "required": ["query"]
+        },
+        "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true
         }
     }));
     tools.push(json!({
@@ -693,6 +828,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         "inputSchema": {
             "type": "object",
             "properties": {}
+        },
+        "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true
         }
     }));
     tools.push(json!({
@@ -707,6 +847,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                 }
             },
             "required": ["path"]
+        },
+        "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": true
         }
     }));
     tools.push(json!({
@@ -747,6 +892,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                 }
             },
             "required": ["query"]
+        },
+        "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true
         }
     }));
 
@@ -795,6 +945,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                 }
             },
             "required": ["schema_version", "command", "output"]
+        },
+        "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false
         }
     }));
     tools.push(json!({
@@ -822,6 +977,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                 }
             },
             "required": ["document_id"]
+        },
+        "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true
         }
     }));
 
@@ -858,6 +1018,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                 }
             },
             "required": ["project"]
+        },
+        "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false
         }
     }));
 
@@ -887,6 +1052,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                 }
             },
             "required": ["session_id"]
+        },
+        "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true
         }
     }));
 
@@ -921,6 +1091,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                 }
             },
             "required": ["project"]
+        },
+        "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true
         }
     }));
 
@@ -950,6 +1125,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                 }
             },
             "required": ["artifact_type", "project", "payload"]
+        },
+        "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true
         }
     }));
     tools.push(json!({
@@ -975,6 +1155,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                 }
             },
             "required": ["artifact_type", "project"]
+        },
+        "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true
         }
     }));
 
@@ -985,6 +1170,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         "inputSchema": {
             "type": "object",
             "properties": {}
+        },
+        "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true
         }
     }));
 
@@ -1000,6 +1190,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                         "description": "Only embed memories in this topic (optional)"
                     }
                 }
+            },
+            "annotations": {
+                "readOnlyHint": false,
+                "destructiveHint": false,
+                "idempotentHint": true
             }
         }));
     }
@@ -1018,6 +1213,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     "description": "Maximum number of lessons to extract"
                 }
             }
+        },
+        "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true
         }
     }));
 
