@@ -55,6 +55,7 @@ impl SqliteStore {
         project: Option<&str>,
         code_expand_project: Option<&str>,
     ) -> HyphaeResult<Vec<UnifiedSearchResult>> {
+        let _span = tracing::info_span!("hyphae.memory.search_all").entered();
         self.search_all_impl(
             query,
             embedding,
@@ -88,6 +89,7 @@ impl SqliteStore {
         worktree: Option<&str>,
         code_expand_project: Option<&str>,
     ) -> HyphaeResult<Vec<UnifiedSearchResult>> {
+        let _span = tracing::info_span!("hyphae.memory.search_scoped").entered();
         self.search_all_impl(
             query,
             embedding,

@@ -667,6 +667,7 @@ impl SqliteStore {
 
 impl MemoryStore for SqliteStore {
     fn store(&self, memory: Memory) -> HyphaeResult<MemoryId> {
+        let _span = tracing::info_span!("hyphae.memory.store").entered();
         // Write-ahead audit record before mutation
         if let Err(e) = self.audit_memory(super::audit::AuditOperation::Store, &memory) {
             tracing::warn!("audit log write failed, mutation proceeding: {e}");
@@ -741,6 +742,7 @@ impl MemoryStore for SqliteStore {
     }
 
     fn update(&self, memory: &Memory) -> HyphaeResult<()> {
+        let _span = tracing::info_span!("hyphae.memory.update").entered();
         // Write-ahead audit record before mutation
         if let Err(e) = self.audit_memory(super::audit::AuditOperation::Update, memory) {
             tracing::warn!("audit log write failed, mutation proceeding: {e}");
@@ -824,6 +826,7 @@ impl MemoryStore for SqliteStore {
         reason: Option<&str>,
         superseded_by: Option<&MemoryId>,
     ) -> HyphaeResult<()> {
+        let _span = tracing::info_span!("hyphae.memory.invalidate").entered();
         // Write-ahead audit record before mutation
         let meta = serde_json::json!({
             "reason": reason,
