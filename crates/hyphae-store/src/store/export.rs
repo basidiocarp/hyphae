@@ -1,7 +1,7 @@
 //! Export operations for creating portable archives.
 
 use rusqlite::params;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use hyphae_core::{HyphaeError, HyphaeResult, Memory};
 
@@ -9,7 +9,7 @@ use super::SqliteStore;
 use super::session::Session;
 
 /// Top-level archive payload structure.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HyphaeArchive {
     pub schema_version: String,
     pub exported_at: String,
@@ -21,7 +21,7 @@ pub struct HyphaeArchive {
 }
 
 /// Identity of the source instance.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArchiveIdentity {
     pub project: Option<String>,
     pub project_root: Option<String>,
@@ -29,7 +29,7 @@ pub struct ArchiveIdentity {
 }
 
 /// Filters applied during export.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArchiveFilter {
     pub topic: Option<String>,
     pub since: Option<String>,
@@ -38,7 +38,7 @@ pub struct ArchiveFilter {
 }
 
 /// Memory record in archive format.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArchiveMemoryRecord {
     pub id: String,
     pub topic: String,
@@ -52,7 +52,7 @@ pub struct ArchiveMemoryRecord {
 }
 
 /// Memoir concept in archive format.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArchiveMemoirConceptRecord {
     pub id: String,
     pub name: String,
@@ -60,7 +60,7 @@ pub struct ArchiveMemoirConceptRecord {
 }
 
 /// Memoir link in archive format.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArchiveMemoirLinkRecord {
     pub from_id: String,
     pub to_id: String,
@@ -68,7 +68,7 @@ pub struct ArchiveMemoirLinkRecord {
 }
 
 /// Memoir record in archive format.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArchiveMemoirRecord {
     pub id: String,
     pub name: String,
@@ -80,7 +80,7 @@ pub struct ArchiveMemoirRecord {
 }
 
 /// Session record in archive format.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArchiveSessionRecord {
     pub id: String,
     pub project: String,

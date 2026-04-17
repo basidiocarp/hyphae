@@ -663,6 +663,87 @@ impl SqliteStore {
             newest_memory: parse_opt_dt(newest_str),
         })
     }
+
+    /// Replace an existing memory record unconditionally, preserving `created_at`.
+    ///
+    /// Unlike [`MemoryStore::update`], this method deletes the existing row and
+    /// re-inserts the provided `Memory`, which allows callers to change the
+    /// `created_at` timestamp (e.g. for archive import merge).
+    pub fn replace_memory(&self, memory: Memory) -> HyphaeResult<MemoryId> {
+        if let Err(e) = self.audit_memory(super::audit::AuditOperation::Update, &memory) {
+            tracing::warn!("audit log write failed, replace proceeding: {e}");
+        }
+
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        tx.execute(
+            "DELETE FROM vec_memories WHERE memory_id = ?1",
+            params![memory.id.as_ref()],
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        tx.execute(
+            "DELETE FROM memories WHERE id = ?1",
+            params![memory.id.as_ref()],
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let keywords_json = serde_json::to_string(&memory.keywords)?;
+        let related_json = serde_json::to_string(&memory.related_ids)?;
+        let st = source_type(&memory.source);
+        let sd = source_data(&memory.source);
+        let emb_blob = memory.embedding.as_deref().map(embedding_to_blob);
+
+        tx.execute(
+            "INSERT INTO memories (id, created_at, updated_at, last_accessed, access_count, weight,
+             topic, summary, raw_excerpt, keywords,
+             importance, source_type, source_data, related_ids, embedding, project, branch, worktree,
+             expires_at, invalidated_at, invalidation_reason, superseded_by)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
+            params![
+                memory.id.as_ref(),
+                memory.created_at.to_rfc3339(),
+                memory.updated_at.to_rfc3339(),
+                memory.last_accessed.to_rfc3339(),
+                memory.access_count,
+                memory.weight.value(),
+                memory.topic,
+                memory.summary,
+                memory.raw_excerpt,
+                keywords_json,
+                memory.importance.to_string(),
+                st,
+                sd,
+                related_json,
+                emb_blob,
+                memory.project.as_deref(),
+                memory.branch.as_deref(),
+                memory.worktree.as_deref(),
+                memory.expires_at.map(|dt| dt.to_rfc3339()),
+                memory.invalidated_at.map(|dt| dt.to_rfc3339()),
+                memory.invalidation_reason.as_deref(),
+                memory.superseded_by.as_ref().map(MemoryId::as_ref),
+            ],
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        if let Some(ref emb) = memory.embedding {
+            let blob = embedding_to_blob(emb);
+            tx.execute(
+                "INSERT INTO vec_memories (memory_id, embedding) VALUES (?1, ?2)",
+                params![memory.id.as_ref(), blob],
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        }
+
+        let id = memory.id.clone();
+        tx.commit()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        Ok(id)
+    }
 }
 
 impl MemoryStore for SqliteStore {

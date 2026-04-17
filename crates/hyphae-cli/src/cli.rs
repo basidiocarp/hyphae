@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use crate::commands::context::GatherContextArgs;
 use crate::commands::feedback::FeedbackArgs;
+use crate::commands::import::ConflictStrategy;
 use crate::commands::memoir::MemoirArgs;
 use crate::commands::memory::{MemoryArgs, SearchOrder};
 use crate::commands::project::ProjectArgs;
@@ -417,6 +418,18 @@ pub(crate) enum Commands {
         /// Overwrite output file if it exists
         #[arg(long)]
         overwrite: bool,
+    },
+
+    /// Import memories, memoirs, and sessions from a portable archive
+    Import {
+        /// Path to archive file produced by `hyphae export`
+        input: std::path::PathBuf,
+        /// Conflict resolution strategy for existing records
+        #[arg(long, value_enum, default_value_t = ConflictStrategy::Skip)]
+        on_conflict: ConflictStrategy,
+        /// Report what would be imported without writing anything
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Backup the database

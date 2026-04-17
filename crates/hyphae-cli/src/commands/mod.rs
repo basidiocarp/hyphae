@@ -13,6 +13,7 @@ pub mod doctor;
 pub mod evaluate;
 pub mod export;
 pub mod export_training;
+pub mod import;
 pub mod feedback;
 pub mod import_claude_memory;
 pub mod lessons;

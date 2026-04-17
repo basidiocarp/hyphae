@@ -788,6 +788,53 @@ impl SqliteStore {
             HyphaeError::Database(format!("failed to collect outcome timeline rows: {e}"))
         })
     }
+
+    /// Return `true` if a session with the given ID already exists in the store.
+    pub fn session_exists(&self, session_id: &str) -> HyphaeResult<bool> {
+        let count: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sessions WHERE id = ?1",
+                params![session_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| HyphaeError::Database(format!("failed to check session existence: {e}")))?;
+        Ok(count > 0)
+    }
+
+    /// Import a session record from an archive.
+    ///
+    /// Uses `INSERT OR IGNORE` so a duplicate ID is silently skipped, making
+    /// the call safe for repeated imports.
+    #[allow(clippy::too_many_arguments)]
+    pub fn import_session_record(
+        &self,
+        id: &str,
+        project: &str,
+        project_root: Option<&str>,
+        worktree_id: Option<&str>,
+        task: Option<&str>,
+        started_at: &str,
+        ended_at: Option<&str>,
+        summary: Option<&str>,
+        files_modified: Option<&str>,
+        errors: Option<&str>,
+        status: &str,
+    ) -> HyphaeResult<()> {
+        self.conn
+            .execute(
+                "INSERT OR IGNORE INTO sessions
+                 (id, project, project_root, worktree_id, task, started_at, ended_at, summary,
+                  files_modified, errors, status)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    id, project, project_root, worktree_id, task, started_at, ended_at,
+                    summary, files_modified, errors, status,
+                ],
+            )
+            .map_err(|e| HyphaeError::Database(format!("failed to import session record: {e}")))?;
+        Ok(())
+    }
 }
 
 fn signals_to_query(signals: &Value) -> Option<String> {

@@ -65,6 +65,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::ExportTraining { .. } => "export_training",
         Commands::Evaluate { .. } => "evaluate",
         Commands::Export { .. } => "export",
+        Commands::Import { .. } => "import",
         Commands::Backup { .. } => "backup",
         Commands::Restore { .. } => "restore",
         Commands::IngestSessions { .. } => "ingest_sessions",
@@ -133,6 +134,7 @@ fn all_projects_allowed(command: &Commands) -> bool {
         | Commands::ImportClaudeMemory { .. }
         | Commands::CodexNotify { .. }
         | Commands::IngestSessions { .. }
+        | Commands::Import { .. }
         | Commands::Purge { .. } => false,
     }
 }
@@ -606,6 +608,14 @@ fn main() -> Result<()> {
                 pretty,
                 overwrite,
             )?;
+        }
+
+        Commands::Import {
+            input,
+            on_conflict,
+            dry_run,
+        } => {
+            commands::import::cmd_import(&store, input.clone(), on_conflict, dry_run)?;
         }
 
         Commands::Backup { .. } | Commands::Restore { .. } => {
