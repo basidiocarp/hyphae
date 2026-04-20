@@ -9,6 +9,9 @@ use hyphae_store::{
 use std::fs;
 use std::path::PathBuf;
 
+/// Supported archive schema version.
+const SUPPORTED_ARCHIVE_VERSION: &str = "1.0";
+
 /// Conflict resolution strategy for existing records.
 #[derive(Debug, Clone, clap::ValueEnum)]
 pub enum ConflictStrategy {
@@ -19,6 +22,41 @@ pub enum ConflictStrategy {
     /// Merge the imported record into the existing record
     /// (union keywords, take max weight, keep earliest created_at).
     Merge,
+}
+
+/// Validate an archive for correctness before import.
+fn validate_archive(archive: &HyphaeArchive) -> Result<()> {
+    // Check for missing schema_version
+    if archive.schema_version.is_empty() {
+        anyhow::bail!("archive is missing required field 'schema_version'");
+    }
+
+    // Check for unsupported schema version
+    if archive.schema_version != SUPPORTED_ARCHIVE_VERSION {
+        anyhow::bail!(
+            "unsupported archive schema version '{}': expected '{}'",
+            archive.schema_version,
+            SUPPORTED_ARCHIVE_VERSION
+        );
+    }
+
+    // Validate memory entries
+    for (idx, rec) in archive.memories.iter().enumerate() {
+        if rec.content.is_empty() {
+            anyhow::bail!(
+                "malformed memory entry at index {}: field 'content' is empty",
+                idx
+            );
+        }
+        if rec.topic.is_empty() {
+            anyhow::bail!(
+                "malformed memory entry at index {}: field 'topic' is empty",
+                idx
+            );
+        }
+    }
+
+    Ok(())
 }
 
 pub(crate) fn cmd_import(
@@ -32,6 +70,9 @@ pub(crate) fn cmd_import(
 
     let archive: HyphaeArchive =
         serde_json::from_str(&raw).context("failed to deserialize archive JSON")?;
+
+    // Validate archive before any mutation
+    validate_archive(&archive)?;
 
     let mut memories_imported: usize = 0;
     let mut memories_skipped: usize = 0;
@@ -617,5 +658,69 @@ mod tests {
 
         let result = cmd_import(&store, bad_path, ConflictStrategy::Skip, false);
         assert!(result.is_err(), "import of invalid JSON should fail");
+    }
+
+    // ── archive validation ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_import_validation_rejects_missing_schema_version() {
+        let dir = TempDir::new().unwrap();
+        let store = make_store(&dir);
+
+        let mut archive = minimal_archive();
+        archive.schema_version = String::new(); // empty schema version
+
+        let path = write_archive(&dir, &archive);
+        let result = cmd_import(&store, path, ConflictStrategy::Skip, false);
+
+        assert!(result.is_err(), "import with missing schema_version should fail");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("schema_version"),
+            "error message should mention 'schema_version', got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_import_validation_rejects_unknown_schema_version() {
+        let dir = TempDir::new().unwrap();
+        let store = make_store(&dir);
+
+        let mut archive = minimal_archive();
+        archive.schema_version = "99.0".to_string(); // unsupported version
+
+        let path = write_archive(&dir, &archive);
+        let result = cmd_import(&store, path, ConflictStrategy::Skip, false);
+
+        assert!(result.is_err(), "import with unknown schema_version should fail");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("unsupported"),
+            "error message should mention 'unsupported', got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_import_validation_rejects_malformed_memory() {
+        let dir = TempDir::new().unwrap();
+        let store = make_store(&dir);
+
+        let mut archive = minimal_archive();
+        let mut rec = sample_memory_record("MEM_MAL_01");
+        rec.content = String::new(); // empty content
+        archive.memories.push(rec);
+
+        let path = write_archive(&dir, &archive);
+        let result = cmd_import(&store, path, ConflictStrategy::Skip, false);
+
+        assert!(result.is_err(), "import with malformed memory should fail");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("content"),
+            "error message should mention 'content', got: {}",
+            err_msg
+        );
     }
 }
