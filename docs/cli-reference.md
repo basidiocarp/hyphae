@@ -9,11 +9,11 @@ All commands accept the global `--db <path>` flag to override the default databa
 - [Global option](#global-option)
 - [Memories (episodic)](#memories-episodic)
   - [`hyphae store`](#hyphae-store----store-a-memory)
-  - [`hyphae recall`](#hyphae-recall----search-memories)
-  - [`hyphae list`](#hyphae-list----list-memories)
-  - [`hyphae forget`](#hyphae-forget----delete-a-memory)
+  - [`hyphae search`](#hyphae-search----search-memories)
+  - [`hyphae memory`](#hyphae-memory----read-stored-memories)
+  - [`hyphae invalidate`](#hyphae-invalidate----invalidate-a-memory)
   - [`hyphae extract`](#hyphae-extract----fact-extraction-zero-llm-cost)
-  - [`hyphae recall-context`](#hyphae-recall-context----context-injection)
+  - [`hyphae gather-context`](#hyphae-gather-context----gather-relevant-context)
 - [Memoir (knowledge graphs)](#memoir-knowledge-graphs)
   - [`hyphae memoir create`](#hyphae-memoir-create----create-a-memoir)
   - [`hyphae memoir list`](#hyphae-memoir-list----list-memoirs)
@@ -37,10 +37,9 @@ All commands accept the global `--db <path>` flag to override the default databa
   - [`hyphae feedback`](#hyphae-feedback----structured-feedback-signals)
   - [`hyphae topics`](#hyphae-topics----list-topics)
   - [`hyphae stats`](#hyphae-stats----global-statistics)
-  - [`hyphae decay`](#hyphae-decay----apply-decay-manually)
   - [`hyphae prune`](#hyphae-prune----delete-low-weight-memories)
   - [`hyphae consolidate`](#hyphae-consolidate----consolidate-a-topic)
-  - [`hyphae embed`](#hyphae-embed----generate-embeddings)
+  - [`hyphae embed-all`](#hyphae-embed-all----generate-embeddings)
   - [`hyphae export-training`](#hyphae-export-training----export-memories-as-training-jsonl)
   - [`hyphae backup`](#hyphae-backup----backup-the-database)
   - [`hyphae restore`](#hyphae-restore----restore-from-backup)
@@ -52,8 +51,7 @@ All commands accept the global `--db <path>` flag to override the default databa
   - [`hyphae serve`](#hyphae-serve----start-the-mcp-server)
 - [Benchmarks](#benchmarks)
   - [`hyphae bench`](#hyphae-bench----storage-performance-benchmark)
-  - [`hyphae bench-recall`](#hyphae-bench-recall----knowledge-retention-benchmark)
-  - [`hyphae bench-agent`](#hyphae-bench-agent----agent-efficiency-benchmark)
+  - [`hyphae bench-retrieval`](#hyphae-bench-retrieval----retrieval-quality-benchmark)
 - [See also](#see-also)
 
 ---
@@ -104,80 +102,77 @@ If embeddings are enabled, the memory is automatically vectorized on storage.
 
 ---
 
-### `hyphae recall` -- Search memories
+### `hyphae search` -- Search memories
 
 ```
-hyphae recall <query> [-t <topic>] [-l <limit>] [-k <keyword>]
+hyphae search --query <QUERY> [-t <topic>] [-l <limit>] [--order <ORDER>]
 ```
 
 | Option | Short | Required | Default | Description |
 |--------|-------|----------|---------|-------------|
-| `query` | -- | yes (positional) | -- | Natural language query |
+| `--query` | `-q` | yes | -- | Natural language query |
 | `--topic` | `-t` | no | -- | Filter by topic |
-| `--limit` | `-l` | no | `5` | Max number of results |
-| `--keyword` | `-k` | no | -- | Filter by exact keyword |
+| `--limit` | `-l` | no | `10` | Max number of results |
+| `--order` | -- | no | `weight` | Result ordering: `rank` or `weight` |
+| `--include-invalidated` | -- | no | false | Include invalidated memories |
 
 **Examples:**
 
 ```bash
 # Broad search
-hyphae recall "database choice"
+hyphae search --query "database choice"
 
 # Filtered by topic
-hyphae recall "authentication" --topic "decisions-api" --limit 10
+hyphae search -q "authentication" --topic "decisions-api" --limit 10
 
-# Filtered by keyword
-hyphae recall "nginx error" --keyword "cors"
+# Ordered by rank
+hyphae search -q "nginx error" --order rank
 ```
 
 **Automatic behavior:**
-- Applies decay if >24h since last run
-- Updates the access counter for each result
 - Search pipeline: hybrid (if embeddings) -> FTS5 -> keyword LIKE
+- Updates the access counter for each result
 
 ---
 
-### `hyphae list` -- List memories
+### `hyphae memory` -- Read stored memories
 
 ```
-hyphae list [-t <topic>] [-a] [-s <sort>]
+hyphae memory get <ID>
+hyphae memory topic <TOPIC> [-l <limit>]
 ```
 
-| Option | Short | Required | Default | Description |
-|--------|-------|----------|---------|-------------|
-| `--topic` | `-t` | no | -- | Filter by topic |
-| `--all` | `-a` | no | false | List all memories |
-| `--sort` | `-s` | no | `weight` | Sort by: `weight`, `created`, `accessed` |
-
-**Examples:**
+**Get by ID:**
 
 ```bash
-# List a topic
-hyphae list -t "decisions-api"
+hyphae memory get 01HWXYZ123456789ABCDEF
+```
 
-# All memories sorted by creation date
-hyphae list --all --sort created
+**List by topic:**
 
-# Sorted by last access
-hyphae list -t "errors" --sort accessed
+```bash
+hyphae memory topic "decisions-api"
+hyphae memory topic "decisions-api" --limit 50
 ```
 
 ---
 
-### `hyphae forget` -- Delete a memory
+### `hyphae invalidate` -- Invalidate a memory
 
 ```
-hyphae forget <id>
+hyphae invalidate <ID>
 ```
 
 | Argument | Required | Description |
 |----------|----------|-------------|
-| `id` | yes (positional) | ULID ID of the memory to delete |
+| `<ID>` | yes (positional) | ULID ID of the memory to invalidate |
+
+Invalidated memories are hidden by default but can be listed with `hyphae list-invalidated`.
 
 **Example:**
 
 ```bash
-hyphae forget 01HWXYZ123456789ABCDEF
+hyphae invalidate 01HWXYZ123456789ABCDEF
 ```
 
 ---
@@ -219,22 +214,16 @@ echo "Migrated from MySQL to PostgreSQL for JSONB support" | hyphae extract -p a
 
 ---
 
-### `hyphae recall-context` -- Context injection
+### `hyphae gather-context` -- Gather relevant context
 
 ```
-hyphae recall-context <query> [-l <limit>]
+hyphae gather-context [OPTIONS]
 ```
 
-| Option | Short | Required | Default | Description |
-|--------|-------|----------|---------|-------------|
-| `query` | -- | yes (positional) | -- | Search query |
-| `--limit` | `-l` | no | `10` | Max number of memories |
-
-Returns a formatted block ready for prompt injection. Used by the SessionStart hook for automatic context loading.
+Gathers relevant context as JSON for prompt injection. Used by agent tools for automatic context loading.
 
 ```bash
-hyphae recall-context "my-project backend API"
-hyphae recall-context "authentication" --limit 20
+hyphae gather-context --json
 ```
 
 ---
@@ -327,27 +316,6 @@ hyphae memoir add-concept -m "backend-arch" -n "user-service" \
 hyphae memoir add-concept -m "backend-arch" -n "postgres" \
   -d "Primary database for users and transactions" \
   -l "type:database"
-```
-
----
-
-### `hyphae memoir refine` -- Refine a concept
-
-```
-hyphae memoir refine -m <memoir> -n <name> -d <new-definition>
-```
-
-| Option | Short | Required | Description |
-|--------|-------|----------|-------------|
-| `--memoir` | `-m` | yes | Memoir name |
-| `--name` | `-n` | yes | Existing concept name |
-| `--definition` | `-d` | yes | New definition (replaces the old one) |
-
-Increments the revision and increases concept confidence.
-
-```bash
-hyphae memoir refine -m "backend-arch" -n "user-service" \
-  -d "Handles registration, auth (JWT + OAuth2), profiles and 2FA. Rate limiting via Redis."
 ```
 
 ---
@@ -450,29 +418,6 @@ hyphae memoir inspect -m "backend-arch" "user-service" -D 2
 ```
 
 Use `--json` to emit the concept and neighborhood graph as structured data.
-
----
-
-### `hyphae memoir distill` -- Distill memories into concepts
-
-```
-hyphae memoir distill --from-topic <topic> --into <memoir>
-```
-
-| Option | Required | Description |
-|--------|----------|-------------|
-| `--from-topic` | yes | Source topic (memories) |
-| `--into` | yes | Target memoir (must already exist) |
-
-Transforms memories from a topic into concepts in a memoir. The first keyword becomes the concept name. If a concept with the same name already exists, the definition is merged (refined).
-
-```bash
-# Create the memoir first
-hyphae memoir create -n "arch-v2" -d "Architecture v2"
-
-# Distill decisions into the memoir
-hyphae memoir distill --from-topic "decisions-api" --into "arch-v2"
-```
 
 ---
 
@@ -717,28 +662,6 @@ Avg weight: 0.847
 Oldest:    2024-01-15 09:30
 Newest:    2024-03-05 14:22
 ```
-
----
-
-### `hyphae decay` -- Apply decay manually
-
-```
-hyphae decay [-f <factor>]
-```
-
-| Option | Short | Required | Default | Description |
-|--------|-------|----------|---------|-------------|
-| `--factor` | `-f` | no | `0.95` | Decay factor (0.0 to 1.0) |
-
-```bash
-# Standard decay
-hyphae decay
-
-# Aggressive decay
-hyphae decay --factor 0.8
-```
-
-Normally, decay runs automatically during a `recall` if >24h since last run.
 
 ---
 
@@ -1097,43 +1020,16 @@ Decay (batch)                 1 ops       5.8 ms       5.8 ms/op
 
 ---
 
-### `hyphae bench-recall` -- Knowledge retention benchmark
+### `hyphae bench-retrieval` -- Retrieval quality benchmark
 
 ```
-hyphae bench-recall [-m <model>] [-r <runs>] [-v]
+hyphae bench-retrieval
 ```
 
-| Option | Short | Required | Default | Description |
-|--------|-------|----------|---------|-------------|
-| `--model` | `-m` | no | `sonnet` | Model to use |
-| `--runs` | `-r` | no | `1` | Number of runs to average |
-| `--verbose` | `-v` | no | false | Show injected context |
-
-Measures the agent's ability to recall facts from a technical document across sessions. Uses real API calls.
+Benchmarks retrieval quality using fixture-driven tests. Evaluates hybrid search effectiveness and ranking quality.
 
 ```bash
-hyphae bench-recall --model haiku --runs 5
-```
-
----
-
-### `hyphae bench-agent` -- Agent efficiency benchmark
-
-```
-hyphae bench-agent [-s <sessions>] [-m <model>] [-r <runs>] [-v]
-```
-
-| Option | Short | Required | Default | Description |
-|--------|-------|----------|---------|-------------|
-| `--sessions` | `-s` | no | `10` | Number of sessions per mode |
-| `--model` | `-m` | no | `sonnet` | Model to use |
-| `--runs` | `-r` | no | `1` | Number of runs to average |
-| `--verbose` | `-v` | no | false | Show extracted facts and context |
-
-Compares turns, tokens and costs with and without HYPHAE on a real Rust project.
-
-```bash
-hyphae bench-agent --sessions 10 --model haiku --runs 3
+hyphae bench-retrieval
 ```
 
 ---

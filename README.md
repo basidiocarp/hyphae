@@ -165,6 +165,7 @@ hyphae session start --project demo --task "refactor auth flow"
 hyphae session end --id <session_id> --summary "completed refactor"
 hyphae feedback signal --session-id <session_id> --type correction --value -1
 hyphae session context --project demo
+hyphae bench-retrieval          # Benchmark retrieval quality using fixture-driven tests
 ```
 
 ---

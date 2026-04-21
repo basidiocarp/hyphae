@@ -51,15 +51,15 @@ For things that happen: decisions, errors, configurations, preferences. Organize
 hyphae store -t "project-api" -c "Chose REST over GraphQL for v1 simplicity" -i high
 
 # Store an error resolution
-hyphae store -t "errors-resolved" -c "CORS issue fixed by adding origin header in nginx" -i medium -k "cors,nginx"
+hyphae store -t "errors-resolved" -c "CORS issue fixed by adding origin header in nginx" -i medium
 
 # Store a critical fact (never forgotten)
 hyphae store -t "credentials" -c "Production DB is on port 5433, not 5432" -i critical
 
-# Recall relevant context
-hyphae recall "API design choices"
-hyphae recall "nginx" --topic "errors-resolved"
-hyphae recall "database" --keyword "postgres"
+# Search for relevant context
+hyphae search -q "API design choices"
+hyphae search -q "nginx" --topic "errors-resolved"
+hyphae search -q "database" --limit 10
 ```
 
 **Importance levels:**
@@ -98,10 +98,6 @@ hyphae memoir add-concept -m "backend-arch" -n "redis" \
 hyphae memoir link -m "backend-arch" --from "user-service" --to "postgres" -r depends-on
 hyphae memoir link -m "backend-arch" --from "user-service" --to "redis" -r depends-on
 
-# Refine a concept (increments revision, increases confidence)
-hyphae memoir refine -m "backend-arch" -n "user-service" \
-  -d "Handles registration, auth (JWT + OAuth2), profile, and 2FA"
-
 # Search within a memoir
 hyphae memoir search -m "backend-arch" "authentication"
 hyphae memoir search -m "backend-arch" "service" --label "domain:auth"
@@ -137,10 +133,7 @@ Good topic naming helps recall. Suggested patterns:
 When a topic accumulates many entries, consolidate them into a dense summary:
 
 ```bash
-# See which topics need consolidation
-hyphae health
-
-# Consolidate (replaces all entries with one summary)
+# Consolidate a topic (replaces all entries with one summary)
 hyphae consolidate --topic "errors-resolved"
 
 # Consolidate without the automatic pre-write backup
@@ -151,13 +144,9 @@ Hyphae automatically creates a backup before the first destructive write unless 
 
 When a topic exceeds 7 entries, the MCP `hyphae_memory_store` response includes a consolidation warning.
 
-### Decay and Pruning
+### Pruning Low-Weight Memories
 
 ```bash
-# Manually apply decay (normally runs automatically on recall, every 24h)
-hyphae decay
-hyphae decay --factor 0.9    # Custom decay factor
-
 # Preview what would be pruned
 hyphae prune --threshold 0.2 --dry-run
 
@@ -196,16 +185,15 @@ echo "Switched from MySQL to PostgreSQL for JSONB support" | hyphae extract -p a
 
 Detected signals cover architecture patterns, error resolutions, decisions, configurations, refactors, and deployments.
 
-## Context Injection
+## Context Gathering
 
-Inject relevant memories at session start:
+Gather relevant memories at session start:
 
 ```bash
-hyphae recall-context "my-project backend API"
-hyphae recall-context "authentication" --limit 20
+hyphae gather-context
 ```
 
-Returns a formatted block ready for prompt prepending. Used by the SessionStart hook for automatic context loading.
+Returns relevant context as JSON for prompt injection. Used by the SessionStart hook for automatic context loading.
 
 ## Configuring Embeddings
 
@@ -479,11 +467,11 @@ hyphae init
 
 This detects your AI tools (Claude Code, Cursor, VS Code, etc.) and writes the MCP config for each.
 
-### Store and recall
+### Store and search
 
 ```bash
 hyphae store -t "test" -c "My first Hyphae memory" -i high
-hyphae recall "first memory"
+hyphae search -q "first memory"
 ```
 
 The memory appears with its ID, topic, weight, and content. Verify with `hyphae topics` and `hyphae stats`.
