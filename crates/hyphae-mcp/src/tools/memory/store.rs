@@ -119,7 +119,7 @@ pub(crate) fn tool_store(
         let text = format!("{topic} {content}");
         if let Ok(similar) = store.search_hybrid(&text, &query_emb, 1, 0, project) {
             if let Some((existing, score)) = similar.first() {
-                if score > &0.85 && existing.topic == topic {
+                if score > &0.85 && existing.topic == topic && existing.project == memory.project {
                     let mut updated = existing.clone();
                     updated.summary = content.to_string();
                     updated.updated_at = Utc::now();

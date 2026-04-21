@@ -62,6 +62,8 @@ pub fn ingest_file(
         chunk.document_id = doc_id.clone();
     }
 
+    let content_hash = compute_content_hash(content.as_bytes());
+
     let document = Document {
         id: doc_id,
         source_path: path.to_string_lossy().to_string(),
@@ -71,7 +73,7 @@ pub fn ingest_file(
         updated_at: now,
         project: None,
         runtime_session_id: None,
-        content_hash: None,
+        content_hash: Some(content_hash),
     };
 
     Ok((document, chunks))

@@ -62,13 +62,11 @@ pub(crate) fn tool_ingest_file(
     for (mut doc, chunks) in results {
         doc.project = project.map(String::from);
 
-        // Compute hash and check for content changes before ingesting
-        if let Ok(content) = std::fs::read(&doc.source_path) {
-            let content_hash = hyphae_ingest::compute_content_hash(&content);
-
-            // Check if existing document has same content hash
+        // Check for content changes before ingesting using the hash already
+        // computed by ingest_file from the same bytes that were chunked.
+        if let Some(ref content_hash) = doc.content_hash.clone() {
             if let Ok(Some(existing)) = store.get_document_by_path(&doc.source_path, project) {
-                if existing.content_hash.as_ref() == Some(&content_hash) {
+                if existing.content_hash.as_ref() == Some(content_hash) {
                     // Content unchanged, skip re-ingestion
                     skipped_count += 1;
                     continue;
@@ -81,8 +79,6 @@ pub(crate) fn tool_ingest_file(
                     ));
                 }
             }
-
-            doc.content_hash = Some(content_hash);
         }
 
         if let Err(e) = store.store_document(doc) {

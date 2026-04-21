@@ -1518,17 +1518,22 @@ impl MemoryStore for SqliteStore {
             .unchecked_transaction()
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
+        let project = consolidated.project.as_deref();
         tx.execute(
             "DELETE FROM vec_memories WHERE memory_id IN (
-                SELECT id FROM memories WHERE topic = ?1 AND invalidated_at IS NULL
+                SELECT id FROM memories WHERE topic = ?1
+                  AND (project = ?2 OR (?2 IS NULL AND project IS NULL))
+                  AND invalidated_at IS NULL
             )",
-            params![topic],
+            params![topic, project],
         )
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         tx.execute(
-            "DELETE FROM memories WHERE topic = ?1 AND invalidated_at IS NULL",
-            params![topic],
+            "DELETE FROM memories WHERE topic = ?1
+              AND (project = ?2 OR (?2 IS NULL AND project IS NULL))
+              AND invalidated_at IS NULL",
+            params![topic, project],
         )
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
