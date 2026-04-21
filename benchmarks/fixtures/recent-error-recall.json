@@ -1,0 +1,11 @@
+{
+  "description": "Recent error should surface at rank 1",
+  "memories": [
+    {"topic": "errors/resolved", "content": "cargo build failed: linker error on macos", "importance": "high"},
+    {"topic": "context/project", "content": "basidiocarp workspace setup and architecture", "importance": "medium"},
+    {"topic": "preferences", "content": "user prefers concise responses without trailing summaries", "importance": "medium"}
+  ],
+  "queries": [
+    {"query": "linker error cargo build", "expected_rank_1_contains": "linker error", "description": "error should surface first"}
+  ]
+}

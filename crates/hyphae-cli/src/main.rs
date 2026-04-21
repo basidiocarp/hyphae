@@ -60,6 +60,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Protocol => "protocol",
         Commands::Init { .. } => "init",
         Commands::Bench { .. } => "bench",
+        Commands::BenchRetrieval { .. } => "bench_retrieval",
         Commands::SelfUpdate { .. } => "self_update",
         Commands::Doctor { .. } => "doctor",
         Commands::ExportTraining { .. } => "export_training",
@@ -97,6 +98,7 @@ fn all_projects_allowed(command: &Commands) -> bool {
         | Commands::Completions { .. }
         | Commands::Init { .. }
         | Commands::Bench { .. }
+        | Commands::BenchRetrieval { .. }
         | Commands::SelfUpdate { .. }
         | Commands::Doctor { .. }
         | Commands::ExportTraining { .. }
@@ -492,6 +494,10 @@ fn main() -> Result<()> {
 
         Commands::Bench { count } => {
             commands::bench::cmd_bench(count)?;
+        }
+
+        Commands::BenchRetrieval { fixtures_dir } => {
+            commands::bench::cmd_bench_retrieval(fixtures_dir.clone())?;
         }
 
         Commands::Lessons { limit } => {

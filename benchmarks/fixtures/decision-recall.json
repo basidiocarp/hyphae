@@ -1,0 +1,11 @@
+{
+  "description": "Architectural decision should surface in top 3",
+  "memories": [
+    {"topic": "decisions/hyphae", "content": "decided to use SHA-256 hashing algorithm for content hashing in file ingest to skip unchanged files", "importance": "high"},
+    {"topic": "context/project", "content": "basidiocarp is a workspace of AI coding tools with multiple crates", "importance": "low"},
+    {"topic": "preferences", "content": "run cargo test and cargo clippy before committing code", "importance": "medium"}
+  ],
+  "queries": [
+    {"query": "SHA-256 hashing algorithm ingest", "expected_top_k_contains": "SHA-256", "k": 3, "description": "decision in top 3"}
+  ]
+}

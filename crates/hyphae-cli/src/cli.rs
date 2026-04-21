@@ -265,6 +265,13 @@ pub(crate) enum Commands {
         count: usize,
     },
 
+    /// Benchmark retrieval quality using fixture-driven tests
+    BenchRetrieval {
+        /// Path to fixtures directory (defaults to benchmarks/fixtures)
+        #[arg(long)]
+        fixtures_dir: Option<PathBuf>,
+    },
+
     /// Show extracted lessons as JSON
     Lessons {
         /// Maximum source memories to consider per lesson topic

@@ -1,0 +1,12 @@
+{
+  "description": "High-relevance memory surfaces above low-relevance noise",
+  "memories": [
+    {"topic": "noise/1", "content": "random unrelated memory about cooking recipes and italian pasta", "importance": "low"},
+    {"topic": "noise/2", "content": "another unrelated memory about weather forecasts and climate patterns", "importance": "low"},
+    {"topic": "noise/3", "content": "third unrelated memory about sports scores and basketball games", "importance": "low"},
+    {"topic": "errors/resolved", "content": "fixed segmentation fault by avoiding null pointer dereference bug in C code", "importance": "high"}
+  ],
+  "queries": [
+    {"query": "segmentation fault null pointer dereference", "expected_rank_1_contains": "null pointer", "description": "relevant memory beats noise"}
+  ]
+}
