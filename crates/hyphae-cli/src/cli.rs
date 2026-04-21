@@ -472,6 +472,28 @@ pub(crate) enum Commands {
         command: AuditCommand,
     },
 
+    /// Query memories relevant to a prompt and surface them for context injection.
+    /// Manages a session-scoped seen-set to avoid re-surfacing the same memories.
+    /// Exits 0 when at least one memory is emitted; exits 1 when nothing is emitted.
+    #[command(name = "auto-recall")]
+    AutoRecall {
+        /// Prompt text excerpt to search against
+        #[arg(long)]
+        query: String,
+        /// Session ID used to scope the dedup seen-set
+        #[arg(long)]
+        session_id: String,
+        /// Optional project filter for the memory search
+        #[arg(long)]
+        project: Option<String>,
+        /// Maximum characters of recalled content to emit (default 8000)
+        #[arg(long, default_value = "8000")]
+        budget: usize,
+        /// Maximum memories to fetch from the store (default 10)
+        #[arg(long, default_value = "10")]
+        limit: usize,
+    },
+
     /// Purge memories and related data (GDPR/retention compliance)
     Purge {
         /// Delete all memories for a specific project

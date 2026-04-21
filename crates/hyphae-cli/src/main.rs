@@ -74,6 +74,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::AuditSecrets { .. } => "audit_secrets",
         Commands::Audit { .. } => "audit",
         Commands::Changelog { .. } => "changelog",
+        Commands::AutoRecall { .. } => "auto_recall",
     }
 }
 
@@ -108,7 +109,8 @@ fn all_projects_allowed(command: &Commands) -> bool {
         | Commands::Restore { .. }
         | Commands::Audit { .. }
         | Commands::AuditSecrets { .. }
-        | Commands::Changelog { .. } => true,
+        | Commands::Changelog { .. }
+        | Commands::AutoRecall { .. } => true,
         Commands::Project(args) => matches!(
             args.command,
             crate::commands::project::ProjectCommand::List
@@ -661,6 +663,28 @@ fn main() -> Result<()> {
 
         Commands::Changelog { days, since } => {
             commands::changelog::cmd_changelog(&store, days, since.clone(), resolved_project)?;
+        }
+
+        Commands::AutoRecall {
+            query,
+            session_id,
+            project,
+            budget,
+            limit,
+        } => {
+            // The command's own --project overrides any globally resolved project.
+            let effective_project = project.or(resolved_project);
+            let args = commands::auto_recall::AutoRecallArgs {
+                query,
+                session_id,
+                project: effective_project,
+                budget,
+                limit,
+            };
+            let emitted = commands::auto_recall::cmd_auto_recall(&store, args)?;
+            if !emitted {
+                std::process::exit(1);
+            }
         }
     }
 
