@@ -898,12 +898,9 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
 
     // Migration: add content_hash column to documents if missing
     let has_content_hash_documents: bool = tx
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('documents') WHERE name='content_hash'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(0)
+        .prepare("SELECT COUNT(*) FROM pragma_table_info('documents') WHERE name='content_hash'")
+        .and_then(|mut s| s.query_row([], |row| row.get::<_, i64>(0)))
+        .map_err(|e| HyphaeError::Database(e.to_string()))?
         > 0;
     if !has_content_hash_documents {
         tx.execute_batch("ALTER TABLE documents ADD COLUMN content_hash TEXT;")

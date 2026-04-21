@@ -898,4 +898,72 @@ mod tests {
         assert!(output.contains("docs/scoped.md"));
         assert!(!output.contains("Beta other"));
     }
+
+    #[test]
+    fn test_ingest_file_skips_unchanged_content_hash() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let store = test_store();
+
+        // Create a temp file with known content
+        let mut temp_file = NamedTempFile::new().unwrap();
+        temp_file.write_all(b"original content").unwrap();
+        temp_file.flush().unwrap();
+        let temp_path = temp_file.path().to_str().unwrap();
+
+        // First ingest with original content
+        let first_result = tool_ingest_file(
+            &store,
+            None,
+            &json!({
+                "path": temp_path,
+            }),
+            false,
+            Some("test"),
+            &ToolTraceContext::default(),
+        );
+        assert!(!first_result.is_error);
+        assert!(first_result.content[0].text.contains("Ingested 1 document"));
+        assert!(!first_result.content[0].text.contains("unchanged"));
+
+        // Second ingest with same content should skip
+        let second_result = tool_ingest_file(
+            &store,
+            None,
+            &json!({
+                "path": temp_path,
+            }),
+            false,
+            Some("test"),
+            &ToolTraceContext::default(),
+        );
+        assert!(!second_result.is_error);
+        assert!(second_result.content[0].text.contains("1 unchanged"));
+
+        // Verify only one document exists
+        let docs = store.list_documents(Some("test")).unwrap();
+        assert_eq!(docs.len(), 1);
+
+        // Now modify the file
+        let mut temp_file = NamedTempFile::new().unwrap();
+        temp_file.write_all(b"modified content").unwrap();
+        temp_file.flush().unwrap();
+        let temp_path_modified = temp_file.path().to_str().unwrap();
+
+        // Third ingest with different content should replace
+        let third_result = tool_ingest_file(
+            &store,
+            None,
+            &json!({
+                "path": temp_path_modified,
+            }),
+            false,
+            Some("test"),
+            &ToolTraceContext::default(),
+        );
+        assert!(!third_result.is_error);
+        assert!(third_result.content[0].text.contains("Ingested 1 document"));
+        assert!(!third_result.content[0].text.contains("unchanged"));
+    }
 }
