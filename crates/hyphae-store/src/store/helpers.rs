@@ -244,14 +244,14 @@ pub(crate) const LINK_COLS: &str = "id, source_id, target_id, relation, weight, 
 // Document / Chunk helpers
 // ---------------------------------------------------------------------------
 
-pub(crate) const DOCUMENT_COLS: &str = "id, source_path, source_type, chunk_count, created_at, updated_at, project, runtime_session_id";
+pub(crate) const DOCUMENT_COLS: &str = "id, source_path, source_type, chunk_count, created_at, updated_at, project, runtime_session_id, content_hash";
 
 pub(crate) const CHUNK_COLS: &str = "id, document_id, chunk_index, content, source_path, \
      source_type, language, heading, line_start, line_end, created_at, chunk_strategy";
 
 pub(crate) fn row_to_document(row: &rusqlite::Row) -> rusqlite::Result<Document> {
     // Column order: id(0), source_path(1), source_type(2), chunk_count(3),
-    //   created_at(4), updated_at(5), project(6), runtime_session_id(7)
+    //   created_at(4), updated_at(5), project(6), runtime_session_id(7), content_hash(8)
     let source_type_str: String = row.get(2)?;
     let source_type: SourceType = source_type_str.parse().unwrap_or_default();
     Ok(Document {
@@ -263,6 +263,7 @@ pub(crate) fn row_to_document(row: &rusqlite::Row) -> rusqlite::Result<Document>
         updated_at: parse_dt(&row.get::<_, String>(5)?),
         project: row.get("project").ok(),
         runtime_session_id: row.get("runtime_session_id").ok(),
+        content_hash: row.get("content_hash").ok(),
     })
 }
 

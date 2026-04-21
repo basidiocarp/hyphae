@@ -328,6 +328,7 @@ mod tests {
             updated_at: now,
             project: Some("demo-project".to_string()),
             runtime_session_id: None,
+            content_hash: None,
         }
     }
 

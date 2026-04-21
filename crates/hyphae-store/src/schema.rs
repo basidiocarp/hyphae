@@ -164,7 +164,8 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             project TEXT,
-            runtime_session_id TEXT
+            runtime_session_id TEXT,
+            content_hash TEXT
         );
 
         CREATE TABLE IF NOT EXISTS chunks (
@@ -894,6 +895,20 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         ",
     )
     .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+    // Migration: add content_hash column to documents if missing
+    let has_content_hash_documents: bool = tx
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('documents') WHERE name='content_hash'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if !has_content_hash_documents {
+        tx.execute_batch("ALTER TABLE documents ADD COLUMN content_hash TEXT;")
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    }
 
     tx.commit().map_err(|e| {
         HyphaeError::Database(format!("failed to commit migration transaction: {e}"))

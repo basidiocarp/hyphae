@@ -478,6 +478,7 @@ mod tests {
             updated_at: chrono::Utc::now(),
             project: None,
             runtime_session_id: None,
+            content_hash: None,
         }
     }
 

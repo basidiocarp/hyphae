@@ -15,6 +15,14 @@ use walkdir::WalkDir;
 use crate::chunker::{ChunkStrategy, chunk_text};
 use crate::readers::read_file;
 
+/// Compute SHA-256 hash of file content.
+pub fn compute_content_hash(content: &[u8]) -> String {
+    use sha2::{Sha256, Digest};
+    let mut hasher = Sha256::new();
+    hasher.update(content);
+    format!("{:x}", hasher.finalize())
+}
+
 /// Ingest a single file: read, chunk, and optionally embed.
 pub fn ingest_file(
     path: &Path,
@@ -63,6 +71,7 @@ pub fn ingest_file(
         updated_at: now,
         project: None,
         runtime_session_id: None,
+        content_hash: None,
     };
 
     Ok((document, chunks))
@@ -282,5 +291,25 @@ mod tests {
                 "should skip hidden files"
             );
         }
+    }
+
+    #[test]
+    fn test_compute_content_hash_is_deterministic() {
+        let content = b"hello world";
+        let hash1 = compute_content_hash(content);
+        let hash2 = compute_content_hash(content);
+        assert_eq!(hash1, hash2, "same content should produce same hash");
+        // Verify it's a valid hex string of length 64 (SHA-256 = 256 bits = 32 bytes = 64 hex chars)
+        assert_eq!(hash1.len(), 64);
+        assert!(hash1.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_compute_content_hash_differs_for_different_content() {
+        let content1 = b"hello";
+        let content2 = b"world";
+        let hash1 = compute_content_hash(content1);
+        let hash2 = compute_content_hash(content2);
+        assert_ne!(hash1, hash2, "different content should produce different hashes");
     }
 }

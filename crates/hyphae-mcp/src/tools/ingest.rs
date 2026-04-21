@@ -57,18 +57,34 @@ pub(crate) fn tool_ingest_file(
 
     let mut total_chunks = 0usize;
     let mut doc_count = 0usize;
+    let mut skipped_count = 0usize;
 
     for (mut doc, chunks) in results {
         doc.project = project.map(String::from);
-        // Replace existing document at the same path
-        if let Ok(Some(existing)) = store.get_document_by_path(&doc.source_path, project) {
-            if let Err(e) = store.delete_document(&existing.id) {
-                return ToolResult::error(format!(
-                    "failed to delete existing document {}: {e}",
-                    doc.source_path
-                ));
+
+        // Compute hash and check for content changes before ingesting
+        if let Ok(content) = std::fs::read(&doc.source_path) {
+            let content_hash = hyphae_ingest::compute_content_hash(&content);
+
+            // Check if existing document has same content hash
+            if let Ok(Some(existing)) = store.get_document_by_path(&doc.source_path, project) {
+                if existing.content_hash.as_ref() == Some(&content_hash) {
+                    // Content unchanged, skip re-ingestion
+                    skipped_count += 1;
+                    continue;
+                }
+                // Content changed, delete old document
+                if let Err(e) = store.delete_document(&existing.id) {
+                    return ToolResult::error(format!(
+                        "failed to delete existing document {}: {e}",
+                        doc.source_path
+                    ));
+                }
             }
+
+            doc.content_hash = Some(content_hash);
         }
+
         if let Err(e) = store.store_document(doc) {
             return ToolResult::error(format!("store error: {e}"));
         }
@@ -80,9 +96,15 @@ pub(crate) fn tool_ingest_file(
         doc_count += 1;
     }
 
-    ToolResult::text(format!(
-        "Ingested {doc_count} document(s), {total_chunks} chunk(s) total"
-    ))
+    let result_msg = if skipped_count > 0 {
+        format!(
+            "Ingested {doc_count} document(s), {total_chunks} chunk(s) total, {skipped_count} unchanged"
+        )
+    } else {
+        format!("Ingested {doc_count} document(s), {total_chunks} chunk(s) total")
+    };
+
+    ToolResult::text(result_msg)
 }
 
 pub(crate) fn tool_search_docs(
@@ -290,6 +312,7 @@ pub(crate) fn tool_store_command_output(
         updated_at: now,
         project: effective_project.map(String::from),
         runtime_session_id: runtime_session_id.map(String::from),
+        content_hash: None,
     };
 
     // Replace existing document at the same source path
@@ -829,6 +852,7 @@ mod tests {
             updated_at: now,
             project: Some("demo".to_string()),
             runtime_session_id: None,
+            content_hash: None,
         };
         doc.project = Some("demo".to_string());
         let doc_id = doc.id.clone();

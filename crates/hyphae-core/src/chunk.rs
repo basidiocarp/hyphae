@@ -15,6 +15,7 @@ pub struct Document {
     pub updated_at: DateTime<Utc>,
     pub project: Option<String>,
     pub runtime_session_id: Option<String>,
+    pub content_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
