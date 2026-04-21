@@ -240,3 +240,51 @@ fn memory_store_allows_normal_content_when_secret_rejection_enabled() {
 
     assert!(!result.is_error);
 }
+
+#[test]
+fn ingest_file_skips_unchanged_content_on_second_call() {
+    let store = test_store();
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("dedup.md");
+    fs::write(&path, "Stable content that will not change between ingests.").unwrap();
+    let path_str = path.to_str().unwrap();
+
+    // First ingest: should succeed and report at least one document ingested.
+    let first = call_tool(
+        &store,
+        None,
+        "hyphae_ingest_file",
+        &json!({"path": path_str}),
+        false,
+        Some("project"),
+        false,
+    );
+    assert!(!first.is_error, "first ingest failed: {}", first.content[0].text);
+    assert!(
+        first.content[0].text.contains("Ingested 1 document(s)"),
+        "unexpected first-ingest response: {}",
+        first.content[0].text,
+    );
+
+    // Second ingest with identical content: should skip and report 1 unchanged.
+    let second = call_tool(
+        &store,
+        None,
+        "hyphae_ingest_file",
+        &json!({"path": path_str}),
+        false,
+        Some("project"),
+        false,
+    );
+    assert!(!second.is_error, "second ingest failed: {}", second.content[0].text);
+    assert!(
+        second.content[0].text.contains("1 unchanged"),
+        "expected '1 unchanged' in second-ingest response, got: {}",
+        second.content[0].text,
+    );
+    assert!(
+        second.content[0].text.contains("Ingested 0 document(s)"),
+        "expected 'Ingested 0 document(s)' in second-ingest response, got: {}",
+        second.content[0].text,
+    );
+}
