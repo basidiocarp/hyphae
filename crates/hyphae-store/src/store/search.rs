@@ -297,12 +297,13 @@ impl SqliteStore {
 pub(crate) fn sanitize_fts_query(query: &str) -> String {
     // Replace FTS5 operator chars with spaces, then quote each resulting token.
     // FTS5 tokenizer (unicode61) splits on `-` too, so we must keep tokens separate.
+    // NUL bytes are stripped because SQLite treats them as string terminators.
     let cleaned: String = query
         .chars()
         .map(|c| {
             if matches!(
                 c,
-                '-' | '*' | '"' | '(' | ')' | '{' | '}' | ':' | '^' | '+' | '~' | '\\'
+                '\0' | '-' | '*' | '"' | '(' | ')' | '{' | '}' | ':' | '^' | '+' | '~' | '\\'
             ) {
                 ' '
             } else {

@@ -670,10 +670,6 @@ impl SqliteStore {
     /// re-inserts the provided `Memory`, which allows callers to change the
     /// `created_at` timestamp (e.g. for archive import merge).
     pub fn replace_memory(&self, memory: Memory) -> HyphaeResult<MemoryId> {
-        if let Err(e) = self.audit_memory(super::audit::AuditOperation::Update, &memory) {
-            tracing::warn!("audit log write failed, replace proceeding: {e}");
-        }
-
         let tx = self
             .conn
             .unchecked_transaction()
@@ -740,6 +736,10 @@ impl SqliteStore {
         }
 
         let id = memory.id.clone();
+        // Audit inside the transaction: only records if the commit succeeds.
+        if let Err(e) = self.audit_memory(super::audit::AuditOperation::Update, &memory) {
+            tracing::warn!("audit log write failed, replace proceeding: {e}");
+        }
         tx.commit()
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
         Ok(id)
@@ -749,10 +749,6 @@ impl SqliteStore {
 impl MemoryStore for SqliteStore {
     fn store(&self, memory: Memory) -> HyphaeResult<MemoryId> {
         let _span = tracing::info_span!("hyphae.memory.store").entered();
-        // Write-ahead audit record before mutation
-        if let Err(e) = self.audit_memory(super::audit::AuditOperation::Store, &memory) {
-            tracing::warn!("audit log write failed, mutation proceeding: {e}");
-        }
 
         let keywords_json = serde_json::to_string(&memory.keywords)?;
         let related_json = serde_json::to_string(&memory.related_ids)?;
@@ -804,6 +800,11 @@ impl MemoryStore for SqliteStore {
                 .map_err(|e| HyphaeError::Database(e.to_string()))?;
         }
 
+        // Audit after successful write: records only what actually committed.
+        if let Err(e) = self.audit_memory(super::audit::AuditOperation::Store, &memory) {
+            tracing::warn!("audit log write failed, mutation succeeded: {e}");
+        }
+
         Ok(memory.id)
     }
 
@@ -824,10 +825,6 @@ impl MemoryStore for SqliteStore {
 
     fn update(&self, memory: &Memory) -> HyphaeResult<()> {
         let _span = tracing::info_span!("hyphae.memory.update").entered();
-        // Write-ahead audit record before mutation
-        if let Err(e) = self.audit_memory(super::audit::AuditOperation::Update, memory) {
-            tracing::warn!("audit log write failed, mutation proceeding: {e}");
-        }
 
         let keywords_json = serde_json::to_string(&memory.keywords)?;
         let related_json = serde_json::to_string(&memory.related_ids)?;
@@ -894,6 +891,11 @@ impl MemoryStore for SqliteStore {
                 params![memory.id.as_ref(), blob],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        }
+
+        // Audit inside the transaction: only records if the commit succeeds.
+        if let Err(e) = self.audit_memory(super::audit::AuditOperation::Update, memory) {
+            tracing::warn!("audit log write failed, mutation proceeding: {e}");
         }
 
         tx.commit()
@@ -980,17 +982,6 @@ impl MemoryStore for SqliteStore {
     }
 
     fn delete(&self, id: &MemoryId) -> HyphaeResult<()> {
-        // Write-ahead audit record before mutation
-        if let Err(e) = self.write_audit(
-            super::audit::AuditOperation::Delete,
-            id.as_ref(),
-            None,
-            None,
-            None,
-        ) {
-            tracing::warn!("audit log write failed, mutation proceeding: {e}");
-        }
-
         // SAFETY: No nested transactions — this method does not call other &self methods
         // that open transactions. The &self receiver is required by the MemoryStore trait.
         let tx = self
@@ -1010,6 +1001,17 @@ impl MemoryStore for SqliteStore {
 
         if changed == 0 {
             return Err(HyphaeError::NotFound(id.to_string()));
+        }
+
+        // Audit inside the transaction: only records if the commit succeeds.
+        if let Err(e) = self.write_audit(
+            super::audit::AuditOperation::Delete,
+            id.as_ref(),
+            None,
+            None,
+            None,
+        ) {
+            tracing::warn!("audit log write failed, mutation proceeding: {e}");
         }
 
         tx.commit()
@@ -1363,18 +1365,6 @@ impl MemoryStore for SqliteStore {
     }
 
     fn apply_decay(&self, decay_factor: f32) -> HyphaeResult<usize> {
-        // Write-ahead audit record before mutation
-        let meta = serde_json::json!({ "decay_factor": decay_factor });
-        if let Err(e) = self.write_audit(
-            super::audit::AuditOperation::Decay,
-            "*",
-            None,
-            None,
-            Some(&meta.to_string()),
-        ) {
-            tracing::warn!("audit log write failed, mutation proceeding: {e}");
-        }
-
         let changed = self
             .conn
             .execute(
@@ -1392,22 +1382,22 @@ impl MemoryStore for SqliteStore {
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
-        Ok(changed)
-    }
-
-    fn prune(&self, weight_threshold: f32) -> HyphaeResult<usize> {
-        // Write-ahead audit record before mutation
-        let meta = serde_json::json!({ "weight_threshold": weight_threshold });
+        // Audit after successful execute: only records what actually ran.
+        let meta = serde_json::json!({ "decay_factor": decay_factor });
         if let Err(e) = self.write_audit(
-            super::audit::AuditOperation::Prune,
+            super::audit::AuditOperation::Decay,
             "*",
             None,
             None,
             Some(&meta.to_string()),
         ) {
-            tracing::warn!("audit log write failed, mutation proceeding: {e}");
+            tracing::warn!("audit log write failed, mutation succeeded: {e}");
         }
 
+        Ok(changed)
+    }
+
+    fn prune(&self, weight_threshold: f32) -> HyphaeResult<usize> {
         // SAFETY: No nested transactions — this method does not call other &self methods
         // that open transactions. The &self receiver is required by the MemoryStore trait.
         let tx = self
@@ -1435,6 +1425,18 @@ impl MemoryStore for SqliteStore {
                 params![weight_threshold],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        // Audit inside the transaction: only records if the commit succeeds.
+        let meta = serde_json::json!({ "weight_threshold": weight_threshold });
+        if let Err(e) = self.write_audit(
+            super::audit::AuditOperation::Prune,
+            "*",
+            None,
+            None,
+            Some(&meta.to_string()),
+        ) {
+            tracing::warn!("audit log write failed, mutation proceeding: {e}");
+        }
 
         tx.commit()
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
@@ -1496,21 +1498,6 @@ impl MemoryStore for SqliteStore {
     }
 
     fn consolidate_topic(&self, topic: &str, consolidated: Memory) -> HyphaeResult<()> {
-        // Write-ahead audit record before mutation
-        let meta = serde_json::json!({
-            "topic": topic,
-            "new_memory_id": consolidated.id.as_ref(),
-        });
-        if let Err(e) = self.write_audit(
-            super::audit::AuditOperation::Consolidate,
-            consolidated.id.as_ref(),
-            Some(topic),
-            None,
-            Some(&meta.to_string()),
-        ) {
-            tracing::warn!("audit log write failed, mutation proceeding: {e}");
-        }
-
         // SAFETY: No nested transactions — this method does not call other &self methods
         // that open transactions. The &self receiver is required by the MemoryStore trait.
         let tx = self
@@ -1584,6 +1571,21 @@ impl MemoryStore for SqliteStore {
                 params![consolidated.id.as_ref(), blob],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        }
+
+        // Audit inside the transaction: only records if the commit succeeds.
+        let meta = serde_json::json!({
+            "topic": topic,
+            "new_memory_id": consolidated.id.as_ref(),
+        });
+        if let Err(e) = self.write_audit(
+            super::audit::AuditOperation::Consolidate,
+            consolidated.id.as_ref(),
+            Some(topic),
+            None,
+            Some(&meta.to_string()),
+        ) {
+            tracing::warn!("audit log write failed, mutation proceeding: {e}");
         }
 
         tx.commit()
@@ -1730,17 +1732,6 @@ impl MemoryStore for SqliteStore {
     }
 
     fn prune_expired(&self) -> HyphaeResult<usize> {
-        // Write-ahead audit record before mutation
-        if let Err(e) = self.write_audit(
-            super::audit::AuditOperation::PruneExpired,
-            "*",
-            None,
-            None,
-            None,
-        ) {
-            tracing::warn!("audit log write failed, mutation proceeding: {e}");
-        }
-
         let now = Utc::now().to_rfc3339();
 
         let tx = self
@@ -1768,6 +1759,17 @@ impl MemoryStore for SqliteStore {
                 params![now],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        // Audit inside the transaction: only records if the commit succeeds.
+        if let Err(e) = self.write_audit(
+            super::audit::AuditOperation::PruneExpired,
+            "*",
+            None,
+            None,
+            None,
+        ) {
+            tracing::warn!("audit log write failed, mutation proceeding: {e}");
+        }
 
         tx.commit()
             .map_err(|e| HyphaeError::Database(e.to_string()))?;

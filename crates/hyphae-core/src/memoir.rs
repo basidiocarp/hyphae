@@ -225,10 +225,9 @@ impl std::str::FromStr for Relation {
         match s.to_lowercase().as_str() {
             // PartOf and Contains are inverses; normalize to PartOf
             "part_of" | "partof" | "contains" | "has" | "owns" | "includes" => Ok(Self::PartOf),
-            // DependsOn synonyms
-            "depends_on" | "dependson" | "depends-on" | "imports" | "uses" | "requires" => {
-                Ok(Self::DependsOn)
-            }
+            // DependsOn synonyms (including call-graph edges from code importers)
+            "depends_on" | "dependson" | "depends-on" | "imports" | "uses" | "requires"
+            | "calls" | "call" | "invokes" => Ok(Self::DependsOn),
             // RelatedTo synonyms
             "related_to" | "relatedto" | "references" | "refers_to" | "refers-to" => {
                 Ok(Self::RelatedTo)

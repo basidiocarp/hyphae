@@ -137,14 +137,15 @@ fn purge_before_date(
     no_backup: bool,
     db_path: &Path,
 ) -> anyhow::Result<()> {
-    // Parse date
-    let before_dt = DateTime::parse_from_rfc3339(&format!("{before_str}T00:00:00+00:00"))
+    // Parse date: accept full RFC 3339 (e.g. 2024-01-15T00:00:00+00:00) or
+    // bare YYYY-MM-DD (e.g. 2024-01-15), which is converted to midnight UTC.
+    let before_dt = DateTime::parse_from_rfc3339(before_str)
         .or_else(|_| {
-            let with_time = format!("{before_str}T00:00:00+00:00");
-            DateTime::parse_from_rfc3339(&with_time)
+            // Bare date: append midnight UTC and retry.
+            DateTime::parse_from_rfc3339(&format!("{before_str}T00:00:00+00:00"))
         })
         .map_err(|_| {
-            anyhow::anyhow!("invalid date format: {before_str}, use YYYY-MM-DD or ISO 8601")
+            anyhow::anyhow!("invalid date format: {before_str}, use YYYY-MM-DD or RFC 3339")
         })?
         .with_timezone(&chrono::Utc);
 

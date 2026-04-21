@@ -58,8 +58,13 @@ pub(crate) fn tool_memoir_list(store: &SqliteStore, trace: &ToolTraceContext) ->
 
     let mut output = String::from("Memoirs:\n");
     for m in &memoirs {
-        let stats = store.memoir_stats(&m.id).ok();
-        let concept_count = stats.map(|s| s.total_concepts).unwrap_or(0);
+        let concept_count = match store.memoir_stats(&m.id) {
+            Ok(stats) => stats.total_concepts,
+            Err(e) => {
+                tracing::warn!("memoir_stats failed for '{}': {e}", m.name);
+                0
+            }
+        };
         output.push_str(&format!(
             "  {} ({} concepts) — {}\n",
             m.name, concept_count, m.description
@@ -426,6 +431,20 @@ pub(crate) fn tool_memoir_link(
         Ok(None) => return ToolResult::error(format!("concept not found: {to_name}")),
         Err(e) => return ToolResult::error(format!("db error: {e}")),
     };
+
+    // Reject duplicate links: same (source, target, relation) triple.
+    let existing_links = match store.get_links_from(&from.id) {
+        Ok(links) => links,
+        Err(e) => return ToolResult::error(format!("db error: {e}")),
+    };
+    if existing_links
+        .iter()
+        .any(|l| l.target_id == to.id && l.relation == relation)
+    {
+        return ToolResult::text(format!(
+            "Link already exists: {from_name} --{relation}--> {to_name}"
+        ));
+    }
 
     let link = ConceptLink::new(from.id, to.id, relation);
     match store.add_link(link) {
@@ -928,14 +947,19 @@ fn query_symbols(store: &SqliteStore, memoir: &Memoir, args: &Value) -> Result<V
 }
 
 fn matches_call_relation(relation: &Relation) -> bool {
-    // Code graphs use "calls", "call", etc., which parse as RelatedTo when unknown.
-    // Also match against depends_on which is a known variant.
-    matches!(relation, Relation::RelatedTo | Relation::DependsOn)
+    // Explicit call-semantics relations only.
+    // DependsOn covers "calls", "uses", "imports", "requires" synonyms from code graphs.
+    // RelatedTo is intentionally excluded: it is the fallback for any unrecognised string
+    // (e.g. "owns", "manages") and would cause non-call edges to appear in caller/callee
+    // queries.
+    matches!(relation, Relation::DependsOn)
 }
 
 fn matches_implements_relation(relation: &Relation) -> bool {
-    // Code graphs use "implements", which parses as RelatedTo when unknown.
-    matches!(relation, Relation::RelatedTo | Relation::InstanceOf)
+    // Refines covers "implements", "realizes", "satisfies" synonyms from code graphs.
+    // InstanceOf covers direct instance relationships.
+    // RelatedTo is excluded for the same reason as in matches_call_relation.
+    matches!(relation, Relation::Refines | Relation::InstanceOf)
 }
 
 fn query_callers(store: &SqliteStore, concept: &Concept) -> Result<Value, String> {

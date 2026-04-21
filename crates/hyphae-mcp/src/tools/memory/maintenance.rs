@@ -72,7 +72,30 @@ pub(crate) fn tool_consolidate(
     let workflow_context = workflow_span_context(trace, None, Some(topic));
     let _workflow_span = workflow_span("memory_consolidate", &workflow_context).entered();
 
-    let consolidated = Memory::new(topic.into(), summary.into(), Importance::High);
+    // Derive importance from the highest-importance source memory so that a
+    // consolidation of critical or high-importance memories does not silently
+    // downgrade them to High.
+    let importance = match store.get_by_topic(topic, None) {
+        Ok(ref memories) if !memories.is_empty() => {
+            fn rank(i: Importance) -> u8 {
+                match i {
+                    Importance::Critical => 4,
+                    Importance::High => 3,
+                    Importance::Medium => 2,
+                    Importance::Low => 1,
+                    Importance::Ephemeral => 0,
+                }
+            }
+            memories
+                .iter()
+                .map(|m| m.importance)
+                .max_by_key(|i| rank(*i))
+                .unwrap_or(Importance::High)
+        }
+        _ => Importance::High,
+    };
+
+    let consolidated = Memory::new(topic.into(), summary.into(), importance);
 
     match store.consolidate_topic(topic, consolidated) {
         Ok(()) => ToolResult::text(format!("Consolidated topic: {topic}")),

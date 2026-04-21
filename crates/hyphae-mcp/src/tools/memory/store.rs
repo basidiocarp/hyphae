@@ -43,7 +43,13 @@ pub(crate) fn tool_store(
         }
     }
     let importance_str = get_str(args, "importance").unwrap_or("medium");
-    let importance = importance_str.parse().unwrap_or(Importance::Medium);
+    let importance = importance_str.parse().unwrap_or_else(|_| {
+        tracing::warn!(
+            "unrecognized importance value {:?}, defaulting to Medium",
+            importance_str
+        );
+        Importance::Medium
+    });
     let workflow_context = workflow_span_context(trace, resolve_workspace_root(args), None);
     let _workflow_span = workflow_span("memory_store", &workflow_context).entered();
 

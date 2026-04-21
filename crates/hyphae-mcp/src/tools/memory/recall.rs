@@ -260,18 +260,18 @@ fn compute_consolidation_hint(
     project: Option<&str>,
 ) -> Option<String> {
     let topic = query_topic?;
-    let memories = match store.get_by_topic(topic, project) {
-        Ok(memories) => memories,
-        Err(_) => return None,
-    };
+    // Use aggregate SQL via topic_health to avoid materialising the full row set.
+    let health = store.topic_health(topic, project).ok()?;
 
-    if memories.len() <= 20 {
+    if health.entry_count <= 20 {
         return None;
     }
 
-    let oldest = memories.iter().min_by_key(|m| m.created_at)?;
-    let newest = memories.iter().max_by_key(|m| m.created_at)?;
-    let span_days = (newest.created_at - oldest.created_at).num_days();
+    let (oldest, newest) = match (health.oldest, health.newest) {
+        (Some(o), Some(n)) => (o, n),
+        _ => return None,
+    };
+    let span_days = (newest - oldest).num_days();
     if span_days <= 7 {
         return None;
     }
@@ -280,7 +280,7 @@ fn compute_consolidation_hint(
         "\n[Hyphae: Topic \"{topic}\" has {} memories spanning {span_days} days. \
          Auto-consolidation recommended. Run hyphae_memory_consolidate(topic: \"{topic}\") \
          to merge redundant entries.]",
-        memories.len()
+        health.entry_count
     ))
 }
 

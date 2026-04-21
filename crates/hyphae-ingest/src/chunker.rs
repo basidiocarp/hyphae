@@ -189,8 +189,29 @@ fn chunk_sliding_window(
     size: usize,
     overlap: usize,
 ) -> Vec<Chunk> {
-    let words: Vec<&str> = content.split_whitespace().collect();
-    if words.is_empty() {
+    // Collect word-boundary offsets while preserving original text spans.
+    // Each entry is (start_byte, end_byte) of one whitespace-delimited word.
+    let word_offsets: Vec<(usize, usize)> = content
+        .char_indices()
+        .filter(|(_, c)| !c.is_whitespace())
+        .fold(Vec::<(usize, usize)>::new(), |mut acc, (i, c)| {
+            let byte_end = i + c.len_utf8();
+            if let Some(last) = acc.last_mut() {
+                // Extend the current word if the previous character was not whitespace.
+                // A word ends when there is a gap (whitespace) before this character.
+                let prev_end = last.1;
+                if content[prev_end..i].chars().all(|ch| ch.is_whitespace()) && prev_end < i {
+                    acc.push((i, byte_end));
+                } else {
+                    last.1 = byte_end;
+                }
+            } else {
+                acc.push((i, byte_end));
+            }
+            acc
+        });
+
+    if word_offsets.is_empty() {
         return vec![];
     }
 
@@ -198,9 +219,13 @@ fn chunk_sliding_window(
     let mut start = 0;
     let mut chunk_index: u32 = 0;
 
-    while start < words.len() {
-        let end = (start + size).min(words.len());
-        let chunk_content = words[start..end].join(" ");
+    while start < word_offsets.len() {
+        let end = (start + size).min(word_offsets.len());
+        // Extract the original text span from the first word's start to the last word's end,
+        // preserving all internal whitespace (indentation, newlines, etc.).
+        let byte_start = word_offsets[start].0;
+        let byte_end = word_offsets[end - 1].1;
+        let chunk_content = content[byte_start..byte_end].to_string();
 
         chunks.push(Chunk {
             id: ChunkId::new(),
@@ -214,7 +239,7 @@ fn chunk_sliding_window(
 
         chunk_index += 1;
 
-        if end >= words.len() {
+        if end >= word_offsets.len() {
             break;
         }
 

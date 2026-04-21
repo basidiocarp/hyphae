@@ -143,10 +143,15 @@ pub(crate) fn tool_gather_context(
     // ── Sessions (structured rows only) ──────────────────────────────────
     if include.sessions {
         sources_queried.push("sessions");
+        // When a project is known, scope the query to that project to avoid a
+        // full-table scan. When no project is provided, cap the fetch to a
+        // small multiple of MAX_PER_SOURCE so we never load thousands of rows
+        // for a result set that is bounded to MAX_PER_SOURCE items.
+        let session_fetch_limit = (MAX_PER_SOURCE * 10) as i64;
         let structured_rows = if let Some(proj) = project_arg {
-            store.session_context_identity(proj, project_root, worktree_id, scope, 10_000)
+            store.session_context_identity(proj, project_root, worktree_id, scope, session_fetch_limit)
         } else {
-            store.session_context_all(10_000)
+            store.session_context_all(session_fetch_limit)
         };
         if let Ok(session_rows) = structured_rows {
             let mut structured_hits: Vec<(f64, String, String)> = session_rows
