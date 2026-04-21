@@ -79,6 +79,11 @@ pub(crate) fn tool_ingest_file(
                     ));
                 }
             }
+        } else {
+            tracing::warn!(
+                path = %doc.source_path,
+                "document has no content hash; duplicate detection skipped"
+            );
         }
 
         if let Err(e) = store.store_document(doc) {

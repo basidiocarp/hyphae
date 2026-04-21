@@ -122,7 +122,7 @@ impl ChunkStore for SqliteStore {
     ) -> HyphaeResult<Option<Document>> {
         self.conn
             .prepare_cached(&format!(
-                "SELECT {DOCUMENT_COLS} FROM documents WHERE source_path = ?1 AND (project = ?2 OR ?2 IS NULL)"
+                "SELECT {DOCUMENT_COLS} FROM documents WHERE source_path = ?1 AND project IS ?2"
             ))
             .map_err(|e| HyphaeError::Database(e.to_string()))?
             .query_row(params![path, project], row_to_document)

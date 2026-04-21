@@ -265,7 +265,8 @@ pub(crate) enum Commands {
         count: usize,
     },
 
-    /// Benchmark retrieval quality using fixture-driven tests
+    /// Benchmark retrieval quality using fixture-driven tests.
+    /// Operates on synthetic in-memory fixtures, not your configured database.
     BenchRetrieval {
         /// Path to fixtures directory (defaults to benchmarks/fixtures)
         #[arg(long)]

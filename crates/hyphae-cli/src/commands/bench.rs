@@ -82,7 +82,14 @@ fn parse_importance(s: &str) -> Importance {
     }
 }
 
-fn run_single_fixture(fixture: &BenchFixture) -> Result<(bool, String)> {
+/// Result of running a single fixture: passed, skipped, or failed.
+enum FixtureOutcome {
+    Passed,
+    Skipped,
+    Failed,
+}
+
+fn run_single_fixture(fixture: &BenchFixture) -> Result<(FixtureOutcome, String)> {
     let store = SqliteStore::in_memory().map_err(|e| anyhow::anyhow!("bench store: {e}"))?;
 
     // Seed memories
@@ -96,17 +103,29 @@ fn run_single_fixture(fixture: &BenchFixture) -> Result<(bool, String)> {
     }
 
     let mut passed = true;
+    let mut all_skipped = true;
     let mut details = Vec::new();
 
     // Run queries
     for query_fixture in &fixture.queries {
         let results = store.search_fts(&query_fixture.query, 10, 0, None)?;
 
-        let mut query_passed = false;
+        let has_assertions = query_fixture.expected_rank_1_contains.is_some()
+            || query_fixture.expected_top_k_contains.is_some();
+
         let mut query_detail = format!(
             "  Query: '{}' — {} … ",
             query_fixture.query, query_fixture.description
         );
+
+        if !has_assertions {
+            query_detail.push_str("SKIP (no assertions)");
+            details.push(query_detail);
+            continue;
+        }
+
+        all_skipped = false;
+        let mut query_passed = false;
 
         // Check expected_rank_1_contains
         if let Some(expected) = &query_fixture.expected_rank_1_contains {
@@ -157,13 +176,22 @@ fn run_single_fixture(fixture: &BenchFixture) -> Result<(bool, String)> {
         details.push(query_detail);
     }
 
-    let result_text = if passed {
-        format!("PASS: {}\n{}", fixture.description, details.join("\n"))
+    let outcome = if all_skipped {
+        FixtureOutcome::Skipped
+    } else if passed {
+        FixtureOutcome::Passed
     } else {
-        format!("FAIL: {}\n{}", fixture.description, details.join("\n"))
+        FixtureOutcome::Failed
     };
 
-    Ok((passed, result_text))
+    let prefix = match &outcome {
+        FixtureOutcome::Passed => "PASS",
+        FixtureOutcome::Skipped => "SKIP",
+        FixtureOutcome::Failed => "FAIL",
+    };
+    let result_text = format!("{}: {}\n{}", prefix, fixture.description, details.join("\n"));
+
+    Ok((outcome, result_text))
 }
 
 /// Benchmark retrieval quality using fixture-driven tests.
@@ -200,6 +228,7 @@ pub(crate) fn cmd_bench_retrieval(fixtures_dir: Option<PathBuf>) -> Result<()> {
 
     let mut passed_count = 0;
     let mut failed_count = 0;
+    let mut skipped_count = 0;
     let mut results = Vec::new();
 
     // Load and run all JSON fixtures
@@ -207,19 +236,19 @@ pub(crate) fn cmd_bench_retrieval(fixtures_dir: Option<PathBuf>) -> Result<()> {
         let entry = entry.context("failed to read fixture entry")?;
         let path = entry.path();
 
-        if path.extension().map_or(false, |ext| ext == "json") {
+        if path.extension().is_some_and(|ext| ext == "json") {
             let content = std::fs::read_to_string(&path)
                 .with_context(|| format!("failed to read fixture: {:?}", path))?;
             let fixture: BenchFixture = serde_json::from_str(&content)
                 .with_context(|| format!("failed to parse fixture: {:?}", path))?;
 
             match run_single_fixture(&fixture) {
-                Ok((passed, result_text)) => {
+                Ok((outcome, result_text)) => {
                     results.push(result_text);
-                    if passed {
-                        passed_count += 1;
-                    } else {
-                        failed_count += 1;
+                    match outcome {
+                        FixtureOutcome::Passed => passed_count += 1,
+                        FixtureOutcome::Skipped => skipped_count += 1,
+                        FixtureOutcome::Failed => failed_count += 1,
                     }
                 }
                 Err(e) => {
@@ -234,7 +263,10 @@ pub(crate) fn cmd_bench_retrieval(fixtures_dir: Option<PathBuf>) -> Result<()> {
         println!("{}\n", result);
     }
 
-    println!("Results: {} passed, {} failed", passed_count, failed_count);
+    println!(
+        "Results: {} passed, {} skipped, {} failed",
+        passed_count, skipped_count, failed_count
+    );
 
     if failed_count > 0 {
         anyhow::bail!("{} fixture(s) failed", failed_count);
