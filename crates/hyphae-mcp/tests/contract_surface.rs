@@ -52,9 +52,7 @@ fn all_tool_definitions_include_annotations() {
     let tools = defs["tools"].as_array().expect("tools array");
 
     for tool in tools {
-        let tool_name = tool["name"]
-            .as_str()
-            .expect("all tools should have a name");
+        let tool_name = tool["name"].as_str().expect("all tools should have a name");
         assert!(
             tool["annotations"].is_object(),
             "tool {tool_name} missing annotations object"
@@ -246,7 +244,11 @@ fn ingest_file_skips_unchanged_content_on_second_call() {
     let store = test_store();
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("dedup.md");
-    fs::write(&path, "Stable content that will not change between ingests.").unwrap();
+    fs::write(
+        &path,
+        "Stable content that will not change between ingests.",
+    )
+    .unwrap();
     let path_str = path.to_str().unwrap();
 
     // First ingest: should succeed and report at least one document ingested.
@@ -259,7 +261,11 @@ fn ingest_file_skips_unchanged_content_on_second_call() {
         Some("project"),
         false,
     );
-    assert!(!first.is_error, "first ingest failed: {}", first.content[0].text);
+    assert!(
+        !first.is_error,
+        "first ingest failed: {}",
+        first.content[0].text
+    );
     assert!(
         first.content[0].text.contains("Ingested 1 document(s)"),
         "unexpected first-ingest response: {}",
@@ -276,7 +282,11 @@ fn ingest_file_skips_unchanged_content_on_second_call() {
         Some("project"),
         false,
     );
-    assert!(!second.is_error, "second ingest failed: {}", second.content[0].text);
+    assert!(
+        !second.is_error,
+        "second ingest failed: {}",
+        second.content[0].text
+    );
     assert!(
         second.content[0].text.contains("1 unchanged"),
         "expected '1 unchanged' in second-ingest response, got: {}",

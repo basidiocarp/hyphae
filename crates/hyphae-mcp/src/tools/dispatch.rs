@@ -118,12 +118,8 @@ pub fn call_tool_with_consolidation(
         // Onboarding
         "hyphae_onboard" => super::onboard::tool_onboard(store, project, trace),
         // Artifact tools
-        "hyphae_artifact_store" => {
-            artifact::tool_artifact_store(store, args, project, trace)
-        }
-        "hyphae_artifact_query" => {
-            artifact::tool_artifact_query(store, args, project, trace)
-        }
+        "hyphae_artifact_store" => artifact::tool_artifact_store(store, args, project, trace),
+        "hyphae_artifact_query" => artifact::tool_artifact_query(store, args, project, trace),
         _ => ToolResult::error(format!("unknown tool: {name}")),
     }
 }

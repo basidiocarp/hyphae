@@ -462,6 +462,21 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
     tx.execute_batch("CREATE INDEX IF NOT EXISTS idx_memories_worktree ON memories(worktree);")
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
+    let has_agent_id_memories: bool = tx
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name='agent_id'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if !has_agent_id_memories {
+        tx.execute_batch("ALTER TABLE memories ADD COLUMN agent_id TEXT;")
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    }
+    tx.execute_batch("CREATE INDEX IF NOT EXISTS idx_memories_agent_id ON memories(agent_id);")
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
     let has_scope_sessions: bool = tx
         .query_row(
             "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name='scope'",

@@ -75,7 +75,7 @@ pub(crate) fn row_to_memory(row: &rusqlite::Row) -> rusqlite::Result<Memory> {
     // Column order: id(0), created_at(1), updated_at(2), last_accessed(3),
     //   access_count(4), weight(5), topic(6), summary(7), raw_excerpt(8),
     //   keywords(9), importance(10), source_type(11), source_data(12),
-    //   related_ids(13), embedding(14)
+    //   related_ids(13), embedding(14), project(15), branch(16), worktree(17), agent_id(18)
     let id: MemoryId = row.get::<_, String>(0)?.into();
 
     let keywords_json: String = row.get::<_, Option<String>>(9)?.unwrap_or_default();
@@ -128,6 +128,7 @@ pub(crate) fn row_to_memory(row: &rusqlite::Row) -> rusqlite::Result<Memory> {
         project: row.get("project").ok(),
         branch: row.get("branch").ok(),
         worktree: row.get("worktree").ok(),
+        agent_id: row.get("agent_id").ok(),
         expires_at: row
             .get::<_, Option<String>>("expires_at")
             .ok()
@@ -150,7 +151,7 @@ pub(crate) fn row_to_memory(row: &rusqlite::Row) -> rusqlite::Result<Memory> {
 
 pub(crate) const SELECT_COLS: &str = "id, created_at, updated_at, last_accessed, access_count, weight, \
      topic, summary, raw_excerpt, keywords, \
-     importance, source_type, source_data, related_ids, embedding, project, branch, worktree, \
+     importance, source_type, source_data, related_ids, embedding, project, branch, worktree, agent_id, \
      expires_at, invalidated_at, invalidation_reason, superseded_by";
 
 pub(crate) const ACTIVE_MEMORY_CLAUSE: &str = "invalidated_at IS NULL";

@@ -130,7 +130,11 @@ fn run_single_fixture(fixture: &BenchFixture) -> Result<(FixtureOutcome, String)
         // Check expected_rank_1_contains
         if let Some(expected) = &query_fixture.expected_rank_1_contains {
             if let Some(first_result) = results.first() {
-                if first_result.summary.to_lowercase().contains(&expected.to_lowercase()) {
+                if first_result
+                    .summary
+                    .to_lowercase()
+                    .contains(&expected.to_lowercase())
+                {
                     query_passed = true;
                     query_detail.push_str("PASS (rank 1)");
                 } else {
@@ -189,7 +193,12 @@ fn run_single_fixture(fixture: &BenchFixture) -> Result<(FixtureOutcome, String)
         FixtureOutcome::Skipped => "SKIP",
         FixtureOutcome::Failed => "FAIL",
     };
-    let result_text = format!("{}: {}\n{}", prefix, fixture.description, details.join("\n"));
+    let result_text = format!(
+        "{}: {}\n{}",
+        prefix,
+        fixture.description,
+        details.join("\n")
+    );
 
     Ok((outcome, result_text))
 }
@@ -224,7 +233,10 @@ pub(crate) fn cmd_bench_retrieval(fixtures_dir: Option<PathBuf>) -> Result<()> {
         );
     }
 
-    println!("Benchmarking retrieval quality from {:?} …\n", fixtures_path);
+    println!(
+        "Benchmarking retrieval quality from {:?} …\n",
+        fixtures_path
+    );
 
     let mut passed_count = 0;
     let mut failed_count = 0;
@@ -339,10 +351,7 @@ mod tests {
         // Should either return no results or low-relevance noise
         if !results.is_empty() {
             assert!(
-                !results[0]
-                    .summary
-                    .to_lowercase()
-                    .contains("segfault"),
+                !results[0].summary.to_lowercase().contains("segfault"),
                 "unrelated content should not rank for technical query"
             );
         }

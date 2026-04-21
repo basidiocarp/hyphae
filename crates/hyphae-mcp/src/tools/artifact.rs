@@ -70,15 +70,11 @@ pub(crate) fn tool_artifact_query(
     let project = get_str(args, "project").or(project);
 
     match store.query_artifacts(artifact_type, project) {
-        Ok(artifacts) if artifacts.is_empty() => {
-            ToolResult::text("No artifacts found.".into())
-        }
-        Ok(artifacts) => {
-            match serde_json::to_string_pretty(&artifacts) {
-                Ok(json) => ToolResult::text(json),
-                Err(e) => ToolResult::error(format!("serialization error: {e}")),
-            }
-        }
+        Ok(artifacts) if artifacts.is_empty() => ToolResult::text("No artifacts found.".into()),
+        Ok(artifacts) => match serde_json::to_string_pretty(&artifacts) {
+            Ok(json) => ToolResult::text(json),
+            Err(e) => ToolResult::error(format!("serialization error: {e}")),
+        },
         Err(e) => ToolResult::error(format!("failed to query artifacts: {e}")),
     }
 }

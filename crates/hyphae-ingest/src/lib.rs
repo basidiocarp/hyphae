@@ -17,7 +17,7 @@ use crate::readers::read_file;
 
 /// Compute SHA-256 hash of file content.
 pub fn compute_content_hash(content: &[u8]) -> String {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(content);
     format!("{:x}", hasher.finalize())
@@ -312,6 +312,9 @@ mod tests {
         let content2 = b"world";
         let hash1 = compute_content_hash(content1);
         let hash2 = compute_content_hash(content2);
-        assert_ne!(hash1, hash2, "different content should produce different hashes");
+        assert_ne!(
+            hash1, hash2,
+            "different content should produce different hashes"
+        );
     }
 }

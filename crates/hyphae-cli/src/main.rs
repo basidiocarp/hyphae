@@ -186,11 +186,10 @@ fn main() -> Result<()> {
     spore::logging::init_app("hyphae", tracing::Level::WARN);
 
     // Initialize OTel tracer — no-op when OTEL_EXPORTER_OTLP_ENDPOINT is not set
-    let _telemetry = spore::telemetry::init_tracer("hyphae")
-        .unwrap_or_else(|e| {
-            tracing::debug!("OTel init skipped: {}", e);
-            spore::telemetry::TelemetryInit::disabled("hyphae")
-        });
+    let _telemetry = spore::telemetry::init_tracer("hyphae").unwrap_or_else(|e| {
+        tracing::debug!("OTel init skipped: {}", e);
+        spore::telemetry::TelemetryInit::disabled("hyphae")
+    });
 
     let cli = Cli::parse();
     let mut span_context = SpanContext::for_app("hyphae");

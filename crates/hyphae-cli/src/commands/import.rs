@@ -1,8 +1,6 @@
 use anyhow::{Context, Result};
 use chrono::DateTime;
-use hyphae_core::{
-    Importance, Memoir, MemoirId, MemoirStore, Memory, MemoryId, MemoryStore,
-};
+use hyphae_core::{Importance, Memoir, MemoirId, MemoirStore, Memory, MemoryId, MemoryStore};
 use hyphae_store::{
     ArchiveMemoirRecord, ArchiveMemoryRecord, ArchiveSessionRecord, HyphaeArchive, SqliteStore,
 };
@@ -135,9 +133,7 @@ pub(crate) fn cmd_import(
                     }
 
                     // Keep earlier created_at
-                    if let Ok(incoming_created) =
-                        DateTime::parse_from_rfc3339(&rec.created_at)
-                    {
+                    if let Ok(incoming_created) = DateTime::parse_from_rfc3339(&rec.created_at) {
                         let incoming_created = incoming_created.with_timezone(&chrono::Utc);
                         if incoming_created < existing.created_at {
                             existing.created_at = incoming_created;
@@ -224,7 +220,10 @@ pub(crate) fn cmd_import(
 
         if exists {
             if dry_run {
-                eprintln!("[dry-run] skip session {} (conflict, sessions always skip)", rec.id);
+                eprintln!(
+                    "[dry-run] skip session {} (conflict, sessions always skip)",
+                    rec.id
+                );
             }
             sessions_skipped += 1;
         } else if dry_run {
@@ -256,10 +255,7 @@ pub(crate) fn cmd_import(
 // ── Domain conversion helpers ─────────────────────────────────────────────────
 
 fn archive_memory_to_domain(rec: &ArchiveMemoryRecord) -> Result<Memory> {
-    let importance: Importance = rec
-        .importance
-        .parse()
-        .unwrap_or(Importance::Medium);
+    let importance: Importance = rec.importance.parse().unwrap_or(Importance::Medium);
 
     let keywords: Vec<String> = rec
         .keywords
@@ -275,8 +271,8 @@ fn archive_memory_to_domain(rec: &ArchiveMemoryRecord) -> Result<Memory> {
         .with_context(|| format!("invalid updated_at for memory {}", rec.id))?
         .with_timezone(&chrono::Utc);
 
-    let mut builder = Memory::builder(rec.topic.clone(), rec.content.clone(), importance)
-        .keywords(keywords);
+    let mut builder =
+        Memory::builder(rec.topic.clone(), rec.content.clone(), importance).keywords(keywords);
 
     if let Some(project) = &rec.project {
         builder = builder.project(project.clone());
@@ -418,7 +414,9 @@ mod tests {
         let store = make_store(&dir);
 
         let mut archive = minimal_archive();
-        archive.memories.push(sample_memory_record("MEM_SKIP_NEW_01"));
+        archive
+            .memories
+            .push(sample_memory_record("MEM_SKIP_NEW_01"));
 
         let path = write_archive(&dir, &archive);
         cmd_import(&store, path, ConflictStrategy::Skip, false).expect("import should succeed");
@@ -479,7 +477,8 @@ mod tests {
         archive.memories.push(rec);
 
         let path = write_archive(&dir, &archive);
-        cmd_import(&store, path, ConflictStrategy::Overwrite, false).expect("import should succeed");
+        cmd_import(&store, path, ConflictStrategy::Overwrite, false)
+            .expect("import should succeed");
 
         let id: MemoryId = "MEM_OW_01".into();
         let mem = store
@@ -525,10 +524,19 @@ mod tests {
 
         // After merge, keywords should be the union.
         let kws = &mem.keywords;
-        assert!(kws.contains(&"existing".to_string()), "existing keyword preserved");
-        assert!(kws.contains(&"keyword".to_string()), "existing keyword preserved");
+        assert!(
+            kws.contains(&"existing".to_string()),
+            "existing keyword preserved"
+        );
+        assert!(
+            kws.contains(&"keyword".to_string()),
+            "existing keyword preserved"
+        );
         assert!(kws.contains(&"rust".to_string()), "imported keyword merged");
-        assert!(kws.contains(&"merge".to_string()), "imported keyword merged");
+        assert!(
+            kws.contains(&"merge".to_string()),
+            "imported keyword merged"
+        );
     }
 
     #[test]
@@ -628,7 +636,9 @@ mod tests {
         let store = make_store(&dir);
 
         let mut archive = minimal_archive();
-        archive.sessions.push(sample_session_record("ses_IMPORT_SKIP_01"));
+        archive
+            .sessions
+            .push(sample_session_record("ses_IMPORT_SKIP_01"));
 
         // First import inserts the session.
         let path = write_archive(&dir, &archive);
@@ -673,7 +683,10 @@ mod tests {
         let path = write_archive(&dir, &archive);
         let result = cmd_import(&store, path, ConflictStrategy::Skip, false);
 
-        assert!(result.is_err(), "import with missing schema_version should fail");
+        assert!(
+            result.is_err(),
+            "import with missing schema_version should fail"
+        );
         let err_msg = result.unwrap_err().to_string();
         assert!(
             err_msg.contains("schema_version"),
@@ -693,7 +706,10 @@ mod tests {
         let path = write_archive(&dir, &archive);
         let result = cmd_import(&store, path, ConflictStrategy::Skip, false);
 
-        assert!(result.is_err(), "import with unknown schema_version should fail");
+        assert!(
+            result.is_err(),
+            "import with unknown schema_version should fail"
+        );
         let err_msg = result.unwrap_err().to_string();
         assert!(
             err_msg.contains("unsupported"),

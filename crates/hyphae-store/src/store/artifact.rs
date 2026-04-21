@@ -28,8 +28,7 @@ impl SqliteStore {
         let artifact_id = ulid::Ulid::new().to_string();
         let type_str = artifact_type.as_str();
         let created_at = Utc::now().to_rfc3339();
-        let payload_json =
-            serde_json::to_string(payload).map_err(HyphaeError::Serialization)?;
+        let payload_json = serde_json::to_string(payload).map_err(HyphaeError::Serialization)?;
 
         self.conn
             .execute(
@@ -119,8 +118,8 @@ impl SqliteStore {
 
 fn row_to_artifact(row: &rusqlite::Row<'_>) -> rusqlite::Result<Artifact> {
     let payload_str: String = row.get(4)?;
-    let payload = serde_json::from_str(&payload_str)
-        .unwrap_or(serde_json::Value::String(payload_str));
+    let payload =
+        serde_json::from_str(&payload_str).unwrap_or(serde_json::Value::String(payload_str));
 
     Ok(Artifact {
         artifact_id: row.get(0)?,

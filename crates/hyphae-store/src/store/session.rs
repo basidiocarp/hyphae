@@ -798,7 +798,9 @@ impl SqliteStore {
                 params![session_id],
                 |row| row.get(0),
             )
-            .map_err(|e| HyphaeError::Database(format!("failed to check session existence: {e}")))?;
+            .map_err(|e| {
+                HyphaeError::Database(format!("failed to check session existence: {e}"))
+            })?;
         Ok(count > 0)
     }
 
@@ -828,8 +830,17 @@ impl SqliteStore {
                   files_modified, errors, status)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
-                    id, project, project_root, worktree_id, task, started_at, ended_at,
-                    summary, files_modified, errors, status,
+                    id,
+                    project,
+                    project_root,
+                    worktree_id,
+                    task,
+                    started_at,
+                    ended_at,
+                    summary,
+                    files_modified,
+                    errors,
+                    status,
                 ],
             )
             .map_err(|e| HyphaeError::Database(format!("failed to import session record: {e}")))?;

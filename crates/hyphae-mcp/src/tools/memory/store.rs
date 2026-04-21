@@ -111,6 +111,10 @@ pub(crate) fn tool_store(
         builder = builder.worktree(worktree);
     }
 
+    if let Some(agent_id) = get_str(args, "agent_id") {
+        builder = builder.agent_id(agent_id.into());
+    }
+
     if let Some(raw) = get_str(args, "raw_excerpt") {
         builder = builder.raw_excerpt(raw.into());
     }

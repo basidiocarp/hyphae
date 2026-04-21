@@ -346,6 +346,37 @@ impl SqliteStore {
         Ok(results)
     }
 
+    pub fn get_by_agent_id(
+        &self,
+        agent_id: &str,
+        limit: usize,
+        offset: usize,
+    ) -> HyphaeResult<Vec<Memory>> {
+        let sql = format!(
+            "SELECT {SELECT_COLS} FROM memories
+                          WHERE agent_id = ?1 AND {ACTIVE_MEMORY_CLAUSE}
+                          ORDER BY created_at DESC
+                          LIMIT ?2 OFFSET ?3"
+        );
+        let mut stmt = self
+            .conn
+            .prepare_cached(&sql)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(
+                params![agent_id, limit as i64, offset as i64],
+                row_to_memory,
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| HyphaeError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
     pub fn search_hybrid_scoped(
         &self,
         query: &str,
@@ -760,9 +791,9 @@ impl MemoryStore for SqliteStore {
             .execute(
                 "INSERT INTO memories (id, created_at, updated_at, last_accessed, access_count, weight,
                  topic, summary, raw_excerpt, keywords,
-                 importance, source_type, source_data, related_ids, embedding, project, branch, worktree,
+                 importance, source_type, source_data, related_ids, embedding, project, branch, worktree, agent_id,
                  expires_at, invalidated_at, invalidation_reason, superseded_by)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
                 params![
                     memory.id.as_ref(),
                     memory.created_at.to_rfc3339(),
@@ -782,6 +813,7 @@ impl MemoryStore for SqliteStore {
                     memory.project.as_deref(),
                     memory.branch.as_deref(),
                     memory.worktree.as_deref(),
+                    memory.agent_id.as_deref(),
                     memory.expires_at.map(|dt| dt.to_rfc3339()),
                     memory.invalidated_at.map(|dt| dt.to_rfc3339()),
                     memory.invalidation_reason.as_deref(),
@@ -845,8 +877,8 @@ impl MemoryStore for SqliteStore {
                  updated_at = ?2, last_accessed = ?3, access_count = ?4, weight = ?5,
                  topic = ?6, summary = ?7, raw_excerpt = ?8, keywords = ?9,
                  importance = ?10, source_type = ?11, source_data = ?12, related_ids = ?13,
-                 embedding = ?14, project = ?15, branch = ?16, worktree = ?17, expires_at = ?18,
-                 invalidated_at = ?19, invalidation_reason = ?20, superseded_by = ?21
+                 embedding = ?14, project = ?15, branch = ?16, worktree = ?17, agent_id = ?18, expires_at = ?19,
+                 invalidated_at = ?20, invalidation_reason = ?21, superseded_by = ?22
                  WHERE id = ?1",
                 params![
                     memory.id.as_ref(),
@@ -866,6 +898,7 @@ impl MemoryStore for SqliteStore {
                     memory.project.as_deref(),
                     memory.branch.as_deref(),
                     memory.worktree.as_deref(),
+                    memory.agent_id.as_deref(),
                     memory.expires_at.map(|dt| dt.to_rfc3339()),
                     memory.invalidated_at.map(|dt| dt.to_rfc3339()),
                     memory.invalidation_reason.as_deref(),

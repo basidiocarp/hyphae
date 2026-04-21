@@ -15,7 +15,6 @@ use std::collections::HashSet;
 use std::io::Write;
 use std::path::PathBuf;
 
-
 pub(crate) struct AutoRecallArgs {
     pub query: String,
     pub session_id: String,
@@ -191,7 +190,12 @@ mod tests {
     #[test]
     fn matching_memory_returns_true() {
         let store = make_store();
-        store_memory(&store, "test/topic", "rust borrow checker lifetime rules", None);
+        store_memory(
+            &store,
+            "test/topic",
+            "rust borrow checker lifetime rules",
+            None,
+        );
 
         let args = AutoRecallArgs {
             query: "rust borrow checker".to_string(),
@@ -206,7 +210,12 @@ mod tests {
     #[test]
     fn seen_set_deduplicates_across_calls() {
         let store = make_store();
-        store_memory(&store, "test/topic", "rust borrow checker lifetime rules", None);
+        store_memory(
+            &store,
+            "test/topic",
+            "rust borrow checker lifetime rules",
+            None,
+        );
 
         let session_id = "sess-dedup-test-unique";
         // Clean up any leftover state from a previous run.

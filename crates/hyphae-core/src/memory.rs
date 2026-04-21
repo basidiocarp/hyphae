@@ -62,6 +62,7 @@ pub struct Memory {
     pub project: Option<String>,
     pub branch: Option<String>,
     pub worktree: Option<String>,
+    pub agent_id: Option<String>,
 
     pub expires_at: Option<DateTime<Utc>>,
     pub invalidated_at: Option<DateTime<Utc>>,
@@ -112,6 +113,7 @@ pub struct MemoryBuilder {
     project: Option<String>,
     branch: Option<String>,
     worktree: Option<String>,
+    agent_id: Option<String>,
     expires_at: Option<DateTime<Utc>>,
     invalidated_at: Option<DateTime<Utc>>,
     invalidation_reason: Option<String>,
@@ -228,6 +230,7 @@ impl MemoryBuilder {
             project: None,
             branch: None,
             worktree: None,
+            agent_id: None,
             expires_at: None,
             invalidated_at: None,
             invalidation_reason: None,
@@ -272,6 +275,11 @@ impl MemoryBuilder {
 
     pub fn worktree(mut self, worktree: String) -> Self {
         self.worktree = Some(worktree);
+        self
+    }
+
+    pub fn agent_id(mut self, agent_id: String) -> Self {
+        self.agent_id = Some(agent_id);
         self
     }
 
@@ -324,6 +332,7 @@ impl MemoryBuilder {
             project: self.project,
             branch: self.branch,
             worktree: self.worktree,
+            agent_id: self.agent_id,
             expires_at,
             invalidated_at: self.invalidated_at,
             invalidation_reason: self.invalidation_reason,

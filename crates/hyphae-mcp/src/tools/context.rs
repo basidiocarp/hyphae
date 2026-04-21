@@ -149,7 +149,13 @@ pub(crate) fn tool_gather_context(
         // for a result set that is bounded to MAX_PER_SOURCE items.
         let session_fetch_limit = (MAX_PER_SOURCE * 10) as i64;
         let structured_rows = if let Some(proj) = project_arg {
-            store.session_context_identity(proj, project_root, worktree_id, scope, session_fetch_limit)
+            store.session_context_identity(
+                proj,
+                project_root,
+                worktree_id,
+                scope,
+                session_fetch_limit,
+            )
         } else {
             store.session_context_all(session_fetch_limit)
         };
