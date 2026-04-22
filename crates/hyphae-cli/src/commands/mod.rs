@@ -24,6 +24,7 @@ pub mod project;
 pub mod protocol;
 pub mod prune;
 pub mod purge;
+pub mod recall_bundle;
 pub mod self_update;
 pub mod session;
 pub mod transcript;

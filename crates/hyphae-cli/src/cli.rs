@@ -7,6 +7,7 @@ use crate::commands::import::ConflictStrategy;
 use crate::commands::memoir::MemoirArgs;
 use crate::commands::memory::{MemoryArgs, SearchOrder};
 use crate::commands::project::ProjectArgs;
+use crate::commands::recall_bundle::RecallBundleArgs;
 use crate::commands::session::SessionArgs;
 
 #[derive(Parser)]
@@ -493,6 +494,10 @@ pub(crate) enum Commands {
         #[arg(long, default_value = "10")]
         limit: usize,
     },
+
+    /// Assemble a budget-aware session-start context bundle
+    #[command(name = "recall-bundle")]
+    RecallBundle(RecallBundleArgs),
 
     /// Purge memories and related data (GDPR/retention compliance)
     Purge {

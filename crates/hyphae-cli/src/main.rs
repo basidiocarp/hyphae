@@ -75,6 +75,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Audit { .. } => "audit",
         Commands::Changelog { .. } => "changelog",
         Commands::AutoRecall { .. } => "auto_recall",
+        Commands::RecallBundle(_) => "recall_bundle",
     }
 }
 
@@ -110,7 +111,8 @@ fn all_projects_allowed(command: &Commands) -> bool {
         | Commands::Audit { .. }
         | Commands::AuditSecrets { .. }
         | Commands::Changelog { .. }
-        | Commands::AutoRecall { .. } => true,
+        | Commands::AutoRecall { .. }
+        | Commands::RecallBundle(_) => true,
         Commands::Project(args) => matches!(
             args.command,
             crate::commands::project::ProjectCommand::List
@@ -684,6 +686,10 @@ fn main() -> Result<()> {
             if !emitted {
                 std::process::exit(1);
             }
+        }
+
+        Commands::RecallBundle(args) => {
+            commands::recall_bundle::cmd_recall_bundle(&store, args, resolved_project)?;
         }
     }
 
