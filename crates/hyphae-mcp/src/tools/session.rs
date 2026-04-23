@@ -635,4 +635,106 @@ mod tests {
         let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
         assert_eq!(parsed["count"].as_u64().unwrap(), 0);
     }
+
+    #[test]
+    fn test_session_start_empty_store_returns_empty_recalled_context() {
+        let store = test_store();
+
+        // Session-start with no memories in the store should return success with empty context
+        let result = tool_session_start(
+            &store,
+            None,
+            &json!({
+                "project": "empty-memory-proj",
+                "task": "test task",
+                "project_root": "/tmp/empty",
+                "worktree_id": "git:empty",
+                "scope": "test-scope",
+                "context_signals": {
+                    "recent_files": ["/tmp/empty/src/main.rs"],
+                    "active_errors": ["test error"],
+                    "git_branch": "feat/empty-store-test"
+                }
+            }),
+            &ToolTraceContext::default(),
+        );
+
+        // Should not return error even with empty memory store
+        assert!(
+            !result.is_error,
+            "session_start should succeed with empty store: {:?}",
+            result
+        );
+
+        let text = &result.content[0].text;
+        let parsed: Value = serde_json::from_str(text).expect("valid JSON");
+
+        // Verify session was created successfully
+        assert_eq!(parsed["schema_version"].as_str(), Some("1.0"));
+        assert!(parsed["session_id"].as_str().unwrap().starts_with("ses_"));
+
+        // Verify recalled_context is an empty array (valid empty result, not an error)
+        let recalled = parsed["recalled_context"].as_array().unwrap();
+        assert!(
+            recalled.is_empty(),
+            "Empty memory store should return empty recalled_context, not an error"
+        );
+    }
+
+    #[test]
+    fn test_session_start_with_context_signals_returns_gracefully_when_store_has_memories() {
+        let store = test_store();
+
+        // Store a memory with topic that matches recall test pattern
+        store
+            .store(
+                Memory::builder(
+                    "malform_analysis".into(),
+                    "malform analysis malform analysis graceful graceful handling error recovery"
+                        .into(),
+                    Importance::Medium,
+                )
+                .project("malform-proj".into())
+                .worktree("/tmp/malform-project".into())
+                .build(),
+            )
+            .unwrap();
+
+        // Session-start with context signals that trigger recall.
+        // This verifies that the recall path completes successfully and doesn't panic
+        // even if some internal search operations encounter edge cases.
+        let result = tool_session_start(
+            &store,
+            None,
+            &json!({
+                "project": "malform-proj",
+                "task": "test graceful handling",
+                "project_root": "/tmp/malform-project",
+                "worktree_id": "git:malform",
+                "scope": "test-scope",
+                "context_signals": {
+                    "recent_files": ["/repo/demo/src/malform_analysis.rs"],
+                    "active_errors": ["graceful handling"],
+                    "git_branch": "feat/error-recovery"
+                }
+            }),
+            &ToolTraceContext::default(),
+        );
+
+        // Session should be created successfully without panicking on any search or recall issues
+        assert!(!result.is_error, "session_start should not panic or error: {:?}", result);
+
+        let text = &result.content[0].text;
+        let parsed: Value = serde_json::from_str(text).expect("valid JSON");
+
+        // Verify a valid session was created
+        assert_eq!(parsed["schema_version"].as_str(), Some("1.0"));
+        assert!(parsed["session_id"].as_str().unwrap().starts_with("ses_"));
+
+        // Verify recalled_context is an array (may be empty or populated, both are valid)
+        let recalled = parsed["recalled_context"].as_array().unwrap();
+        // The key assertion: we get a valid response without panicking,
+        // regardless of whether the search found matches or not
+        let _ = recalled;
+    }
 }
