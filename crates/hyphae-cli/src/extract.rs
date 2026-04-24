@@ -7,7 +7,6 @@ use std::collections::HashSet;
 
 use anyhow::Result;
 use hyphae_core::{Importance, Memory, MemoryStore};
-use hyphae_store::SqliteStore;
 
 use crate::project;
 
@@ -22,7 +21,7 @@ const DEFAULT_MAX_FACTS: usize = 20;
 
 /// Extract key facts from text and store them in Hyphae.
 /// Returns the number of facts stored.
-pub fn extract_and_store(store: &SqliteStore, text: &str, project: &str) -> Result<usize> {
+pub fn extract_and_store(store: &dyn MemoryStore, text: &str, project: &str) -> Result<usize> {
     let facts = extract_facts(text, project);
     let git = project::detect_git_context();
     let mut stored = 0;
@@ -39,7 +38,7 @@ pub fn extract_and_store(store: &SqliteStore, text: &str, project: &str) -> Resu
 
 /// Recall relevant memories and format as context preamble for prompt injection.
 #[allow(dead_code)]
-pub fn recall_context(store: &SqliteStore, query: &str, limit: usize) -> Result<String> {
+pub fn recall_context(store: &dyn MemoryStore, query: &str, limit: usize) -> Result<String> {
     // Try FTS search with the query
     let results = store.search_fts(query, limit * 2, 0, None)?;
 
@@ -399,6 +398,7 @@ fn jaccard_similar(a: &str, b: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hyphae_store::SqliteStore;
 
     #[test]
     fn test_extract_facts_finds_algorithm() {
