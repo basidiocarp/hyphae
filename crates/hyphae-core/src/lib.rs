@@ -3,6 +3,7 @@ pub mod chunk;
 pub mod chunk_store;
 pub mod embedder;
 pub mod error;
+pub mod eviction;
 #[cfg(feature = "embeddings")]
 pub mod fastembed_embedder;
 pub mod git_context;
@@ -15,12 +16,14 @@ pub mod memory;
 pub mod sanitize;
 pub mod secrets;
 pub mod store;
+pub mod tier;
 
 pub use artifact::{Artifact, ArtifactType, UnknownArtifactType};
 pub use chunk::{Chunk, ChunkMetadata, ChunkSearchResult, Document, SourceType};
 pub use chunk_store::ChunkStore;
 pub use embedder::Embedder;
 pub use error::{HyphaeError, HyphaeResult};
+pub use eviction::{DefaultEvictionPolicy, EvictionPolicy};
 #[cfg(feature = "embeddings")]
 pub use fastembed_embedder::FastEmbedder;
 pub use git_context::{GitContext, detect_git_context_from};
@@ -39,3 +42,4 @@ pub use memory::{
 pub use sanitize::{SanitizedQuery, sanitize_query};
 pub use secrets::detect_secrets;
 pub use store::MemoryStore;
+pub use tier::MemoryTier;

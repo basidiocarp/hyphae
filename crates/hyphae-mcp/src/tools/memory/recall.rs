@@ -2,7 +2,10 @@ use chrono::Utc;
 use serde_json::Value;
 use spore::logging::workflow_span;
 
-use hyphae_core::{Embedder, Memory, MemoryStore, sanitize_query};
+use hyphae_core::{
+    DefaultEvictionPolicy, Embedder, EvictionPolicy, Memory, MemoryStore, MemoryTier,
+    sanitize_query,
+};
 use hyphae_store::{SqliteStore, context};
 
 use crate::protocol::ToolResult;
@@ -429,6 +432,11 @@ pub(crate) fn tool_recall(
     let session_id = get_str(args, "session_id");
     let raw_project_root = get_str(args, "project_root");
     let raw_worktree_id = get_str(args, "worktree_id");
+    let token_budget = args
+        .get("token_budget")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize);
+    let tier_filter = get_str(args, "tier");
     if raw_project_root.is_some() ^ raw_worktree_id.is_some() {
         return ToolResult::error(
             "project_root and worktree_id must be provided together".to_string(),
@@ -488,6 +496,21 @@ pub(crate) fn tool_recall(
                 }
                 if let Some(kw) = keyword {
                     scored_results.retain(|(m, _)| m.keywords.iter().any(|k| k.contains(kw)));
+                }
+                if let Some(tier) = tier_filter {
+                    if let Ok(parsed_tier) = tier.parse::<MemoryTier>() {
+                        scored_results.retain(|(m, _)| m.tier == parsed_tier);
+                    }
+                }
+
+                // Apply token budget eviction if specified
+                if let Some(budget) = token_budget {
+                    let candidates: Vec<&Memory> = scored_results.iter().map(|(m, _)| m).collect();
+                    let policy = DefaultEvictionPolicy;
+                    let selected = policy.select_for_context(&candidates, budget);
+                    let selected_ids: std::collections::HashSet<_> =
+                        selected.into_iter().map(|m| m.id.clone()).collect();
+                    scored_results.retain(|(m, _)| selected_ids.contains(&m.id));
                 }
 
                 for (mem, _) in &scored_results {
@@ -564,6 +587,21 @@ pub(crate) fn tool_recall(
     }
     if let Some(kw) = keyword {
         results.retain(|m| m.keywords.iter().any(|k| k.contains(kw)));
+    }
+    if let Some(tier) = tier_filter {
+        if let Ok(parsed_tier) = tier.parse::<MemoryTier>() {
+            results.retain(|m| m.tier == parsed_tier);
+        }
+    }
+
+    // Apply token budget eviction if specified
+    if let Some(budget) = token_budget {
+        let candidates: Vec<&Memory> = results.iter().collect();
+        let policy = DefaultEvictionPolicy;
+        let selected = policy.select_for_context(&candidates, budget);
+        let selected_ids: std::collections::HashSet<_> =
+            selected.into_iter().map(|m| m.id.clone()).collect();
+        results.retain(|m| selected_ids.contains(&m.id));
     }
 
     for mem in &results {

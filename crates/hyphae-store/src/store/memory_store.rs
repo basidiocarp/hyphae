@@ -728,8 +728,8 @@ impl SqliteStore {
             "INSERT INTO memories (id, created_at, updated_at, last_accessed, access_count, weight,
              topic, summary, raw_excerpt, keywords,
              importance, source_type, source_data, related_ids, embedding, project, branch, worktree,
-             expires_at, invalidated_at, invalidation_reason, superseded_by)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
+             expires_at, invalidated_at, invalidation_reason, superseded_by, tier)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
             params![
                 memory.id.as_ref(),
                 memory.created_at.to_rfc3339(),
@@ -753,6 +753,7 @@ impl SqliteStore {
                 memory.invalidated_at.map(|dt| dt.to_rfc3339()),
                 memory.invalidation_reason.as_deref(),
                 memory.superseded_by.as_ref().map(MemoryId::as_ref),
+                memory.tier.to_string(),
             ],
         )
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
@@ -792,8 +793,8 @@ impl MemoryStore for SqliteStore {
                 "INSERT INTO memories (id, created_at, updated_at, last_accessed, access_count, weight,
                  topic, summary, raw_excerpt, keywords,
                  importance, source_type, source_data, related_ids, embedding, project, branch, worktree, agent_id,
-                 expires_at, invalidated_at, invalidation_reason, superseded_by)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
+                 expires_at, invalidated_at, invalidation_reason, superseded_by, tier)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
                 params![
                     memory.id.as_ref(),
                     memory.created_at.to_rfc3339(),
@@ -818,6 +819,7 @@ impl MemoryStore for SqliteStore {
                     memory.invalidated_at.map(|dt| dt.to_rfc3339()),
                     memory.invalidation_reason.as_deref(),
                     memory.superseded_by.as_ref().map(MemoryId::as_ref),
+                    memory.tier.to_string(),
                 ],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;

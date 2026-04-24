@@ -722,7 +722,11 @@ mod tests {
         );
 
         // Session should be created successfully without panicking on any search or recall issues
-        assert!(!result.is_error, "session_start should not panic or error: {:?}", result);
+        assert!(
+            !result.is_error,
+            "session_start should not panic or error: {:?}",
+            result
+        );
 
         let text = &result.content[0].text;
         let parsed: Value = serde_json::from_str(text).expect("valid JSON");

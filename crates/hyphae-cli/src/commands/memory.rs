@@ -856,6 +856,7 @@ fn memory_from_payload(payload: &MemoryPayload) -> Memory {
         raw_excerpt: payload.raw_excerpt.clone(),
         keywords: payload.keywords.clone(),
         importance: parse_importance(&payload.importance),
+        tier: hyphae_core::MemoryTier::default(),
         source: match &payload.source {
             MemorySourcePayload::AgentSession {
                 host,

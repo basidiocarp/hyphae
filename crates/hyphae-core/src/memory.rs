@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::ids::MemoryId;
+use crate::tier::MemoryTier;
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -55,6 +56,7 @@ pub struct Memory {
     pub keywords: Vec<String>,
 
     pub importance: Importance,
+    pub tier: MemoryTier,
     pub source: MemorySource,
 
     pub related_ids: Vec<MemoryId>,
@@ -104,6 +106,7 @@ pub struct MemoryBuilder {
     topic: String,
     summary: String,
     importance: Importance,
+    tier: MemoryTier,
     keywords: Vec<String>,
     raw_excerpt: Option<String>,
     embedding: Option<Vec<f32>>,
@@ -221,6 +224,7 @@ impl MemoryBuilder {
             topic,
             summary,
             importance,
+            tier: MemoryTier::default(),
             keywords: Vec::new(),
             raw_excerpt: None,
             embedding: None,
@@ -308,6 +312,11 @@ impl MemoryBuilder {
         self
     }
 
+    pub fn tier(mut self, tier: MemoryTier) -> Self {
+        self.tier = tier;
+        self
+    }
+
     pub fn build(self) -> Memory {
         let now = Utc::now();
         let expires_at = if self.importance == Importance::Ephemeral && self.expires_at.is_none() {
@@ -327,6 +336,7 @@ impl MemoryBuilder {
             raw_excerpt: self.raw_excerpt,
             keywords: self.keywords,
             importance: self.importance,
+            tier: self.tier,
             source: self.source,
             related_ids: self.related_ids,
             project: self.project,

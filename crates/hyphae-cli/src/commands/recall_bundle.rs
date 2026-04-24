@@ -93,7 +93,10 @@ pub(crate) fn cmd_recall_bundle(
     args: RecallBundleArgs,
     resolved_project: Option<String>,
 ) -> Result<()> {
-    let project = args.project.or_else(|| resolved_project.clone()).unwrap_or_else(|| "unknown".to_string());
+    let project = args
+        .project
+        .or_else(|| resolved_project.clone())
+        .unwrap_or_else(|| "unknown".to_string());
     let resolved_project_ref = resolved_project.as_deref();
 
     // L0: Project identity (always included, minimal tokens)
@@ -141,13 +144,12 @@ pub(crate) fn cmd_recall_bundle(
     // L2: Effective memories (semantic search with project name, limit 10)
     if used_tokens < args.budget {
         // Try hybrid search if embeddings are available; fall back to FTS
-        let search_results = if let Ok(results) =
-            store.search_fts(&project, 10, 0, resolved_project_ref)
-        {
-            results
-        } else {
-            Vec::new()
-        };
+        let search_results =
+            if let Ok(results) = store.search_fts(&project, 10, 0, resolved_project_ref) {
+                results
+            } else {
+                Vec::new()
+            };
 
         for memory in search_results {
             let item_tokens = estimate_tokens(&memory.summary);
@@ -215,7 +217,12 @@ fn emit_text(
     if !l1_active_errors.is_empty() {
         println!("[L1] Active Errors ({}): ", l1_active_errors.len());
         for memory in l1_active_errors {
-            println!("  • [{}] {} ({})", memory.topic, memory.summary, memory.created_at.format("%Y-%m-%d"));
+            println!(
+                "  • [{}] {} ({})",
+                memory.topic,
+                memory.summary,
+                memory.created_at.format("%Y-%m-%d")
+            );
         }
         println!();
     }
@@ -224,7 +231,12 @@ fn emit_text(
     if !l1_decisions.is_empty() {
         println!("[L1] Recent Decisions ({}): ", l1_decisions.len());
         for memory in l1_decisions {
-            println!("  • [{}] {} ({})", memory.topic, memory.summary, memory.created_at.format("%Y-%m-%d"));
+            println!(
+                "  • [{}] {} ({})",
+                memory.topic,
+                memory.summary,
+                memory.created_at.format("%Y-%m-%d")
+            );
         }
         println!();
     }
@@ -264,8 +276,14 @@ fn emit_json(
         project: project.to_string(),
         sections: RecallBundleSections {
             l0_identity: l0_identity.to_string(),
-            l1_active_errors: l1_active_errors.iter().map(MemoryPayload::from_memory).collect(),
-            l1_decisions: l1_decisions.iter().map(MemoryPayload::from_memory).collect(),
+            l1_active_errors: l1_active_errors
+                .iter()
+                .map(MemoryPayload::from_memory)
+                .collect(),
+            l1_decisions: l1_decisions
+                .iter()
+                .map(MemoryPayload::from_memory)
+                .collect(),
             l2_memories: l2_memories.iter().map(MemoryPayload::from_memory).collect(),
             l3_session_summary: l3_session_summary.clone(),
         },

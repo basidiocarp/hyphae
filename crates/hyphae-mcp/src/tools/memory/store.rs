@@ -3,8 +3,8 @@ use serde_json::Value;
 use spore::logging::workflow_span;
 
 use hyphae_core::{
-    Embedder, Importance, Memory, MemoryId, MemoryStore, Weight, detect_git_context_from,
-    detect_secrets,
+    Embedder, Importance, Memory, MemoryId, MemoryStore, MemoryTier, Weight,
+    detect_git_context_from, detect_secrets,
 };
 use hyphae_store::SqliteStore;
 
@@ -89,7 +89,12 @@ pub(crate) fn tool_store(
         })
         .unwrap_or_default();
 
-    let mut builder = Memory::builder(topic.into(), content.into(), importance).keywords(keywords);
+    let tier_str = get_str(args, "tier").unwrap_or("recall");
+    let tier = tier_str.parse::<MemoryTier>().unwrap_or_default();
+
+    let mut builder = Memory::builder(topic.into(), content.into(), importance)
+        .keywords(keywords)
+        .tier(tier);
 
     if let Some(p) = project {
         builder = builder.project(p.to_string());

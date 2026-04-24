@@ -632,6 +632,22 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
     )
     .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
+    // Migration: add tier column to memories
+    let has_tier: bool = tx
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name='tier'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if !has_tier {
+        tx.execute_batch("ALTER TABLE memories ADD COLUMN tier TEXT NOT NULL DEFAULT 'recall'")
+            .map_err(|e| HyphaeError::Database(format!("failed to add tier column: {e}")))?;
+    }
+    tx.execute_batch("CREATE INDEX IF NOT EXISTS idx_memories_tier ON memories(tier);")
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
     // sqlite-vec virtual table for vector search (dimension-aware)
     let vec_exists: bool = tx
         .query_row(
