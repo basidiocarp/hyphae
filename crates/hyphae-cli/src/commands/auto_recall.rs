@@ -10,8 +10,7 @@
 //!   1 — nothing emitted (empty result, all deduped, or budget exhausted)
 
 use anyhow::Result;
-use hyphae_core::MemoryStore;
-use hyphae_store::{SearchOrder as StoreSearchOrder, SqliteStore};
+use hyphae_core::{MemoryStore, SearchOrder as StoreSearchOrder};
 use std::collections::HashSet;
 use std::io::Write;
 use std::path::PathBuf;
@@ -28,7 +27,7 @@ pub(crate) struct AutoRecallArgs {
 ///
 /// Returns `Ok(true)` when at least one memory was emitted, `Ok(false)` when
 /// nothing was output (caller should exit 1).
-pub(crate) fn cmd_auto_recall(store: &SqliteStore, args: AutoRecallArgs) -> Result<bool> {
+pub(crate) fn cmd_auto_recall(store: &dyn MemoryStore, args: AutoRecallArgs) -> Result<bool> {
     if args.query.trim().is_empty() {
         return Ok(false);
     }

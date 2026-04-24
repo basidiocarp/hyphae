@@ -37,7 +37,7 @@ pub(crate) struct RecallBundleArgs {
 
 /// Estimate token count using the approximation: 4 chars ≈ 1 token.
 fn estimate_tokens(text: &str) -> usize {
-    (text.len() + 3) / 4
+    text.len().div_ceil(4)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -144,12 +144,9 @@ pub(crate) fn cmd_recall_bundle(
     // L2: Effective memories (semantic search with project name, limit 10)
     if used_tokens < args.budget {
         // Try hybrid search if embeddings are available; fall back to FTS
-        let search_results =
-            if let Ok(results) = store.search_fts(&project, 10, 0, resolved_project_ref) {
-                results
-            } else {
-                Vec::new()
-            };
+        let search_results = store
+            .search_fts(&project, 10, 0, resolved_project_ref)
+            .unwrap_or_default();
 
         for memory in search_results {
             let item_tokens = estimate_tokens(&memory.summary);
@@ -193,6 +190,7 @@ pub(crate) fn cmd_recall_bundle(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_text(
     budget: usize,
     used_tokens: usize,
@@ -257,6 +255,7 @@ fn emit_text(
     // L3: Session Summary (currently omitted)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_json(
     project: &str,
     budget: usize,

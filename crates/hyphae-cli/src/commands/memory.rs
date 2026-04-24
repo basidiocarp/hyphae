@@ -4,7 +4,7 @@ use hyphae_core::{
     ConsolidationConfig, Embedder, GitContext, Memory, MemoryId, MemorySource, MemoryStore,
     ScopedIdentity, SearchOrder as StoreSearchOrder, SessionHost, TopicMemoryOrder,
 };
-#[allow(unused_imports)]
+#[cfg(test)]
 use hyphae_store::SqliteStore;
 use regex::Regex;
 use serde::Serialize;
