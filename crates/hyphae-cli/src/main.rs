@@ -146,8 +146,12 @@ fn all_projects_allowed(command: &Commands) -> bool {
 }
 
 fn open_store(db: Option<PathBuf>, embedding_dims: usize) -> Result<SqliteStore> {
-    let path = db.unwrap_or_else(paths::default_db_path);
+    let backend = std::env::var("HYPHAE_BACKEND").unwrap_or_else(|_| "sqlite".to_string());
+    if backend != "sqlite" {
+        tracing::warn!(backend = %backend, "unknown HYPHAE_BACKEND value, falling back to sqlite");
+    }
 
+    let path = db.unwrap_or_else(paths::default_db_path);
     std::fs::create_dir_all(path.parent().unwrap_or(&PathBuf::from(".")))?;
     SqliteStore::with_dims(&path, embedding_dims)
         .map_err(|e| anyhow::anyhow!("failed to open database: {e}"))
