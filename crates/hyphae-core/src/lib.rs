@@ -41,5 +41,5 @@ pub use memory::{
 };
 pub use sanitize::{SanitizedQuery, sanitize_query};
 pub use secrets::detect_secrets;
-pub use store::MemoryStore;
+pub use store::{MemoryStore, SearchOrder, TopicMemoryOrder};
 pub use tier::MemoryTier;

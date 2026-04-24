@@ -2,9 +2,10 @@ use anyhow::Result;
 use clap::{Args, Subcommand, ValueEnum};
 use hyphae_core::{
     ConsolidationConfig, Embedder, GitContext, Memory, MemoryId, MemorySource, MemoryStore,
-    ScopedIdentity, SessionHost,
+    ScopedIdentity, SearchOrder as StoreSearchOrder, SessionHost, TopicMemoryOrder,
 };
-use hyphae_store::{SearchOrder as StoreSearchOrder, SqliteStore, TopicMemoryOrder};
+#[allow(unused_imports)]
+use hyphae_store::SqliteStore;
 use regex::Regex;
 use serde::Serialize;
 
@@ -231,7 +232,7 @@ fn detect_secrets(content: &str) -> Vec<String> {
 }
 
 pub(crate) fn dispatch(
-    store: &SqliteStore,
+    store: &dyn MemoryStore,
     args: MemoryArgs,
     project: Option<String>,
 ) -> Result<()> {
@@ -247,7 +248,7 @@ pub(crate) fn dispatch(
 }
 
 pub(crate) fn cmd_store(
-    store: &SqliteStore,
+    store: &dyn MemoryStore,
     topic: String,
     content: String,
     importance: &str,
@@ -274,7 +275,7 @@ pub(crate) fn cmd_store(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn cmd_search(
-    store: &SqliteStore,
+    store: &dyn MemoryStore,
     query: String,
     topic: Option<String>,
     limit: usize,
@@ -304,7 +305,7 @@ pub(crate) fn cmd_search(
 }
 
 pub(crate) fn cmd_invalidate(
-    store: &SqliteStore,
+    store: &dyn MemoryStore,
     id: String,
     reason: Option<String>,
     superseded_by: Option<String>,
@@ -318,7 +319,7 @@ pub(crate) fn cmd_invalidate(
 }
 
 pub(crate) fn cmd_list_invalidated(
-    store: &SqliteStore,
+    store: &dyn MemoryStore,
     limit: usize,
     project: Option<String>,
 ) -> Result<()> {
@@ -335,7 +336,7 @@ pub(crate) fn cmd_list_invalidated(
 }
 
 pub(crate) fn cmd_stats(
-    store: &SqliteStore,
+    store: &dyn MemoryStore,
     json: bool,
     project: Option<String>,
     include_invalidated: bool,
@@ -360,7 +361,7 @@ pub(crate) fn cmd_stats(
 }
 
 pub(crate) fn cmd_topics(
-    store: &SqliteStore,
+    store: &dyn MemoryStore,
     json: bool,
     project: Option<String>,
     include_invalidated: bool,
@@ -384,7 +385,7 @@ pub(crate) fn cmd_topics(
 }
 
 pub(crate) fn cmd_health(
-    store: &SqliteStore,
+    store: &dyn MemoryStore,
     consolidation: &ConsolidationConfig,
     topic: Option<String>,
     include_invalidated: bool,
@@ -440,7 +441,7 @@ pub(crate) fn cmd_health(
 }
 
 pub(crate) fn cmd_get(
-    store: &SqliteStore,
+    store: &dyn MemoryStore,
     id: String,
     json: bool,
     project: Option<String>,
@@ -456,7 +457,7 @@ pub(crate) fn cmd_get(
 }
 
 pub(crate) fn cmd_topic_memories(
-    store: &SqliteStore,
+    store: &dyn MemoryStore,
     topic: String,
     limit: usize,
     include_invalidated: bool,
@@ -487,7 +488,7 @@ pub(crate) fn cmd_topic_memories(
 }
 
 pub(crate) fn cmd_embed_all(
-    store: &SqliteStore,
+    store: &dyn MemoryStore,
     embedder: Option<&dyn Embedder>,
     topic_filter: Option<String>,
     batch_size: usize,
@@ -571,7 +572,7 @@ pub(crate) fn cmd_embed_all(
 }
 
 fn stats_payload(
-    store: &SqliteStore,
+    store: &dyn MemoryStore,
     project: Option<&str>,
     include_invalidated: bool,
 ) -> Result<StoreStatsPayload> {
@@ -588,7 +589,7 @@ fn stats_payload(
 }
 
 fn topics_payload(
-    store: &SqliteStore,
+    store: &dyn MemoryStore,
     project: Option<&str>,
     include_invalidated: bool,
 ) -> Result<TopicsPayload> {
@@ -617,7 +618,7 @@ fn topics_payload(
 }
 
 fn memory_lookup_payload(
-    store: &SqliteStore,
+    store: &dyn MemoryStore,
     id: &str,
     project: Option<&str>,
 ) -> Result<MemoryLookupPayload> {
@@ -640,7 +641,7 @@ fn memory_lookup_payload(
 }
 
 fn topic_memories_payload(
-    store: &SqliteStore,
+    store: &dyn MemoryStore,
     topic: &str,
     project: Option<&str>,
     include_invalidated: bool,
@@ -664,7 +665,7 @@ fn topic_memories_payload(
 }
 
 fn search_payload(
-    store: &SqliteStore,
+    store: &dyn MemoryStore,
     query: &str,
     topic: Option<&str>,
     limit: usize,
@@ -697,7 +698,7 @@ fn search_payload(
 }
 
 fn health_payload(
-    store: &SqliteStore,
+    store: &dyn MemoryStore,
     consolidation: &ConsolidationConfig,
     requested_topic: Option<&str>,
     project: Option<&str>,

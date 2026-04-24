@@ -3,9 +3,9 @@ use std::collections::BTreeMap;
 use rusqlite::params;
 use serde::Serialize;
 
-use hyphae_core::{HyphaeError, HyphaeResult};
+use hyphae_core::{HyphaeError, HyphaeResult, MemoryStore, TopicMemoryOrder};
 
-use super::{SqliteStore, TopicMemoryOrder};
+use super::SqliteStore;
 
 const DEFAULT_TOPIC_LIMIT: usize = 50;
 

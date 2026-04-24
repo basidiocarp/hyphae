@@ -10,6 +10,7 @@
 //!   1 — nothing emitted (empty result, all deduped, or budget exhausted)
 
 use anyhow::Result;
+use hyphae_core::MemoryStore;
 use hyphae_store::{SearchOrder as StoreSearchOrder, SqliteStore};
 use std::collections::HashSet;
 use std::io::Write;

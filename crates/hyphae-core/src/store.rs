@@ -2,6 +2,20 @@ use crate::error::HyphaeResult;
 use crate::ids::MemoryId;
 use crate::memory::{Memory, StoreStats, TopicHealth};
 
+/// Ordering options for FTS search results.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SearchOrder {
+    RankAsc,
+    WeightDesc,
+}
+
+/// Ordering options for topic memory retrieval.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TopicMemoryOrder {
+    CreatedAtDesc,
+    WeightDesc,
+}
+
 /// Core memory storage trait.
 ///
 /// # Lifecycle hooks
@@ -72,6 +86,26 @@ pub trait MemoryStore {
         project: Option<&str>,
     ) -> HyphaeResult<Vec<(Memory, f32)>>;
 
+    // Search with options
+    #[allow(clippy::too_many_arguments)]
+    fn search_fts_with_options(
+        &self,
+        query: &str,
+        topic: Option<&str>,
+        limit: usize,
+        offset: usize,
+        project: Option<&str>,
+        include_invalidated: bool,
+        order: SearchOrder,
+    ) -> HyphaeResult<Vec<Memory>>;
+    fn search_fts_count_with_options(
+        &self,
+        query: &str,
+        topic: Option<&str>,
+        project: Option<&str>,
+        include_invalidated: bool,
+    ) -> HyphaeResult<usize>;
+
     // Lifecycle
     fn update_access(&self, id: &MemoryId) -> HyphaeResult<()>;
     fn apply_decay(&self, decay_factor: f32) -> HyphaeResult<usize>;
@@ -80,14 +114,37 @@ pub trait MemoryStore {
 
     // Organization
     fn get_by_topic(&self, topic: &str, project: Option<&str>) -> HyphaeResult<Vec<Memory>>;
+    fn get_by_topic_with_options(
+        &self,
+        topic: &str,
+        project: Option<&str>,
+        include_invalidated: bool,
+        order: TopicMemoryOrder,
+    ) -> HyphaeResult<Vec<Memory>>;
     fn list_topics(&self, project: Option<&str>) -> HyphaeResult<Vec<(String, usize)>>;
+    fn list_topics_with_options(
+        &self,
+        project: Option<&str>,
+        include_invalidated: bool,
+    ) -> HyphaeResult<Vec<(String, usize)>>;
     fn consolidate_topic(&self, topic: &str, consolidated: Memory) -> HyphaeResult<()>;
 
     // Stats
     fn count(&self, project: Option<&str>) -> HyphaeResult<usize>;
     fn count_by_topic(&self, topic: &str, project: Option<&str>) -> HyphaeResult<usize>;
     fn stats(&self, project: Option<&str>) -> HyphaeResult<StoreStats>;
+    fn stats_with_options(
+        &self,
+        project: Option<&str>,
+        include_invalidated: bool,
+    ) -> HyphaeResult<StoreStats>;
     fn topic_health(&self, topic: &str, project: Option<&str>) -> HyphaeResult<TopicHealth>;
+    fn topic_health_with_options(
+        &self,
+        topic: &str,
+        project: Option<&str>,
+        include_invalidated: bool,
+    ) -> HyphaeResult<TopicHealth>;
 
     // Provider lifecycle hooks
     //
@@ -216,6 +273,27 @@ mod tests {
         ) -> HyphaeResult<Vec<(Memory, f32)>> {
             unimplemented!()
         }
+        fn search_fts_with_options(
+            &self,
+            _query: &str,
+            _topic: Option<&str>,
+            _limit: usize,
+            _offset: usize,
+            _project: Option<&str>,
+            _include_invalidated: bool,
+            _order: SearchOrder,
+        ) -> HyphaeResult<Vec<Memory>> {
+            Ok(vec![])
+        }
+        fn search_fts_count_with_options(
+            &self,
+            _query: &str,
+            _topic: Option<&str>,
+            _project: Option<&str>,
+            _include_invalidated: bool,
+        ) -> HyphaeResult<usize> {
+            Ok(0)
+        }
         fn update_access(&self, _id: &MemoryId) -> HyphaeResult<()> {
             unimplemented!()
         }
@@ -231,8 +309,24 @@ mod tests {
         fn get_by_topic(&self, _topic: &str, _project: Option<&str>) -> HyphaeResult<Vec<Memory>> {
             unimplemented!()
         }
+        fn get_by_topic_with_options(
+            &self,
+            _topic: &str,
+            _project: Option<&str>,
+            _include_invalidated: bool,
+            _order: TopicMemoryOrder,
+        ) -> HyphaeResult<Vec<Memory>> {
+            Ok(vec![])
+        }
         fn list_topics(&self, _project: Option<&str>) -> HyphaeResult<Vec<(String, usize)>> {
             unimplemented!()
+        }
+        fn list_topics_with_options(
+            &self,
+            _project: Option<&str>,
+            _include_invalidated: bool,
+        ) -> HyphaeResult<Vec<(String, usize)>> {
+            Ok(vec![])
         }
         fn consolidate_topic(&self, _topic: &str, _consolidated: Memory) -> HyphaeResult<()> {
             unimplemented!()
@@ -246,8 +340,39 @@ mod tests {
         fn stats(&self, _project: Option<&str>) -> HyphaeResult<StoreStats> {
             unimplemented!()
         }
+        fn stats_with_options(
+            &self,
+            _project: Option<&str>,
+            _include_invalidated: bool,
+        ) -> HyphaeResult<StoreStats> {
+            Ok(StoreStats {
+                total_memories: 0,
+                total_topics: 0,
+                avg_weight: 0.0,
+                oldest_memory: None,
+                newest_memory: None,
+            })
+        }
         fn topic_health(&self, _topic: &str, _project: Option<&str>) -> HyphaeResult<TopicHealth> {
             unimplemented!()
+        }
+        fn topic_health_with_options(
+            &self,
+            topic: &str,
+            _project: Option<&str>,
+            _include_invalidated: bool,
+        ) -> HyphaeResult<TopicHealth> {
+            Ok(TopicHealth {
+                topic: topic.to_string(),
+                entry_count: 0,
+                avg_weight: 0.0,
+                avg_access_count: 0.0,
+                oldest: None,
+                newest: None,
+                last_accessed: None,
+                needs_consolidation: false,
+                stale_count: 0,
+            })
         }
     }
 
@@ -409,6 +534,54 @@ mod tests {
                 unimplemented!()
             }
             fn topic_health(&self, _: &str, _: Option<&str>) -> HyphaeResult<TopicHealth> {
+                unimplemented!()
+            }
+            fn search_fts_with_options(
+                &self,
+                _: &str,
+                _: Option<&str>,
+                _: usize,
+                _: usize,
+                _: Option<&str>,
+                _: bool,
+                _: SearchOrder,
+            ) -> HyphaeResult<Vec<Memory>> {
+                unimplemented!()
+            }
+            fn search_fts_count_with_options(
+                &self,
+                _: &str,
+                _: Option<&str>,
+                _: Option<&str>,
+                _: bool,
+            ) -> HyphaeResult<usize> {
+                unimplemented!()
+            }
+            fn get_by_topic_with_options(
+                &self,
+                _: &str,
+                _: Option<&str>,
+                _: bool,
+                _: TopicMemoryOrder,
+            ) -> HyphaeResult<Vec<Memory>> {
+                unimplemented!()
+            }
+            fn list_topics_with_options(
+                &self,
+                _: Option<&str>,
+                _: bool,
+            ) -> HyphaeResult<Vec<(String, usize)>> {
+                unimplemented!()
+            }
+            fn stats_with_options(&self, _: Option<&str>, _: bool) -> HyphaeResult<StoreStats> {
+                unimplemented!()
+            }
+            fn topic_health_with_options(
+                &self,
+                _: &str,
+                _: Option<&str>,
+                _: bool,
+            ) -> HyphaeResult<TopicHealth> {
                 unimplemented!()
             }
 

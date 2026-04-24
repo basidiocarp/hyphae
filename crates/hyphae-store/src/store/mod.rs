@@ -15,7 +15,6 @@ mod purge;
 mod search;
 pub mod session;
 
-pub use memory_store::{SearchOrder, TopicMemoryOrder};
 pub use project::SHARED_PROJECT;
 pub use search::UnifiedSearchResult;
 

@@ -3,6 +3,7 @@ mod store;
 
 pub use hyphae_core::ChunkStore;
 pub use hyphae_core::{Artifact, ArtifactType};
+pub use hyphae_core::{SearchOrder, TopicMemoryOrder};
 pub use store::SHARED_PROJECT;
 pub use store::SqliteStore;
 pub use store::UnifiedSearchResult;
@@ -23,7 +24,6 @@ pub use store::passive::{
     ProjectUnderstandingConcept,
 };
 pub use store::session::{Session, SessionTimelineEvent, SessionTimelineRecord};
-pub use store::{SearchOrder, TopicMemoryOrder};
 pub mod context {
     pub use crate::store::context::*;
 }

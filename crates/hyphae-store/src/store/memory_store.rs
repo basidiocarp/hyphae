@@ -5,7 +5,7 @@ use rusqlite::{OptionalExtension, params};
 
 use hyphae_core::{
     DEFAULT_CONSOLIDATION_THRESHOLD, HyphaeError, HyphaeResult, Memory, MemoryId, MemoryStore,
-    StoreStats, TopicHealth,
+    SearchOrder, StoreStats, TopicHealth, TopicMemoryOrder,
 };
 
 use super::SqliteStore;
@@ -14,80 +14,7 @@ use super::helpers::{
 };
 use super::search::sanitize_fts_query;
 
-#[derive(Clone, Copy)]
-pub enum TopicMemoryOrder {
-    CreatedAtDesc,
-    WeightDesc,
-}
-
-#[derive(Clone, Copy)]
-pub enum SearchOrder {
-    RankAsc,
-    WeightDesc,
-}
-
 impl SqliteStore {
-    #[allow(clippy::too_many_arguments)]
-    pub fn search_fts_with_options(
-        &self,
-        query: &str,
-        topic: Option<&str>,
-        limit: usize,
-        offset: usize,
-        project: Option<&str>,
-        include_invalidated: bool,
-        order: SearchOrder,
-    ) -> HyphaeResult<Vec<Memory>> {
-        let sanitized = sanitize_fts_query(query);
-        if sanitized.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let topic_clause = if topic.is_some() {
-            "AND m.topic = ?3"
-        } else {
-            ""
-        };
-        let active_clause = if include_invalidated {
-            String::new()
-        } else {
-            format!("AND m.{ACTIVE_MEMORY_CLAUSE}")
-        };
-        let qualified_select_cols = format!("m.{}", SELECT_COLS.replace(", ", ", m."));
-        let order_clause = match order {
-            SearchOrder::RankAsc => "bm25(memories_fts) ASC, m.weight DESC, m.created_at DESC",
-            SearchOrder::WeightDesc => "m.weight DESC, m.created_at DESC",
-        };
-        let sql = format!(
-            "SELECT {qualified_select_cols} FROM memories m
-             JOIN memories_fts ON memories_fts.id = m.id
-             WHERE memories_fts MATCH ?1
-               AND (m.project = ?2 OR ?2 IS NULL)
-               {topic_clause}
-               {active_clause}
-             ORDER BY {order_clause}
-             LIMIT ?4 OFFSET ?5"
-        );
-
-        let mut stmt = self
-            .conn
-            .prepare_cached(&sql)
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-
-        let rows = stmt
-            .query_map(
-                params![sanitized, project, topic, limit as i64, offset as i64],
-                row_to_memory,
-            )
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-
-        let mut results = Vec::new();
-        for row in rows {
-            results.push(row.map_err(|e| HyphaeError::Database(e.to_string()))?);
-        }
-        Ok(results)
-    }
-
     pub fn search_fts_scoped(
         &self,
         query: &str,
@@ -131,41 +58,6 @@ impl SqliteStore {
             results.push(row.map_err(|e| HyphaeError::Database(e.to_string()))?);
         }
         Ok(results)
-    }
-
-    pub fn search_fts_count_with_options(
-        &self,
-        query: &str,
-        topic: Option<&str>,
-        project: Option<&str>,
-        include_invalidated: bool,
-    ) -> HyphaeResult<usize> {
-        let sanitized = sanitize_fts_query(query);
-        if sanitized.is_empty() {
-            return Ok(0);
-        }
-
-        let active_clause = if include_invalidated {
-            String::new()
-        } else {
-            format!("AND m.{ACTIVE_MEMORY_CLAUSE}")
-        };
-        let sql = format!(
-            "SELECT COUNT(*)
-             FROM memories m
-             JOIN memories_fts ON memories_fts.id = m.id
-             WHERE memories_fts MATCH ?1
-               AND (m.project = ?2 OR ?2 IS NULL)
-               AND (?3 IS NULL OR m.topic = ?3)
-               {active_clause}"
-        );
-
-        self.conn
-            .query_row(&sql, params![sanitized, project, topic], |row| {
-                row.get::<_, i64>(0)
-            })
-            .map(|n| n as usize)
-            .map_err(|e| HyphaeError::Database(e.to_string()))
     }
 
     pub fn search_by_keywords_scoped(
@@ -231,46 +123,6 @@ impl SqliteStore {
         Ok(results)
     }
 
-    pub fn get_by_topic_with_options(
-        &self,
-        topic: &str,
-        project: Option<&str>,
-        include_invalidated: bool,
-        order: TopicMemoryOrder,
-    ) -> HyphaeResult<Vec<Memory>> {
-        let active_clause = if include_invalidated {
-            String::new()
-        } else {
-            format!("AND {ACTIVE_MEMORY_CLAUSE}")
-        };
-        let order_clause = match order {
-            TopicMemoryOrder::CreatedAtDesc => "created_at DESC, weight DESC",
-            TopicMemoryOrder::WeightDesc => "weight DESC, created_at DESC",
-        };
-        let sql = format!(
-            "SELECT {SELECT_COLS}
-             FROM memories
-             WHERE topic = ?1
-               {active_clause}
-               AND (project = ?2 OR ?2 IS NULL)
-             ORDER BY {order_clause}"
-        );
-        let mut stmt = self
-            .conn
-            .prepare_cached(&sql)
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-
-        let rows = stmt
-            .query_map(params![topic, project], row_to_memory)
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-
-        let mut results = Vec::new();
-        for row in rows {
-            results.push(row.map_err(|e| HyphaeError::Database(e.to_string()))?);
-        }
-        Ok(results)
-    }
-
     pub fn get_by_topic_scoped(
         &self,
         topic: &str,
@@ -293,50 +145,6 @@ impl SqliteStore {
 
         let rows = stmt
             .query_map(params![topic, project, worktree], row_to_memory)
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-
-        let mut results = Vec::new();
-        for row in rows {
-            results.push(row.map_err(|e| HyphaeError::Database(e.to_string()))?);
-        }
-        Ok(results)
-    }
-
-    pub fn list_topics_with_options(
-        &self,
-        project: Option<&str>,
-        include_invalidated: bool,
-    ) -> HyphaeResult<Vec<(String, usize)>> {
-        let active_clause = if include_invalidated {
-            String::new()
-        } else {
-            format!("WHERE {ACTIVE_MEMORY_CLAUSE}")
-        };
-        let project_clause = if include_invalidated {
-            "WHERE (project = ?1 OR ?1 IS NULL)"
-        } else {
-            "AND (project = ?1 OR ?1 IS NULL)"
-        };
-        let sql = format!(
-            "SELECT topic, COUNT(*)
-             FROM memories
-             {active_clause}
-             {project_clause}
-             GROUP BY topic
-             ORDER BY topic"
-        );
-        let mut stmt = self
-            .conn
-            .prepare_cached(&sql)
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-
-        let rows = stmt
-            .query_map(params![project], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, i64>(1).map(|n| n as usize)?,
-                ))
-            })
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         let mut results = Vec::new();
@@ -556,143 +364,6 @@ impl SqliteStore {
         }
 
         Ok(results.into_iter().skip(offset).take(limit).collect())
-    }
-
-    pub fn topic_health_with_options(
-        &self,
-        topic: &str,
-        project: Option<&str>,
-        include_invalidated: bool,
-    ) -> HyphaeResult<TopicHealth> {
-        type HealthRow = (
-            i64,
-            Option<f32>,
-            Option<f32>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            i64,
-        );
-        let active_clause = if include_invalidated {
-            String::new()
-        } else {
-            " AND invalidated_at IS NULL".to_string()
-        };
-        let sql = format!(
-            "SELECT
-                COUNT(*),
-                AVG(weight),
-                AVG(CAST(access_count AS REAL)),
-                MIN(created_at),
-                MAX(created_at),
-                MAX(last_accessed),
-                COUNT(CASE WHEN weight < 0.5
-                    AND julianday('now') - julianday(last_accessed) > 14
-                    THEN 1 END)
-             FROM memories
-             WHERE topic = ?1
-               {active_clause}
-               AND (project = ?2 OR ?2 IS NULL)"
-        );
-        let (
-            entry_count_raw,
-            avg_weight,
-            avg_access,
-            oldest_str,
-            newest_str,
-            last_accessed_str,
-            stale_count_raw,
-        ): HealthRow = self
-            .conn
-            .query_row(&sql, params![topic, project], |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                    row.get(6)?,
-                ))
-            })
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-
-        let entry_count = entry_count_raw as usize;
-        let stale_count = stale_count_raw as usize;
-
-        if entry_count == 0 {
-            return Err(HyphaeError::NotFound(format!("topic: {topic}")));
-        }
-
-        let parse_opt_dt = |s: Option<String>| -> Option<chrono::DateTime<Utc>> {
-            s.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
-                .map(|d| d.with_timezone(&Utc))
-        };
-
-        Ok(TopicHealth {
-            topic: topic.to_string(),
-            entry_count,
-            avg_weight: avg_weight.unwrap_or(0.0),
-            avg_access_count: avg_access.unwrap_or(0.0),
-            oldest: parse_opt_dt(oldest_str),
-            newest: parse_opt_dt(newest_str),
-            last_accessed: parse_opt_dt(last_accessed_str),
-            needs_consolidation: entry_count >= DEFAULT_CONSOLIDATION_THRESHOLD,
-            stale_count,
-        })
-    }
-
-    pub fn stats_with_options(
-        &self,
-        project: Option<&str>,
-        include_invalidated: bool,
-    ) -> HyphaeResult<StoreStats> {
-        let active_clause = if include_invalidated {
-            String::new()
-        } else {
-            "invalidated_at IS NULL AND ".to_string()
-        };
-        let sql = format!(
-            "SELECT
-                COUNT(*),
-                COUNT(DISTINCT topic),
-                COALESCE(AVG(weight), 0.0),
-                MIN(created_at),
-                MAX(created_at)
-             FROM memories
-             WHERE {active_clause}(project = ?1 OR ?1 IS NULL)"
-        );
-        let (total_memories_raw, total_topics_raw, avg_weight, oldest_str, newest_str): (
-            i64,
-            i64,
-            f32,
-            Option<String>,
-            Option<String>,
-        ) = self
-            .conn
-            .query_row(&sql, params![project], |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                ))
-            })
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-
-        let parse_opt_dt = |s: Option<String>| -> Option<chrono::DateTime<Utc>> {
-            s.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
-                .map(|d| d.with_timezone(&Utc))
-        };
-
-        Ok(StoreStats {
-            total_memories: total_memories_raw as usize,
-            total_topics: total_topics_raw as usize,
-            avg_weight,
-            oldest_memory: parse_opt_dt(oldest_str),
-            newest_memory: parse_opt_dt(newest_str),
-        })
     }
 
     /// Replace an existing memory record unconditionally, preserving `created_at`.
@@ -1381,6 +1052,323 @@ impl MemoryStore for SqliteStore {
             .collect();
 
         Ok(results)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn search_fts_with_options(
+        &self,
+        query: &str,
+        topic: Option<&str>,
+        limit: usize,
+        offset: usize,
+        project: Option<&str>,
+        include_invalidated: bool,
+        order: SearchOrder,
+    ) -> HyphaeResult<Vec<Memory>> {
+        let sanitized = sanitize_fts_query(query);
+        if sanitized.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let topic_clause = if topic.is_some() {
+            "AND m.topic = ?3"
+        } else {
+            ""
+        };
+        let active_clause = if include_invalidated {
+            String::new()
+        } else {
+            format!("AND m.{ACTIVE_MEMORY_CLAUSE}")
+        };
+        let qualified_select_cols = format!("m.{}", SELECT_COLS.replace(", ", ", m."));
+        let order_clause = match order {
+            SearchOrder::RankAsc => "bm25(memories_fts) ASC, m.weight DESC, m.created_at DESC",
+            SearchOrder::WeightDesc => "m.weight DESC, m.created_at DESC",
+        };
+        let sql = format!(
+            "SELECT {qualified_select_cols} FROM memories m
+             JOIN memories_fts ON memories_fts.id = m.id
+             WHERE memories_fts MATCH ?1
+               AND (m.project = ?2 OR ?2 IS NULL)
+               {topic_clause}
+               {active_clause}
+             ORDER BY {order_clause}
+             LIMIT ?4 OFFSET ?5"
+        );
+
+        let mut stmt = self
+            .conn
+            .prepare_cached(&sql)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(
+                params![sanitized, project, topic, limit as i64, offset as i64],
+                row_to_memory,
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| HyphaeError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
+    fn search_fts_count_with_options(
+        &self,
+        query: &str,
+        topic: Option<&str>,
+        project: Option<&str>,
+        include_invalidated: bool,
+    ) -> HyphaeResult<usize> {
+        let sanitized = sanitize_fts_query(query);
+        if sanitized.is_empty() {
+            return Ok(0);
+        }
+
+        let active_clause = if include_invalidated {
+            String::new()
+        } else {
+            format!("AND m.{ACTIVE_MEMORY_CLAUSE}")
+        };
+        let sql = format!(
+            "SELECT COUNT(*)
+             FROM memories m
+             JOIN memories_fts ON memories_fts.id = m.id
+             WHERE memories_fts MATCH ?1
+               AND (m.project = ?2 OR ?2 IS NULL)
+               AND (?3 IS NULL OR m.topic = ?3)
+               {active_clause}"
+        );
+
+        self.conn
+            .query_row(&sql, params![sanitized, project, topic], |row| {
+                row.get::<_, i64>(0)
+            })
+            .map(|n| n as usize)
+            .map_err(|e| HyphaeError::Database(e.to_string()))
+    }
+
+    fn get_by_topic_with_options(
+        &self,
+        topic: &str,
+        project: Option<&str>,
+        include_invalidated: bool,
+        order: TopicMemoryOrder,
+    ) -> HyphaeResult<Vec<Memory>> {
+        let active_clause = if include_invalidated {
+            String::new()
+        } else {
+            format!("AND {ACTIVE_MEMORY_CLAUSE}")
+        };
+        let order_clause = match order {
+            TopicMemoryOrder::CreatedAtDesc => "created_at DESC, weight DESC",
+            TopicMemoryOrder::WeightDesc => "weight DESC, created_at DESC",
+        };
+        let sql = format!(
+            "SELECT {SELECT_COLS}
+             FROM memories
+             WHERE topic = ?1
+               {active_clause}
+               AND (project = ?2 OR ?2 IS NULL)
+             ORDER BY {order_clause}"
+        );
+        let mut stmt = self
+            .conn
+            .prepare_cached(&sql)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![topic, project], row_to_memory)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| HyphaeError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
+    fn list_topics_with_options(
+        &self,
+        project: Option<&str>,
+        include_invalidated: bool,
+    ) -> HyphaeResult<Vec<(String, usize)>> {
+        let active_clause = if include_invalidated {
+            String::new()
+        } else {
+            format!("WHERE {ACTIVE_MEMORY_CLAUSE}")
+        };
+        let project_clause = if include_invalidated {
+            "WHERE (project = ?1 OR ?1 IS NULL)"
+        } else {
+            "AND (project = ?1 OR ?1 IS NULL)"
+        };
+        let sql = format!(
+            "SELECT topic, COUNT(*)
+             FROM memories
+             {active_clause}
+             {project_clause}
+             GROUP BY topic
+             ORDER BY topic"
+        );
+        let mut stmt = self
+            .conn
+            .prepare_cached(&sql)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![project], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1).map(|n| n as usize)?,
+                ))
+            })
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| HyphaeError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
+    fn topic_health_with_options(
+        &self,
+        topic: &str,
+        project: Option<&str>,
+        include_invalidated: bool,
+    ) -> HyphaeResult<TopicHealth> {
+        type HealthRow = (
+            i64,
+            Option<f32>,
+            Option<f32>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            i64,
+        );
+        let active_clause = if include_invalidated {
+            String::new()
+        } else {
+            " AND invalidated_at IS NULL".to_string()
+        };
+        let sql = format!(
+            "SELECT
+                COUNT(*),
+                AVG(weight),
+                AVG(CAST(access_count AS REAL)),
+                MIN(created_at),
+                MAX(created_at),
+                MAX(last_accessed),
+                COUNT(CASE WHEN weight < 0.5
+                    AND julianday('now') - julianday(last_accessed) > 14
+                    THEN 1 END)
+             FROM memories
+             WHERE topic = ?1
+               {active_clause}
+               AND (project = ?2 OR ?2 IS NULL)"
+        );
+        let (
+            entry_count_raw,
+            avg_weight,
+            avg_access,
+            oldest_str,
+            newest_str,
+            last_accessed_str,
+            stale_count_raw,
+        ): HealthRow = self
+            .conn
+            .query_row(&sql, params![topic, project], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            })
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let entry_count = entry_count_raw as usize;
+        let stale_count = stale_count_raw as usize;
+
+        if entry_count == 0 {
+            return Err(HyphaeError::NotFound(format!("topic: {topic}")));
+        }
+
+        let parse_opt_dt = |s: Option<String>| -> Option<chrono::DateTime<Utc>> {
+            s.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                .map(|d| d.with_timezone(&Utc))
+        };
+
+        Ok(TopicHealth {
+            topic: topic.to_string(),
+            entry_count,
+            avg_weight: avg_weight.unwrap_or(0.0),
+            avg_access_count: avg_access.unwrap_or(0.0),
+            oldest: parse_opt_dt(oldest_str),
+            newest: parse_opt_dt(newest_str),
+            last_accessed: parse_opt_dt(last_accessed_str),
+            needs_consolidation: entry_count >= DEFAULT_CONSOLIDATION_THRESHOLD,
+            stale_count,
+        })
+    }
+
+    fn stats_with_options(
+        &self,
+        project: Option<&str>,
+        include_invalidated: bool,
+    ) -> HyphaeResult<StoreStats> {
+        let active_clause = if include_invalidated {
+            String::new()
+        } else {
+            "invalidated_at IS NULL AND ".to_string()
+        };
+        let sql = format!(
+            "SELECT
+                COUNT(*),
+                COUNT(DISTINCT topic),
+                COALESCE(AVG(weight), 0.0),
+                MIN(created_at),
+                MAX(created_at)
+             FROM memories
+             WHERE {active_clause}(project = ?1 OR ?1 IS NULL)"
+        );
+        let (total_memories_raw, total_topics_raw, avg_weight, oldest_str, newest_str): (
+            i64,
+            i64,
+            f32,
+            Option<String>,
+            Option<String>,
+        ) = self
+            .conn
+            .query_row(&sql, params![project], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            })
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let parse_opt_dt = |s: Option<String>| -> Option<chrono::DateTime<Utc>> {
+            s.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                .map(|d| d.with_timezone(&Utc))
+        };
+
+        Ok(StoreStats {
+            total_memories: total_memories_raw as usize,
+            total_topics: total_topics_raw as usize,
+            avg_weight,
+            oldest_memory: parse_opt_dt(oldest_str),
+            newest_memory: parse_opt_dt(newest_str),
+        })
     }
 
     fn update_access(&self, id: &MemoryId) -> HyphaeResult<()> {
