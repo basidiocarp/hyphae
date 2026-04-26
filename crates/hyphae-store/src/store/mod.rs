@@ -163,6 +163,30 @@ impl SqliteStore {
         init_db(&conn)?;
         Ok(Self { conn })
     }
+
+    /// Begin a transaction for import or bulk operations. Call with a closure that performs the work.
+    /// On error, automatically rolls back. On success, commits. Returns the result of the closure.
+    pub fn with_transaction<F, T>(&self, f: F) -> HyphaeResult<T>
+    where
+        F: FnOnce() -> HyphaeResult<T>,
+    {
+        self.conn
+            .execute("BEGIN IMMEDIATE", [])
+            .map_err(|e| HyphaeError::Database(format!("failed to begin transaction: {e}")))?;
+
+        match f() {
+            Ok(result) => {
+                self.conn
+                    .execute("COMMIT", [])
+                    .map_err(|e| HyphaeError::Database(format!("failed to commit transaction: {e}")))?;
+                Ok(result)
+            }
+            Err(e) => {
+                let _ = self.conn.execute("ROLLBACK", []);
+                Err(e)
+            }
+        }
+    }
 }
 
 #[cfg(test)]

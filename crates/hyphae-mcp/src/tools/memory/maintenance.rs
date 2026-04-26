@@ -451,7 +451,7 @@ pub(crate) fn tool_promote_to_memoir(
     }
 
     let mut top_keywords: Vec<_> = keyword_freq.into_iter().collect();
-    top_keywords.sort_by(|a, b| b.1.cmp(&a.1));
+    top_keywords.sort_by_key(|b| std::cmp::Reverse(b.1));
     let suggested_concepts: Vec<_> = top_keywords
         .iter()
         .take(10)
