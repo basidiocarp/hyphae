@@ -48,6 +48,7 @@ fi
 CRATE_TOMLS=(
     crates/hyphae-core/Cargo.toml
     crates/hyphae-store/Cargo.toml
+    crates/hyphae-ingest/Cargo.toml
     crates/hyphae-mcp/Cargo.toml
     crates/hyphae-cli/Cargo.toml
 )
