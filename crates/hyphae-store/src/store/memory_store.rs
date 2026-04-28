@@ -459,8 +459,14 @@ impl MemoryStore for SqliteStore {
         let sd = source_data(&memory.source);
         let emb_blob = memory.embedding.as_deref().map(embedding_to_blob);
 
-        self.conn
-            .execute(
+        // SAFETY: No nested transactions — this method does not call other &self methods
+        // that open transactions. The &self receiver is required by the MemoryStore trait.
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        tx.execute(
                 "INSERT INTO memories (id, created_at, updated_at, last_accessed, access_count, weight,
                  topic, summary, raw_excerpt, keywords,
                  importance, source_type, source_data, related_ids, embedding, project, branch, worktree, agent_id,
@@ -497,15 +503,20 @@ impl MemoryStore for SqliteStore {
 
         if let Some(ref emb) = memory.embedding {
             let blob = embedding_to_blob(emb);
-            self.conn
-                .execute(
+            tx.execute(
                     "INSERT INTO vec_memories (memory_id, embedding) VALUES (?1, ?2)",
                     params![memory.id.as_ref(), blob],
                 )
                 .map_err(|e| HyphaeError::Database(e.to_string()))?;
         }
 
-        // Audit after successful write: records only what actually committed.
+        tx.commit()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        // Audit after commit (outside the transaction). This differs from update()
+        // and other methods that audit inside the transaction; the semantic here is
+        // "record only what is durably written", and placing the audit after commit
+        // makes that explicit. An audit failure does not roll back the committed store.
         if let Err(e) = self.audit_memory(super::audit::AuditOperation::Store, &memory) {
             tracing::warn!("audit log write failed, mutation succeeded: {e}");
         }

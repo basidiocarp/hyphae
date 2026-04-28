@@ -156,16 +156,22 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
             ON recall_effectiveness(memory_id);
 
         -- RAG tables
+        -- Note: UNIQUE(project, source_path) is project-scoped.  SQLite NULL-semantics
+        -- mean (NULL, path) does not conflict with another (NULL, path), so documents
+        -- without a project set are not deduplicated by this constraint.  All current
+        -- ingestion paths supply a non-NULL project; project-less ingestion is not
+        -- recommended.
         CREATE TABLE IF NOT EXISTS documents (
             id TEXT PRIMARY KEY,
-            source_path TEXT NOT NULL UNIQUE,
+            source_path TEXT NOT NULL,
             source_type TEXT NOT NULL,
             chunk_count INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             project TEXT,
             runtime_session_id TEXT,
-            content_hash TEXT
+            content_hash TEXT,
+            UNIQUE(project, source_path)
         );
 
         CREATE TABLE IF NOT EXISTS chunks (
@@ -185,7 +191,7 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
 
         CREATE INDEX IF NOT EXISTS idx_chunks_document_id ON chunks(document_id);
         CREATE INDEX IF NOT EXISTS idx_chunks_source_path ON chunks(source_path);
-        CREATE INDEX IF NOT EXISTS idx_documents_source_path ON documents(source_path);
+        CREATE INDEX IF NOT EXISTS idx_documents_project_source ON documents(project, source_path);
         ",
     )
     .map_err(|e| HyphaeError::Database(e.to_string()))?;
@@ -936,6 +942,49 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
     if !has_content_hash_documents {
         tx.execute_batch("ALTER TABLE documents ADD COLUMN content_hash TEXT;")
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    }
+
+    // Migration: documents.source_path uniqueness → UNIQUE(project, source_path)
+    // Old schema has UNIQUE on source_path alone; new schema uses UNIQUE(project, source_path).
+    {
+        let needs_migration: bool = tx
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM sqlite_master
+                 WHERE type='table' AND name='documents'
+                   AND sql LIKE '%source_path TEXT NOT NULL UNIQUE%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+
+        if needs_migration {
+            tx.execute_batch(
+                "ALTER TABLE documents RENAME TO documents_old;
+                 CREATE TABLE documents (
+                     id TEXT PRIMARY KEY,
+                     source_path TEXT NOT NULL,
+                     source_type TEXT NOT NULL,
+                     chunk_count INTEGER NOT NULL DEFAULT 0,
+                     created_at TEXT NOT NULL,
+                     updated_at TEXT NOT NULL,
+                     project TEXT,
+                     runtime_session_id TEXT,
+                     content_hash TEXT,
+                     UNIQUE(project, source_path)
+                 );
+                 INSERT INTO documents SELECT * FROM documents_old;
+                 DROP TABLE documents_old;",
+            )
+            .map_err(|e| {
+                HyphaeError::Database(format!("documents migration failed: {e}"))
+            })?;
+
+            tx.execute_batch(
+                "DROP INDEX IF EXISTS idx_documents_source_path;
+                 CREATE INDEX IF NOT EXISTS idx_documents_project_source ON documents(project, source_path);",
+            )
+            .map_err(|e| HyphaeError::Database(format!("index rebuild failed: {e}")))?;
+        }
     }
 
     tx.commit().map_err(|e| {

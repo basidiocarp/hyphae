@@ -2055,4 +2055,52 @@ mod tests {
         assert_eq!(results[0].0.id, first_id);
         assert_eq!(results[1].0.id, second_id);
     }
+
+    #[test]
+    fn store_succeeds_and_memory_is_retrievable() {
+        // Verifies the basic store() path: a memory stored without embedding is
+        // retrievable by id. For the embedding+vector atomicity path see
+        // `test_store_with_embedding` which exercises both branches of the
+        // `if let Some(ref emb)` block inside the transaction.
+        let store = test_store();
+        let mut mem = make_memory("topic/test", "test content with facts");
+        mem.project = Some("test-project".to_string());
+        let id = store.store(mem).expect("store should succeed");
+        let retrieved = store.get(&id).expect("get should succeed");
+        assert!(retrieved.is_some(), "memory should exist after store");
+        assert_eq!(retrieved.unwrap().topic, "topic/test");
+    }
+
+    #[test]
+    fn two_projects_can_store_same_source_path() {
+        use chunk_store::test_helpers::make_document;
+        use hyphae_core::ChunkStore;
+
+        let store = test_store();
+
+        // Insert document for project "proj-a"
+        let mut doc_a = make_document("/src/main.rs");
+        doc_a.project = Some("proj-a".to_string());
+        store
+            .store_document(doc_a)
+            .expect("first project doc should store without error");
+
+        // Insert document for project "proj-b" with the same source_path
+        let mut doc_b = make_document("/src/main.rs");
+        doc_b.project = Some("proj-b".to_string());
+        store
+            .store_document(doc_b)
+            .expect("second project doc with same path should not violate unique constraint");
+
+        // Both documents should be retrievable by their respective projects
+        let found_a = store
+            .get_document_by_path("/src/main.rs", Some("proj-a"))
+            .expect("lookup should succeed");
+        assert!(found_a.is_some(), "proj-a document should exist");
+
+        let found_b = store
+            .get_document_by_path("/src/main.rs", Some("proj-b"))
+            .expect("lookup should succeed");
+        assert!(found_b.is_some(), "proj-b document should exist");
+    }
 }
