@@ -649,6 +649,12 @@ pub(crate) fn tool_import_code_graph(
             .map(|f| f as f32)
             .unwrap_or(1.0);
 
+        if !(0.0..=1.0).contains(&weight) {
+            return ToolResult::error(format!(
+                "edges[{i}]: weight {weight} out of range (0.0..=1.0)"
+            ));
+        }
+
         link_inputs.push(LinkInput {
             source_name: source,
             target_name: target,
@@ -1189,6 +1195,31 @@ mod tests {
             tool_import_code_graph(&store, &args, false, None, &ToolTraceContext::default());
         assert!(result.is_error);
         assert!(result.content[0].text.contains("nonexistent"));
+    }
+
+    #[test]
+    fn test_import_code_graph_rejects_out_of_range_weight() {
+        let store = test_store();
+        let args = json!({
+            "schema_version": "1.0",
+            "project": "test",
+            "nodes": [
+                { "name": "a", "labels": [], "description": "node a" },
+                { "name": "b", "labels": [], "description": "node b" }
+            ],
+            "edges": [
+                { "source": "a", "target": "b", "relation": "calls", "weight": 2.5 }
+            ]
+        });
+
+        let result =
+            tool_import_code_graph(&store, &args, false, None, &ToolTraceContext::default());
+        assert!(result.is_error, "Expected error for out-of-range weight");
+        let text = &result.content[0].text;
+        assert!(
+            text.contains("out of range"),
+            "Expected 'out of range' in: {text}"
+        );
     }
 
     #[test]
