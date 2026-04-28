@@ -110,6 +110,16 @@ pub(crate) fn create_backup(db_path: &Path, output: Option<PathBuf>) -> Result<P
     )
     .with_context(|| format!("failed to open database for backup at {}", db_path.display()))?;
 
+    // VACUUM INTO fails if the destination already exists; remove it first.
+    if backup_path.exists() {
+        fs::remove_file(&backup_path).with_context(|| {
+            format!(
+                "failed to remove existing file before backup: {}",
+                backup_path.display()
+            )
+        })?;
+    }
+
     let dest = backup_path
         .to_str()
         .ok_or_else(|| anyhow!("backup path is not valid UTF-8: {}", backup_path.display()))?;
@@ -147,11 +157,16 @@ fn restore_to(src: &Path, dest: &Path) -> Result<()> {
         .with_context(|| format!("failed to copy backup to temp file {}", temp_path.display()))?;
 
     // Remove stale WAL/SHM sidecars before replacing the main DB file.
-    // These belong to the old database and would confuse the new one.
+    // These belong to the old database and would corrupt the new one if left behind.
+    // Use OsString append to avoid lossy Display conversion on non-UTF-8 paths.
     for ext in &["-wal", "-shm"] {
-        let sidecar = PathBuf::from(format!("{}{}", dest.display(), ext));
+        let mut sidecar_os = dest.as_os_str().to_os_string();
+        sidecar_os.push(ext);
+        let sidecar = PathBuf::from(sidecar_os);
         if sidecar.exists() {
-            let _ = fs::remove_file(&sidecar);
+            fs::remove_file(&sidecar).with_context(|| {
+                format!("failed to remove stale WAL sidecar {}", sidecar.display())
+            })?;
         }
     }
 

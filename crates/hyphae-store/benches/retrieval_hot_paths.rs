@@ -78,6 +78,7 @@ fn make_document(index: usize) -> Document {
         updated_at: created_at,
         project: Some(PROJECT.to_string()),
         runtime_session_id: None,
+        content_hash: None,
     }
 }
 

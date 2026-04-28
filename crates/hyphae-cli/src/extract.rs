@@ -19,26 +19,43 @@ const DEFAULT_PRE_DEDUP_LIMIT: usize = 30;
 /// Maximum number of final facts after deduplication.
 const DEFAULT_MAX_FACTS: usize = 20;
 
-/// Common secret patterns to reject before storing extracted facts.
-/// Patterns cover API keys, bearer tokens, and key=value assignments that
-/// contain recognisable secret prefixes.
-const SECRET_PATTERNS: &[&str] = &[
-    "sk-ant-",                // Anthropic API key prefix
-    "ghp_",                   // GitHub personal access token
-    "ghs_",                   // GitHub service account token
-    "glpat-",                 // GitLab personal access token
-    "Bearer ",                // HTTP Authorization bearer
-    "ANTHROPIC_API_KEY",
-    "OPENAI_API_KEY",
-    "AWS_SECRET_ACCESS_KEY",
-    "AWS_ACCESS_KEY_ID",
-    "GITHUB_TOKEN",
+/// Secret patterns that are case-sensitive (issuer-defined, always same case).
+const SECRET_PATTERNS_CASE_SENSITIVE: &[&str] = &[
+    "sk-ant-",   // Anthropic API key prefix
+    "sk-proj-",  // OpenAI project API key prefix
+    "ghp_",      // GitHub personal access token
+    "ghs_",      // GitHub service account token
+    "glpat-",    // GitLab personal access token
+    "Bearer ",   // HTTP Authorization bearer
+];
+
+/// Secret env-var names matched case-insensitively — shell and YAML configs
+/// may use any casing.
+const SECRET_PATTERNS_CASE_INSENSITIVE: &[&str] = &[
+    "anthropic_api_key",
+    "openai_api_key",
+    "aws_secret_access_key",
+    "aws_access_key_id",
+    "github_token",
 ];
 
 /// Returns `true` when `text` contains a recognisable secret pattern.
 /// Used to skip sentences before they are stored as memories.
+///
+/// Case-sensitive patterns cover fixed-prefix tokens (API keys, OAuth tokens).
+/// Case-insensitive patterns cover environment variable names that can appear in
+/// any casing in shell exports, YAML, or prose.
 fn contains_secret(text: &str) -> bool {
-    SECRET_PATTERNS.iter().any(|pat| text.contains(pat))
+    if SECRET_PATTERNS_CASE_SENSITIVE
+        .iter()
+        .any(|pat| text.contains(pat))
+    {
+        return true;
+    }
+    let lower = text.to_lowercase();
+    SECRET_PATTERNS_CASE_INSENSITIVE
+        .iter()
+        .any(|pat| lower.contains(pat))
 }
 
 /// Extract key facts from text and store them in Hyphae.

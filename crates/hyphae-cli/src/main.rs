@@ -341,10 +341,13 @@ fn main() -> Result<()> {
             let text = if let Some(path) = file {
                 std::fs::read_to_string(&path)?
             } else {
+                // Use read_to_end + from_utf8_lossy so that a hook truncating
+                // the input at a byte boundary (e.g. `head -c 102400`) cannot
+                // produce an invalid-UTF-8 sequence that would abort extraction.
                 use std::io::Read;
-                let mut buf = String::new();
-                std::io::stdin().read_to_string(&mut buf)?;
-                buf
+                let mut raw = Vec::new();
+                std::io::stdin().read_to_end(&mut raw)?;
+                String::from_utf8_lossy(&raw).into_owned()
             };
             let stored = extract::extract_and_store(&store, &text, &project)?;
             println!("Extracted and stored {} facts", stored);
