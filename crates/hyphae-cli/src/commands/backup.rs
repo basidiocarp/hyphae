@@ -74,8 +74,7 @@ pub(crate) fn cmd_restore(path: PathBuf, db_path: PathBuf) -> Result<()> {
             .with_context(|| format!("failed to create directory {}", parent.display()))?;
     }
 
-    fs::copy(&path, &db_path)
-        .with_context(|| format!("failed to restore database from {}", path.display()))?;
+    restore_to(&path, &db_path)?;
 
     println!("Database restored from {}", path.display());
     println!("Location: {}", db_path.display());
@@ -102,8 +101,21 @@ pub(crate) fn create_backup(db_path: &Path, output: Option<PathBuf>) -> Result<P
             .with_context(|| format!("failed to create directory {}", parent.display()))?;
     }
 
-    fs::copy(db_path, &backup_path)
-        .with_context(|| format!("failed to backup database to {}", backup_path.display()))?;
+    // Open a read-only connection to the live database for VACUUM INTO.
+    // This is WAL-aware: SQLite checkpoints the WAL before writing the backup,
+    // so the output is always a clean, consistent database file.
+    let conn = rusqlite::Connection::open_with_flags(
+        db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .with_context(|| format!("failed to open database for backup at {}", db_path.display()))?;
+
+    let dest = backup_path
+        .to_str()
+        .ok_or_else(|| anyhow!("backup path is not valid UTF-8: {}", backup_path.display()))?;
+
+    conn.execute_batch(&format!("VACUUM INTO '{}'", dest.replace('\'', "''")))
+        .with_context(|| format!("VACUUM INTO failed for {}", backup_path.display()))?;
 
     validate_sqlite_backup(&backup_path)?;
 
@@ -111,6 +123,42 @@ pub(crate) fn create_backup(db_path: &Path, output: Option<PathBuf>) -> Result<P
     write_backup_manifest(&backup_path, size, None)?;
 
     Ok(backup_path)
+}
+
+/// Atomically restore `src` over `dest`, cleaning up any stale WAL/SHM sidecars.
+///
+/// Copies to a temp file in the same directory as `dest` so that the final
+/// `rename` is atomic on any POSIX filesystem.  Stale `-wal` and `-shm` files
+/// belonging to the old database are removed before the rename so the restored
+/// database does not inherit an inconsistent journal.
+fn restore_to(src: &Path, dest: &Path) -> Result<()> {
+    let db_dir = dest
+        .parent()
+        .ok_or_else(|| anyhow!("database path has no parent directory"))?;
+
+    let temp_path = db_dir.join(format!(".hyphae-restore-{}.tmp", std::process::id()));
+
+    // Clean up any stale temp file from a previous aborted restore.
+    if temp_path.exists() {
+        let _ = fs::remove_file(&temp_path);
+    }
+
+    fs::copy(src, &temp_path)
+        .with_context(|| format!("failed to copy backup to temp file {}", temp_path.display()))?;
+
+    // Remove stale WAL/SHM sidecars before replacing the main DB file.
+    // These belong to the old database and would confuse the new one.
+    for ext in &["-wal", "-shm"] {
+        let sidecar = PathBuf::from(format!("{}{}", dest.display(), ext));
+        if sidecar.exists() {
+            let _ = fs::remove_file(&sidecar);
+        }
+    }
+
+    fs::rename(&temp_path, dest)
+        .with_context(|| format!("failed to atomically replace database at {}", dest.display()))?;
+
+    Ok(())
 }
 
 fn backup_manifest_path(backup_path: &Path) -> PathBuf {
@@ -285,5 +333,93 @@ mod tests {
         fs::write(&path, b"plain text").unwrap();
 
         assert!(validate_sqlite_backup(&path).is_err());
+    }
+
+    #[test]
+    fn test_create_backup_is_wal_safe() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("hyphae.db");
+        let backup_path = dir.path().join("backup.db");
+
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch("PRAGMA journal_mode=WAL").unwrap();
+        conn.execute(
+            "CREATE TABLE items (id INTEGER PRIMARY KEY, val TEXT NOT NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute("INSERT INTO items (val) VALUES ('hello-wal')", [])
+            .unwrap();
+        drop(conn);
+
+        create_backup(&db_path, Some(backup_path.clone())).unwrap();
+
+        // Verify the row is present in the backup.
+        let backup_conn = Connection::open(&backup_path).unwrap();
+        let val: String = backup_conn
+            .query_row("SELECT val FROM items WHERE id = 1", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(val, "hello-wal");
+
+        // VACUUM INTO produces a clean, checkpoint'd database — no sidecar files.
+        let wal = PathBuf::from(format!("{}-wal", backup_path.display()));
+        let shm = PathBuf::from(format!("{}-shm", backup_path.display()));
+        assert!(!wal.exists(), "backup should not have a -wal sidecar");
+        assert!(!shm.exists(), "backup should not have a -shm sidecar");
+    }
+
+    #[test]
+    fn test_restore_is_atomic_and_cleans_sidecars() {
+        let dir = TempDir::new().unwrap();
+        let source_db = dir.path().join("source.db");
+        let live_db = dir.path().join("live.db");
+        let backup_path = dir.path().join("backup.db");
+
+        // Create the source DB with a known row.
+        let conn = Connection::open(&source_db).unwrap();
+        conn.execute(
+            "CREATE TABLE items (id INTEGER PRIMARY KEY, val TEXT NOT NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute("INSERT INTO items (val) VALUES ('original')", [])
+            .unwrap();
+        drop(conn);
+
+        // Create a backup from the source DB.
+        create_backup(&source_db, Some(backup_path.clone())).unwrap();
+
+        // Create a different live DB at the restore destination.
+        let live_conn = Connection::open(&live_db).unwrap();
+        live_conn
+            .execute(
+                "CREATE TABLE items (id INTEGER PRIMARY KEY, val TEXT NOT NULL)",
+                [],
+            )
+            .unwrap();
+        live_conn
+            .execute("INSERT INTO items (val) VALUES ('stale')", [])
+            .unwrap();
+        drop(live_conn);
+
+        // Plant fake sidecar files to simulate a live WAL database.
+        let wal_path = PathBuf::from(format!("{}-wal", live_db.display()));
+        let shm_path = PathBuf::from(format!("{}-shm", live_db.display()));
+        fs::write(&wal_path, b"fake-wal").unwrap();
+        fs::write(&shm_path, b"fake-shm").unwrap();
+
+        // Restore the backup over the live database.
+        restore_to(&backup_path, &live_db).unwrap();
+
+        // The restored DB should have the original row.
+        let restored = Connection::open(&live_db).unwrap();
+        let val: String = restored
+            .query_row("SELECT val FROM items WHERE id = 1", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(val, "original");
+
+        // The stale sidecar files should have been removed.
+        assert!(!wal_path.exists(), "-wal sidecar should be removed on restore");
+        assert!(!shm_path.exists(), "-shm sidecar should be removed on restore");
     }
 }

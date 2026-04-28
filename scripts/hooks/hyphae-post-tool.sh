@@ -66,7 +66,11 @@ else
   PROJECT=$(basename "$(pwd)" 2>/dev/null || echo "project")
 fi
 
+# Truncate tool output to prevent unbounded extraction cost.
+MAX_EXTRACT_BYTES=102400  # 100 KB
+TRUNCATED_OUTPUT=$(printf '%s' "$TOOL_OUTPUT" | head -c "$MAX_EXTRACT_BYTES")
+
 # Extract facts and store (async, don't block the agent)
-echo "$TOOL_OUTPUT" | "$HYPHAE_BIN" extract -p "$PROJECT" 2>/dev/null &
+printf '%s' "$TRUNCATED_OUTPUT" | "$HYPHAE_BIN" extract -p "$PROJECT" 2>/dev/null &
 
 exit 0

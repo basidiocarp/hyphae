@@ -19,6 +19,28 @@ const DEFAULT_PRE_DEDUP_LIMIT: usize = 30;
 /// Maximum number of final facts after deduplication.
 const DEFAULT_MAX_FACTS: usize = 20;
 
+/// Common secret patterns to reject before storing extracted facts.
+/// Patterns cover API keys, bearer tokens, and key=value assignments that
+/// contain recognisable secret prefixes.
+const SECRET_PATTERNS: &[&str] = &[
+    "sk-ant-",                // Anthropic API key prefix
+    "ghp_",                   // GitHub personal access token
+    "ghs_",                   // GitHub service account token
+    "glpat-",                 // GitLab personal access token
+    "Bearer ",                // HTTP Authorization bearer
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_ACCESS_KEY_ID",
+    "GITHUB_TOKEN",
+];
+
+/// Returns `true` when `text` contains a recognisable secret pattern.
+/// Used to skip sentences before they are stored as memories.
+fn contains_secret(text: &str) -> bool {
+    SECRET_PATTERNS.iter().any(|pat| text.contains(pat))
+}
+
 /// Extract key facts from text and store them in Hyphae.
 /// Returns the number of facts stored.
 pub fn extract_and_store(store: &dyn MemoryStore, text: &str, project: &str) -> Result<usize> {
@@ -93,6 +115,11 @@ fn extract_facts(text: &str, project: &str) -> Vec<(String, String, Importance)>
     for sentence in &sentences {
         let s = sentence.trim();
         if s.len() < 20 || s.len() > 500 {
+            continue;
+        }
+
+        // Skip sentences that appear to contain secrets or API keys.
+        if contains_secret(s) {
             continue;
         }
 
@@ -470,5 +497,22 @@ mod tests {
         let ctx = recall_context(&store, "parsing algorithm", 5).unwrap();
         assert!(!ctx.is_empty());
         assert!(ctx.contains("Pratt") || ctx.contains("parsing") || ctx.contains("algorithm"));
+    }
+
+    #[test]
+    fn extract_facts_does_not_store_api_key_sentences() {
+        let text = "The API key is sk-ant-api03-secret123. Use it carefully.";
+        let facts = extract_facts(text, "test-project");
+        assert!(
+            facts.iter().all(|(_, content, _)| !content.contains("sk-ant-")),
+            "expected no facts containing API key: {:?}",
+            facts
+        );
+    }
+
+    #[test]
+    fn contains_secret_detects_anthropic_key() {
+        assert!(contains_secret("sk-ant-api03-test-key-here"));
+        assert!(!contains_secret("This is a normal sentence."));
     }
 }

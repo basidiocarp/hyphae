@@ -3,10 +3,25 @@ use hyphae_core::error::{HyphaeError, HyphaeResult};
 use std::fs;
 use std::path::Path;
 
+/// Maximum file size accepted for ingest. Files larger than this are rejected
+/// to prevent memory exhaustion from unbounded reads.
+const MAX_INGEST_FILE_BYTES: u64 = 10 * 1024 * 1024; // 10 MB
+
 /// Read a file and detect its source type from extension.
 ///
-/// Returns an error for binary files (detected via null bytes in first 8KB).
+/// Returns an error for binary files (detected via null bytes in first 8KB)
+/// or files that exceed [`MAX_INGEST_FILE_BYTES`].
 pub fn read_file(path: &Path) -> HyphaeResult<(String, SourceType)> {
+    let metadata = fs::metadata(path)?;
+    if metadata.len() > MAX_INGEST_FILE_BYTES {
+        return Err(HyphaeError::Ingest(format!(
+            "file too large: {} ({} bytes, limit is {} bytes)",
+            path.display(),
+            metadata.len(),
+            MAX_INGEST_FILE_BYTES
+        )));
+    }
+
     let raw = fs::read(path)?;
 
     // Binary detection: check first 8KB for null bytes
@@ -111,5 +126,26 @@ mod tests {
         let result = read_file(Path::new("/nonexistent/file.txt"));
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), HyphaeError::Io(_)));
+    }
+
+    #[test]
+    fn test_read_file_rejects_oversized_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("large.txt");
+        // Write slightly more than the 10 MB limit.
+        let big: Vec<u8> = vec![b'x'; (MAX_INGEST_FILE_BYTES + 1) as usize];
+        fs::write(&path, &big).unwrap();
+
+        let result = read_file(&path);
+        assert!(result.is_err(), "expected an error for oversized file");
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, HyphaeError::Ingest(_)),
+            "expected HyphaeError::Ingest, got: {err:?}"
+        );
+        assert!(
+            err.to_string().contains("too large"),
+            "error message should mention 'too large': {err}"
+        );
     }
 }
