@@ -26,9 +26,18 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
-  ci:
+  # Full build with embeddings (default features) — exercises the fastembed/ort/ort-sys chain.
+  ci-embeddings:
+    uses: basidiocarp/.github/.github/workflows/rust-ci.yml@ac464bbd159bc15d40a4d496c44c1a8d77e3d50f
+    with:
+      workspace: true
+      no-default-features: false
+      audit: true
+
+  # Slim build without embeddings — verifies the --no-default-features path compiles and tests pass.
+  ci-no-embeddings:
     uses: basidiocarp/.github/.github/workflows/rust-ci.yml@ac464bbd159bc15d40a4d496c44c1a8d77e3d50f
     with:
       workspace: true
       no-default-features: true
-      audit: true
+      audit: false

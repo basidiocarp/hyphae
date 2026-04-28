@@ -72,6 +72,26 @@ Current direction:
 
 ---
 
+## Embedding Supply Chain
+
+The `embeddings` feature (default: on) pulls a native ML dependency chain:
+
+- `fastembed → ort → ort-sys`: Rust ONNX Runtime bindings
+- **ORT native binary**: downloaded at Rust build time via the `ort-download-binaries`
+  feature in `[workspace.dependencies]`. Source: `ort` GitHub releases page.
+- **Model weights**: downloaded on first use from Hugging Face by `fastembed`.
+
+When upgrading `ort` or `ort-sys`, verify the new native binary hash by reviewing the
+`ort-sys` release notes before accepting the lockfile change. Do not upgrade `fastembed`
+or `ort` without explicitly checking `Cargo.lock` for unexpected transitive changes.
+
+Building without default features removes the entire download chain:
+```bash
+cargo build --no-default-features
+```
+
+---
+
 ## Working Rules
 
 - Do not move storage or I/O behavior into `hyphae-core`.
@@ -80,6 +100,7 @@ Current direction:
 - Prefer real fixtures and stored examples over synthetic stand-ins for search and ingest behavior.
 - Keep memoir and episodic-memory behavior distinct unless the change intentionally spans both.
 - Validate septa contracts after changing any cross-project payload: `cd septa && bash validate-all.sh`
+- When upgrading `fastembed`, `ort`, or `ort-sys`, review the supply chain section above and check `Cargo.lock`.
 
 ---
 

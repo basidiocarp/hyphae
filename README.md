@@ -207,6 +207,40 @@ responses. Logs go to stderr so they do not corrupt the MCP transport.
 - [docs/feedback-loop-design.md](docs/feedback-loop-design.md): closed-loop learning design notes
 - [docs/training-data.md](docs/training-data.md): export formats and training data guidance
 
+## Supply Chain
+
+Embedding support pulls an ML dependency chain. The table below documents what
+each component does and when its artifacts arrive.
+
+| Component | Version | What it does | When artifacts are fetched |
+|-----------|---------|--------------|---------------------------|
+| `fastembed` | 4.x | Runs embedding models locally | Build time |
+| `ort` | 2.0.0-rc.9 | Rust bindings for ONNX Runtime | Build time |
+| `ort-sys` | 2.0.0-rc.9 | Native FFI layer for ORT | Build time |
+| ORT binary | matches ort-sys | Prebuilt ONNX Runtime native library | Build time (via `ort-download-binaries` feature) |
+| Embedding model | all-MiniLM-L6-v2 | Sentence embedding weights | First use (downloaded from Hugging Face) |
+
+The `ort-download-binaries` feature (enabled in `[workspace.dependencies]`) causes
+`ort-sys` to download a prebuilt ORT native library from the `ort` GitHub releases
+page during the Rust build. The embedding model weights are downloaded from Hugging
+Face on first use by `fastembed`.
+
+**To disable all binary downloads**, build without default features:
+
+```bash
+cargo build --release --no-default-features
+```
+
+This produces a slim binary that uses FTS5 search only; no native library or model
+weights are downloaded. Hybrid vector search is unavailable in this mode.
+
+**Pinning**: the `Cargo.lock` fixes all crate versions including `ort-sys`. The ORT
+native binary version is determined by `ort-sys`; update `ort-sys` deliberately and
+verify the new binary hash in the published `ort-sys` source before accepting the
+upgrade.
+
+---
+
 ## Development
 
 ```bash
