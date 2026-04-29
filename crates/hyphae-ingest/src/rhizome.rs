@@ -1,15 +1,12 @@
-//! Rhizome CLI integration for AST-level symbol boundary extraction.
+//! Rhizome MCP integration for AST-level symbol boundary extraction.
 //!
-//! Calls `rhizome symbols <file>` to get symbol locations, then parses the
-//! flat text output into [`SymbolBoundary`] values. Falls back gracefully when
-//! rhizome is unavailable.
+//! Calls the rhizome MCP `get_symbols` tool to get symbol locations, then
+//! parses the JSON response into [`SymbolBoundary`] values. Falls back
+//! gracefully when rhizome is unavailable.
 
-use std::io::Read as _;
 use std::path::Path;
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
 
-use spore::{Tool, discover};
+use spore::{Tool, discover, McpClient};
 
 /// A symbol boundary extracted from rhizome output.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,56 +23,74 @@ pub fn is_available() -> bool {
     discover(Tool::Rhizome).is_some()
 }
 
-/// Get symbol boundaries for a file by calling `rhizome symbols <file>`.
+/// Get symbol boundaries for a file via rhizome MCP `get_symbols` tool.
 ///
 /// Returns `Ok(vec)` on success (possibly empty), or `Err` if rhizome is
-/// unavailable or the command fails.
+/// unavailable or the call fails.
 pub fn get_symbol_boundaries(file: &Path) -> Result<Vec<SymbolBoundary>, RhizomeError> {
-    let info = discover(Tool::Rhizome).ok_or(RhizomeError::NotAvailable)?;
-
-    let mut child = Command::new(&info.binary_path)
-        .arg("symbols")
-        .arg(file)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| RhizomeError::CommandFailed(format!("failed to spawn rhizome: {e}")))?;
-
-    let timeout = Duration::from_secs(10);
-    let start = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {
-                if start.elapsed() > timeout {
-                    let _ = child.kill();
-                    let _ = child.wait(); // reap the zombie
-                    return Err(RhizomeError::CommandFailed(
-                        "rhizome symbols timed out after 10s".into(),
-                    ));
-                }
-                std::thread::sleep(Duration::from_millis(100));
-            }
-            Err(e) => {
-                return Err(RhizomeError::CommandFailed(format!("wait error: {e}")));
-            }
-        }
-    };
-
-    if !status.success() {
-        return Err(RhizomeError::CommandFailed(format!(
-            "rhizome symbols exited with {}",
-            status,
-        )));
+    // Confirm rhizome is discoverable before spawning an MCP client
+    if !is_available() {
+        return Err(RhizomeError::NotAvailable);
     }
 
-    let mut stdout = String::new();
-    if let Some(mut pipe) = child.stdout.take() {
-        pipe.read_to_string(&mut stdout)
-            .map_err(|e| RhizomeError::CommandFailed(format!("failed to read stdout: {e}")))?;
-    }
+    let file_str = file.to_str().ok_or_else(|| {
+        RhizomeError::CommandFailed("invalid file path encoding".into())
+    })?;
 
-    Ok(parse_symbols_output(&stdout))
+    let mut client = McpClient::spawn(Tool::Rhizome, &[])
+        .map_err(|e| RhizomeError::CommandFailed(format!("failed to start rhizome MCP: {e}")))?;
+
+    let result = client
+        .call_tool("get_symbols", serde_json::json!({ "file": file_str }))
+        .map_err(|e| RhizomeError::CommandFailed(format!("get_symbols failed: {e}")))?;
+
+    parse_mcp_symbols_response(result)
+}
+
+/// Parse rhizome MCP `get_symbols` response into boundaries.
+///
+/// The response has shape: `[{"type":"text","text":"<JSON array>"}]`
+/// where the JSON array contains symbol objects with fields like name, kind,
+/// and location with line_start and line_end.
+fn parse_mcp_symbols_response(value: serde_json::Value) -> Result<Vec<SymbolBoundary>, RhizomeError> {
+    let text = value
+        .as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|v| v.get("text"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| RhizomeError::CommandFailed("unexpected get_symbols response shape".into()))?;
+
+    let symbols: Vec<serde_json::Value> = serde_json::from_str(text)
+        .map_err(|e| RhizomeError::CommandFailed(format!("failed to parse symbols JSON: {e}")))?;
+
+    let mut result = Vec::new();
+    for sym in &symbols {
+        let name = match sym.get("name").and_then(|v| v.as_str()) {
+            Some(n) if !n.is_empty() => n,
+            _ => continue, // skip symbols without a usable name
+        };
+        let kind = match sym.get("kind").and_then(|v| v.as_str()) {
+            Some(k) if !k.is_empty() => k,
+            _ => continue, // skip symbols without a kind (consistent with CLI parser which skips malformed lines)
+        };
+        let loc = sym.get("location");
+        let line_start = loc
+            .and_then(|l| l.get("line_start"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+        let line_end = loc
+            .and_then(|l| l.get("line_end"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+
+        result.push(SymbolBoundary {
+            name: name.to_string(),
+            kind: kind.to_string(),
+            line_start,
+            line_end,
+        });
+    }
+    Ok(result)
 }
 
 /// Parse rhizome's flat symbol output into boundaries.
@@ -152,6 +167,105 @@ pub enum RhizomeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_mcp_symbols_response_basic() {
+        let sym_json = serde_json::json!([{
+            "name": "main",
+            "qualified_name": "main",
+            "stable_id": "src/main.rs::main@1:0",
+            "kind": "Function",
+            "location": {
+                "file": "src/main.rs",
+                "line_start": 1,
+                "line_end": 10,
+                "column_start": 0,
+                "column_end": 1,
+            },
+            "signature": null,
+        }]);
+        let response = serde_json::json!([{
+            "type": "text",
+            "text": sym_json.to_string(),
+        }]);
+        let symbols = parse_mcp_symbols_response(response).unwrap();
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "main");
+        assert_eq!(symbols[0].kind, "Function");
+        assert_eq!(symbols[0].line_start, 1);
+        assert_eq!(symbols[0].line_end, 10);
+    }
+
+    #[test]
+    fn parse_mcp_symbols_response_empty_array() {
+        // Empty symbol array returns empty vec, not an error
+        let response = serde_json::json!([{
+            "type": "text",
+            "text": "[]",
+        }]);
+        let symbols = parse_mcp_symbols_response(response).unwrap();
+        assert!(symbols.is_empty());
+    }
+
+    #[test]
+    fn parse_mcp_symbols_response_skips_missing_name() {
+        // Symbols without a name are skipped
+        let sym_json = serde_json::json!([
+            { "kind": "Function", "location": { "line_start": 1, "line_end": 5 } },
+            { "name": "", "kind": "Function", "location": { "line_start": 7, "line_end": 10 } },
+            { "name": "real_fn", "kind": "Function", "location": { "line_start": 12, "line_end": 15 } },
+        ]);
+        let response = serde_json::json!([{ "type": "text", "text": sym_json.to_string() }]);
+        let symbols = parse_mcp_symbols_response(response).unwrap();
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "real_fn");
+    }
+
+    #[test]
+    fn parse_mcp_symbols_response_skips_missing_kind() {
+        // Symbols without a kind are skipped (consistent with CLI parser skipping malformed lines)
+        let sym_json = serde_json::json!([
+            { "name": "no_kind", "location": { "line_start": 1, "line_end": 5 } },
+            { "name": "has_kind", "kind": "Struct", "location": { "line_start": 7, "line_end": 20 } },
+        ]);
+        let response = serde_json::json!([{ "type": "text", "text": sym_json.to_string() }]);
+        let symbols = parse_mcp_symbols_response(response).unwrap();
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "has_kind");
+        assert_eq!(symbols[0].kind, "Struct");
+    }
+
+    #[test]
+    fn parse_mcp_symbols_response_missing_location_uses_zero() {
+        // Missing location fields default to 0
+        let sym_json = serde_json::json!([{
+            "name": "no_loc",
+            "kind": "Function",
+        }]);
+        let response = serde_json::json!([{ "type": "text", "text": sym_json.to_string() }]);
+        let symbols = parse_mcp_symbols_response(response).unwrap();
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].line_start, 0);
+        assert_eq!(symbols[0].line_end, 0);
+    }
+
+    #[test]
+    fn parse_mcp_symbols_response_wrong_shape_returns_err() {
+        // Outer value is not an array — should return Err
+        let bad = serde_json::json!({"type": "text", "text": "[]"});
+        assert!(parse_mcp_symbols_response(bad).is_err());
+
+        // Outer array is empty — .first() returns None — should return Err
+        let empty_arr = serde_json::json!([]);
+        assert!(parse_mcp_symbols_response(empty_arr).is_err());
+    }
+
+    #[test]
+    fn parse_mcp_symbols_response_invalid_inner_json_returns_err() {
+        // text field contains non-JSON — should return Err
+        let response = serde_json::json!([{ "type": "text", "text": "not valid json" }]);
+        assert!(parse_mcp_symbols_response(response).is_err());
+    }
 
     #[test]
     fn parse_single_function() {
