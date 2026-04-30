@@ -247,6 +247,13 @@ pub(crate) enum Commands {
         compact: bool,
     },
 
+    /// Start local unix-socket service endpoint (for hook-time callers)
+    ServeSocket {
+        /// Enable compact output mode
+        #[arg(long)]
+        compact: bool,
+    },
+
     /// Manage semantic knowledge graphs (memoirs)
     Memoir(MemoirArgs),
 

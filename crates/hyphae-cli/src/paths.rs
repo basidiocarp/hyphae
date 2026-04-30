@@ -7,11 +7,44 @@ pub(crate) fn resolve_db_path(cli_db: Option<PathBuf>, configured_db: Option<&st
 }
 
 pub(crate) fn default_db_path() -> PathBuf {
-    spore::paths::data_dir("hyphae").join("hyphae.db")
+    spore::paths::data_dir("basidiocarp").join("hyphae/hyphae.db")
 }
 
 pub(crate) fn backup_dir() -> PathBuf {
-    spore::paths::data_dir("hyphae").join("backups")
+    spore::paths::data_dir("basidiocarp").join("hyphae/backups")
+}
+
+/// Move the legacy `~/.local/share/hyphae/` directory to the shared basidiocarp
+/// root (`~/.local/share/basidiocarp/hyphae/`) on first startup after the path
+/// change. No-op if the new location already exists or if the old location is
+/// absent (fresh install). Falls back silently if the rename fails.
+pub(crate) fn migrate_legacy_data_dir() {
+    let new_base = spore::paths::data_dir("basidiocarp").join("hyphae");
+    let old_base = spore::paths::data_dir("hyphae");
+
+    if new_base.exists() || !old_base.exists() {
+        return;
+    }
+
+    if let Some(parent) = new_base.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            tracing::warn!("hyphae: could not create basidiocarp data dir: {e}");
+            return;
+        }
+    }
+
+    match std::fs::rename(&old_base, &new_base) {
+        Ok(()) => tracing::info!(
+            from = %old_base.display(),
+            to = %new_base.display(),
+            "hyphae: migrated data directory to shared basidiocarp root",
+        ),
+        Err(e) => tracing::warn!(
+            from = %old_base.display(),
+            to = %new_base.display(),
+            "hyphae: migration rename failed ({e}); data remains at old location",
+        ),
+    }
 }
 
 pub(crate) fn default_config_path() -> Option<PathBuf> {

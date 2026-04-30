@@ -112,7 +112,7 @@ pub(crate) fn cmd_auto_recall(store: &dyn MemoryStore, args: AutoRecallArgs) -> 
 }
 
 fn recall_seen_state_path(session_id: &str) -> PathBuf {
-    spore::paths::data_dir("hyphae").join(format!("recall-seen-{session_id}.json"))
+    spore::paths::data_dir("basidiocarp").join(format!("hyphae/recall-seen-{session_id}.json"))
 }
 
 fn load_seen(path: &PathBuf) -> HashSet<String> {

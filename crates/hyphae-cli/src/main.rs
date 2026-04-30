@@ -39,6 +39,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::ForgetSource { .. } => "forget_source",
         Commands::Watch { .. } => "watch",
         Commands::Serve { .. } => "serve",
+        Commands::ServeSocket { .. } => "serve_socket",
         Commands::GatherContext(_) => "gather_context",
         Commands::ListSources { .. } => "list_sources",
         Commands::SearchDocs { .. } => "search_docs",
@@ -133,6 +134,7 @@ fn all_projects_allowed(command: &Commands) -> bool {
         | Commands::ForgetSource { .. }
         | Commands::Watch { .. }
         | Commands::Serve { .. }
+        | Commands::ServeSocket { .. }
         | Commands::Memoir(_)
         | Commands::Feedback(_)
         | Commands::Prune { .. }
@@ -204,6 +206,8 @@ fn main() -> Result<()> {
     }
     let _runtime_span = root_span(&span_context).entered();
     let _command_span = workflow_span(command_name(&cli.command), &span_context).entered();
+
+    paths::migrate_legacy_data_dir();
 
     // Early-return commands that must remain available even if config parsing fails.
     match &cli.command {
@@ -418,6 +422,15 @@ fn main() -> Result<()> {
                 &cfg.consolidation,
                 compact || cfg.mcp.compact,
                 resolved_project,
+                cfg.memory.reject_secrets,
+            )?;
+        }
+
+        Commands::ServeSocket { compact } => {
+            hyphae_mcp::run_socket_server(
+                store,
+                cfg.consolidation.clone(),
+                compact || cfg.mcp.compact,
                 cfg.memory.reject_secrets,
             )?;
         }

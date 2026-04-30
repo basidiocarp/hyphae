@@ -32,7 +32,7 @@ Hyphae is a persistent memory system for AI coding agents. It is a five-crate Ru
 
 | What | Path |
 |------|------|
-| SQLite database | `~/.local/share/hyphae/hyphae.db` (`HYPHAE_DB`) |
+| SQLite database | `~/.local/share/basidiocarp/hyphae/hyphae.db` (`HYPHAE_DB`) |
 | Config file | `~/.config/hyphae/config.toml` (`HYPHAE_CONFIG`) |
 | Embedding cache | fastembed or model cache location |
 | Log output | stderr (`HYPHAE_LOG`) |
