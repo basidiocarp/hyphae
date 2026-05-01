@@ -427,12 +427,18 @@ fn main() -> Result<()> {
         }
 
         Commands::ServeSocket { compact } => {
+            #[cfg(unix)]
             hyphae_mcp::run_socket_server(
                 store,
                 cfg.consolidation.clone(),
                 compact || cfg.mcp.compact,
                 cfg.memory.reject_secrets,
             )?;
+            #[cfg(not(unix))]
+            {
+                let _ = compact;
+                anyhow::bail!("serve-socket is not supported on this platform (unix only)");
+            }
         }
 
         Commands::TestEmbed { text } => {
