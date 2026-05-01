@@ -769,9 +769,7 @@ mod tests {
 
         // Create an archive with a valid memory followed by a malformed one.
         let mut archive = minimal_archive();
-        archive
-            .memories
-            .push(sample_memory_record("MEM_TXN_02")); // Valid, should be inserted
+        archive.memories.push(sample_memory_record("MEM_TXN_02")); // Valid, should be inserted
         let mut bad_rec = sample_memory_record("MEM_TXN_03");
         bad_rec.topic = String::new(); // Malformed
         archive.memories.push(bad_rec);

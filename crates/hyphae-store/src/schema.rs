@@ -975,9 +975,7 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
                  INSERT INTO documents SELECT * FROM documents_old;
                  DROP TABLE documents_old;",
             )
-            .map_err(|e| {
-                HyphaeError::Database(format!("documents migration failed: {e}"))
-            })?;
+            .map_err(|e| HyphaeError::Database(format!("documents migration failed: {e}")))?;
 
             tx.execute_batch(
                 "DROP INDEX IF EXISTS idx_documents_source_path;

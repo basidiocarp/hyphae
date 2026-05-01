@@ -504,10 +504,10 @@ impl MemoryStore for SqliteStore {
         if let Some(ref emb) = memory.embedding {
             let blob = embedding_to_blob(emb);
             tx.execute(
-                    "INSERT INTO vec_memories (memory_id, embedding) VALUES (?1, ?2)",
-                    params![memory.id.as_ref(), blob],
-                )
-                .map_err(|e| HyphaeError::Database(e.to_string()))?;
+                "INSERT INTO vec_memories (memory_id, embedding) VALUES (?1, ?2)",
+                params![memory.id.as_ref(), blob],
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
         }
 
         tx.commit()

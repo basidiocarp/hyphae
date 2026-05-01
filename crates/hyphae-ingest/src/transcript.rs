@@ -207,8 +207,7 @@ fn parse_codex_line(value: &serde_json::Value, normalized: &mut NormalizedSessio
                 }
             }
         }
-        "turn_context"
-            if normalized.project().is_none() => {
+        "turn_context" if normalized.project().is_none() => {
             if let Some(cwd) = payload
                 .and_then(|p| p.get("cwd"))
                 .and_then(|cwd| cwd.as_str())

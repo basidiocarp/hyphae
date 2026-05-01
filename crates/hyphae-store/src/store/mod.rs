@@ -176,9 +176,9 @@ impl SqliteStore {
 
         match f() {
             Ok(result) => {
-                self.conn
-                    .execute("COMMIT", [])
-                    .map_err(|e| HyphaeError::Database(format!("failed to commit transaction: {e}")))?;
+                self.conn.execute("COMMIT", []).map_err(|e| {
+                    HyphaeError::Database(format!("failed to commit transaction: {e}"))
+                })?;
                 Ok(result)
             }
             Err(e) => {

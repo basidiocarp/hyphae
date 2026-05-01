@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use spore::{Tool, discover, McpClient};
+use spore::{McpClient, Tool, discover};
 
 /// A symbol boundary extracted from rhizome output.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,9 +33,9 @@ pub fn get_symbol_boundaries(file: &Path) -> Result<Vec<SymbolBoundary>, Rhizome
         return Err(RhizomeError::NotAvailable);
     }
 
-    let file_str = file.to_str().ok_or_else(|| {
-        RhizomeError::CommandFailed("invalid file path encoding".into())
-    })?;
+    let file_str = file
+        .to_str()
+        .ok_or_else(|| RhizomeError::CommandFailed("invalid file path encoding".into()))?;
 
     let mut client = McpClient::spawn(Tool::Rhizome, &[])
         .map_err(|e| RhizomeError::CommandFailed(format!("failed to start rhizome MCP: {e}")))?;
@@ -52,13 +52,17 @@ pub fn get_symbol_boundaries(file: &Path) -> Result<Vec<SymbolBoundary>, Rhizome
 /// The response has shape: `[{"type":"text","text":"<JSON array>"}]`
 /// where the JSON array contains symbol objects with fields like name, kind,
 /// and location with line_start and line_end.
-fn parse_mcp_symbols_response(value: serde_json::Value) -> Result<Vec<SymbolBoundary>, RhizomeError> {
+fn parse_mcp_symbols_response(
+    value: serde_json::Value,
+) -> Result<Vec<SymbolBoundary>, RhizomeError> {
     let text = value
         .as_array()
         .and_then(|arr| arr.first())
         .and_then(|v| v.get("text"))
         .and_then(|v| v.as_str())
-        .ok_or_else(|| RhizomeError::CommandFailed("unexpected get_symbols response shape".into()))?;
+        .ok_or_else(|| {
+            RhizomeError::CommandFailed("unexpected get_symbols response shape".into())
+        })?;
 
     let symbols: Vec<serde_json::Value> = serde_json::from_str(text)
         .map_err(|e| RhizomeError::CommandFailed(format!("failed to parse symbols JSON: {e}")))?;

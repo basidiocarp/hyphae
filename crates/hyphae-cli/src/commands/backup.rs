@@ -108,7 +108,12 @@ pub(crate) fn create_backup(db_path: &Path, output: Option<PathBuf>) -> Result<P
         db_path,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
-    .with_context(|| format!("failed to open database for backup at {}", db_path.display()))?;
+    .with_context(|| {
+        format!(
+            "failed to open database for backup at {}",
+            db_path.display()
+        )
+    })?;
 
     // VACUUM INTO fails if the destination already exists; remove it first.
     if backup_path.exists() {
@@ -170,8 +175,12 @@ fn restore_to(src: &Path, dest: &Path) -> Result<()> {
         }
     }
 
-    fs::rename(&temp_path, dest)
-        .with_context(|| format!("failed to atomically replace database at {}", dest.display()))?;
+    fs::rename(&temp_path, dest).with_context(|| {
+        format!(
+            "failed to atomically replace database at {}",
+            dest.display()
+        )
+    })?;
 
     Ok(())
 }
@@ -434,7 +443,13 @@ mod tests {
         assert_eq!(val, "original");
 
         // The stale sidecar files should have been removed.
-        assert!(!wal_path.exists(), "-wal sidecar should be removed on restore");
-        assert!(!shm_path.exists(), "-shm sidecar should be removed on restore");
+        assert!(
+            !wal_path.exists(),
+            "-wal sidecar should be removed on restore"
+        );
+        assert!(
+            !shm_path.exists(),
+            "-shm sidecar should be removed on restore"
+        );
     }
 }

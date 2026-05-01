@@ -112,8 +112,7 @@ fn handle_connection(
         let msg: JsonRpcMessage = match serde_json::from_str(trimmed) {
             Ok(m) => m,
             Err(e) => {
-                let resp =
-                    JsonRpcResponse::err(Value::Null, -32700, format!("parse error: {e}"));
+                let resp = JsonRpcResponse::err(Value::Null, -32700, format!("parse error: {e}"));
                 let _ = write_response(&mut writer, &resp);
                 return;
             }
@@ -350,10 +349,7 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(v["id"], 2);
         // stats should succeed — result present, no error
-        assert!(
-            v.get("result").is_some(),
-            "expected result, got: {v}"
-        );
+        assert!(v.get("result").is_some(), "expected result, got: {v}");
 
         handle.join().unwrap();
     }

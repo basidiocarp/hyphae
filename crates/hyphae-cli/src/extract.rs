@@ -21,12 +21,12 @@ const DEFAULT_MAX_FACTS: usize = 20;
 
 /// Secret patterns that are case-sensitive (issuer-defined, always same case).
 const SECRET_PATTERNS_CASE_SENSITIVE: &[&str] = &[
-    "sk-ant-",   // Anthropic API key prefix
-    "sk-proj-",  // OpenAI project API key prefix
-    "ghp_",      // GitHub personal access token
-    "ghs_",      // GitHub service account token
-    "glpat-",    // GitLab personal access token
-    "Bearer ",   // HTTP Authorization bearer
+    "sk-ant-",  // Anthropic API key prefix
+    "sk-proj-", // OpenAI project API key prefix
+    "ghp_",     // GitHub personal access token
+    "ghs_",     // GitHub service account token
+    "glpat-",   // GitLab personal access token
+    "Bearer ",  // HTTP Authorization bearer
 ];
 
 /// Secret env-var names matched case-insensitively — shell and YAML configs
@@ -521,7 +521,9 @@ mod tests {
         let text = "The API key is sk-ant-api03-secret123. Use it carefully.";
         let facts = extract_facts(text, "test-project");
         assert!(
-            facts.iter().all(|(_, content, _)| !content.contains("sk-ant-")),
+            facts
+                .iter()
+                .all(|(_, content, _)| !content.contains("sk-ant-")),
             "expected no facts containing API key: {:?}",
             facts
         );
