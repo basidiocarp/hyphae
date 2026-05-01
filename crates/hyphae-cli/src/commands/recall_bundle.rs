@@ -372,7 +372,7 @@ mod tests {
         for i in 0..20 {
             store_memory(
                 &store,
-                &format!("errors/active"),
+                "errors/active",
                 &format!("Error message number {} with substantial content", i),
             );
         }
