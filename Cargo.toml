@@ -31,7 +31,7 @@ zerocopy = { version = "0.8", features = ["derive"] }
 # Embeddings (optional)
 # Use rustls-tls to avoid pulling in openssl-sys (cross-compile to
 # aarch64-unknown-linux-musl fails without OpenSSL headers for the target).
-fastembed = { version = "4", default-features = false, features = [
+fastembed = { version = "5", default-features = false, features = [
     "ort-download-binaries",
     "hf-hub-rustls-tls",
 ] }
