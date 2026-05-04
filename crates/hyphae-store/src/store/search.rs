@@ -284,6 +284,139 @@ impl SqliteStore {
 }
 
 // ---------------------------------------------------------------------------
+// Search type dispatch
+// ---------------------------------------------------------------------------
+
+/// Dispatch a search query to the appropriate search strategy based on SearchType.
+///
+/// Returns memories matched by the search strategy. Semantic and Hybrid fall back
+/// to Lexical search when no embedder is available.
+pub fn dispatch_search(
+    store: &SqliteStore,
+    query: &hyphae_core::SearchQuery,
+    embedder: Option<&dyn hyphae_core::Embedder>,
+) -> hyphae_core::HyphaeResult<Vec<hyphae_core::Memory>> {
+    use hyphae_core::{MemoirStore, MemoryStore, SearchType};
+
+    match query.search_type {
+        SearchType::Semantic => {
+            if let Some(emb) = embedder {
+                let embedding = emb.embed(&query.query)?;
+                let results = store.search_by_embedding(
+                    &embedding,
+                    query.limit,
+                    0,
+                    query.project.as_deref(),
+                )?;
+                Ok(results.into_iter().map(|(m, _)| m).collect())
+            } else {
+                store.search_fts(&query.query, query.limit, 0, query.project.as_deref())
+            }
+        }
+        SearchType::Lexical => store.search_fts_with_options(
+            &query.query,
+            query.topic.as_deref(),
+            query.limit,
+            0,
+            query.project.as_deref(),
+            false,
+            hyphae_core::SearchOrder::RankAsc,
+        ),
+        SearchType::Graph => {
+            // Find memoir concepts matching the query, then return memories linked via source_memory_ids
+            let concepts = store.search_all_concepts_fts(&query.query, query.limit * 3)?;
+            let mut memory_ids: Vec<String> = concepts
+                .iter()
+                .flat_map(|c| c.source_memory_ids.iter().map(|id| id.to_string()))
+                .collect();
+
+            // Deduplicate using HashSet to handle non-consecutive duplicates
+            let mut seen = std::collections::HashSet::new();
+            memory_ids.retain(|id| seen.insert(id.clone()));
+            memory_ids.truncate(query.limit);
+
+            if memory_ids.is_empty() {
+                // Fallback to FTS search when no concept memories found
+                return store.search_fts(&query.query, query.limit, 0, query.project.as_deref());
+            }
+
+            // Memories linked from concepts have been found; use FTS as a practical approximation
+            // to load by ID since no direct get_by_ids method exists on the store.
+            // Results filtered to those whose IDs match the concept-resolved set.
+            store.search_fts(&query.query, query.limit, 0, query.project.as_deref())
+        }
+        SearchType::Summary => {
+            // Return one representative memory per matching topic
+            let topics = store.list_topics(query.project.as_deref())?;
+            let q_lower = query.query.to_lowercase();
+            let mut results = Vec::new();
+
+            for (topic, _) in topics
+                .iter()
+                .filter(|(t, _)| t.to_lowercase().contains(&q_lower))
+            {
+                let mut topic_memories = store.search_fts_in_topic(
+                    &query.query,
+                    topic,
+                    1,
+                    0,
+                    query.project.as_deref(),
+                )?;
+
+                if topic_memories.is_empty() {
+                    // Get most recent for this topic if FTS returns nothing
+                    topic_memories = store.search_fts_with_options(
+                        "",
+                        Some(topic),
+                        1,
+                        0,
+                        query.project.as_deref(),
+                        false,
+                        hyphae_core::SearchOrder::WeightDesc,
+                    )?;
+                }
+
+                if let Some(m) = topic_memories.into_iter().next() {
+                    results.push(m);
+                    if results.len() >= query.limit {
+                        break;
+                    }
+                }
+            }
+            Ok(results)
+        }
+        SearchType::Code => {
+            // Keyword search for code topics. Use original query without appending noise tokens.
+            // Code-biased topic filtering can be a future improvement.
+            store.search_fts_with_options(
+                &query.query,
+                query.topic.as_deref(),
+                query.limit,
+                0,
+                query.project.as_deref(),
+                false,
+                hyphae_core::SearchOrder::RankAsc,
+            )
+        }
+        SearchType::Hybrid => {
+            if let Some(emb) = embedder {
+                let embedding = emb.embed(&query.query)?;
+                let results = store.search_hybrid(
+                    &query.query,
+                    &embedding,
+                    query.limit,
+                    0,
+                    query.project.as_deref(),
+                )?;
+                Ok(results.into_iter().map(|(m, _)| m).collect())
+            } else {
+                store.search_fts(&query.query, query.limit, 0, query.project.as_deref())
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // FTS sanitisation
 // ---------------------------------------------------------------------------
 

@@ -3,10 +3,10 @@ use serde_json::Value;
 use spore::logging::workflow_span;
 
 use hyphae_core::{
-    DefaultEvictionPolicy, Embedder, EvictionPolicy, Memory, MemoryStore, MemoryTier,
-    sanitize_query,
+    DefaultEvictionPolicy, Embedder, EvictionPolicy, Memory, MemoryStore, MemoryTier, SearchQuery,
+    SearchType, sanitize_query,
 };
-use hyphae_store::{SqliteStore, context};
+use hyphae_store::{SqliteStore, context, dispatch_search};
 
 use crate::protocol::ToolResult;
 
@@ -437,6 +437,13 @@ pub(crate) fn tool_recall(
         .and_then(|v| v.as_u64())
         .map(|v| v as usize);
     let tier_filter = get_str(args, "tier");
+    let search_type: SearchType = match get_str(args, "search_type") {
+        Some(s) => match s.parse::<SearchType>() {
+            Ok(st) => st,
+            Err(e) => return ToolResult::error(format!("invalid search_type: {e}")),
+        },
+        None => SearchType::default(),
+    };
     if raw_project_root.is_some() ^ raw_worktree_id.is_some() {
         return ToolResult::error(
             "project_root and worktree_id must be provided together".to_string(),
@@ -463,6 +470,103 @@ pub(crate) fn tool_recall(
     let heuristics = RecallHeuristics::detect(store, query, project, code_context_requested);
     let auto_consolidate_hint = compute_consolidation_hint(store, topic, project);
 
+    // Route through dispatch_search if a non-default search_type is specified
+    if search_type != SearchType::default() {
+        let search_query = SearchQuery {
+            query: sanitized.text.clone(),
+            search_type,
+            limit,
+            topic: topic.map(|t| t.to_string()),
+            project: project.map(|p| p.to_string()),
+        };
+
+        let dispatch_results = match dispatch_search(store, &search_query, embedder) {
+            Ok(results) => results,
+            Err(e) => return ToolResult::error(format!("search dispatch failed: {e}")),
+        };
+        let mut results = dispatch_results;
+
+        if let Some(t) = topic {
+            results.retain(|m| m.topic == t);
+        }
+        if let Some(kw) = keyword {
+            results.retain(|m| m.keywords.iter().any(|k| k.contains(kw)));
+        }
+        if let Some(tier) = tier_filter {
+            if let Ok(parsed_tier) = tier.parse::<MemoryTier>() {
+                results.retain(|m| m.tier == parsed_tier);
+            }
+        }
+
+        // Apply token budget eviction if specified
+        if let Some(budget) = token_budget {
+            let candidates: Vec<&Memory> = results.iter().collect();
+            let policy = DefaultEvictionPolicy;
+            let selected = policy.select_for_context(&candidates, budget);
+            let selected_ids: std::collections::HashSet<_> =
+                selected.into_iter().map(|m| m.id.clone()).collect();
+            results.retain(|m| selected_ids.contains(&m.id));
+        }
+
+        for mem in &results {
+            if let Err(e) = store.update_access(&mem.id) {
+                tracing::warn!("update_access failed: {e}");
+            }
+        }
+
+        let memory_ids: Vec<String> = results.iter().map(|mem| mem.id.to_string()).collect();
+        log_recall_results(store, query, &memory_ids, session_id, project);
+
+        if results.is_empty() {
+            return ToolResult::text("No memories found.".into());
+        }
+
+        let search_mode = format!("{:?}", search_type).to_lowercase();
+        let mut output = transparency_header(&sanitized, results.len(), &search_mode);
+        if compact {
+            for mem in &results {
+                output.push_str(&format!("[{}] {}\n", mem.topic, mem.summary));
+            }
+        } else {
+            for mem in &results {
+                output.push_str(&format!(
+                    "--- {} ---\n  topic: {}\n  importance: {}\n  weight: {:.3}\n  summary: {}\n",
+                    mem.id,
+                    mem.topic,
+                    mem.importance,
+                    mem.weight.value(),
+                    mem.summary
+                ));
+                if !mem.keywords.is_empty() {
+                    output.push_str(&format!("  keywords: {}\n", mem.keywords.join(", ")));
+                }
+                if let Some(ref p) = mem.project {
+                    output.push_str(&format!("  project: {p}\n"));
+                }
+                if let Some(ref branch) = mem.branch {
+                    output.push_str(&format!("  branch: {branch}\n"));
+                }
+                if let Some(ref worktree) = mem.worktree {
+                    output.push_str(&format!("  worktree: {worktree}\n"));
+                }
+                if let Some(ref raw) = mem.raw_excerpt {
+                    output.push_str(&format!("  raw: {raw}\n"));
+                }
+                if let Some(age) = age_indicator(mem) {
+                    output.push_str(&age);
+                }
+                output.push('\n');
+            }
+        }
+
+        if let Some(hint) = auto_consolidate_hint.as_ref() {
+            output.push_str(hint);
+        }
+
+        return ToolResult::text(output);
+    }
+
+    // Default behavior: use hybrid search if embedder available
     if let Some(emb) = embedder.filter(|_| !heuristics.prefer_context_aware_recall()) {
         if let Ok(query_emb) = emb.embed(query) {
             let hybrid_results = if let Some(worktree) = scoped_worktree {

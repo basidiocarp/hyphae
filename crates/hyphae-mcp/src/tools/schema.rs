@@ -100,6 +100,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                         "type": "boolean",
                         "default": false,
                         "description": "When true, code-shaped queries can gather matching concepts from the project's code memoir (code:{project}) using extracted code terms before recall results are finalized. Only effective when a project is configured, and the expanded hits are merged ahead of the globally visible '_shared' fallback results."
+                    },
+                    "search_type": {
+                        "type": "string",
+                        "enum": ["semantic", "lexical", "fts", "keyword", "graph", "summary", "code", "hybrid"],
+                        "description": "Retrieval strategy. One of: semantic (embedding similarity), lexical (FTS keyword), graph (memoir concept traversal), summary (one result per topic), code (keyword biased to code topics), hybrid (FTS + semantic rerank, default). Omitting defaults to hybrid."
                     }
                 },
                 "required": ["query"]

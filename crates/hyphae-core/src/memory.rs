@@ -3,6 +3,7 @@ use serde::de::{self, Deserializer, Visitor};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
+use std::str::FromStr;
 
 use crate::ids::MemoryId;
 use crate::tier::MemoryTier;
@@ -441,6 +442,45 @@ impl fmt::Display for MemorySource {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SearchType {
+    Semantic,
+    Lexical,
+    Graph,
+    Summary,
+    Code,
+    #[default]
+    Hybrid,
+}
+
+impl FromStr for SearchType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "semantic" => Ok(Self::Semantic),
+            "lexical" | "fts" | "keyword" => Ok(Self::Lexical),
+            "graph" => Ok(Self::Graph),
+            "summary" => Ok(Self::Summary),
+            "code" => Ok(Self::Code),
+            "hybrid" => Ok(Self::Hybrid),
+            _ => Err(format!(
+                "unknown search type '{s}'; valid values: semantic, lexical, fts, keyword, graph, summary, code, hybrid"
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SearchQuery {
+    pub query: String,
+    pub search_type: SearchType,
+    pub limit: usize,
+    pub topic: Option<String>,
+    pub project: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -550,6 +590,52 @@ mod tests {
     fn test_weight_new_clamped_nan() {
         let result = Weight::new_clamped(f32::NAN);
         assert_eq!(result.value(), 0.5);
+    }
+
+    #[test]
+    fn test_search_type_from_str() {
+        assert_eq!(SearchType::Semantic, "semantic".parse().unwrap());
+        assert_eq!(SearchType::Lexical, "lexical".parse().unwrap());
+        assert_eq!(SearchType::Lexical, "fts".parse().unwrap());
+        assert_eq!(SearchType::Lexical, "keyword".parse().unwrap());
+        assert_eq!(SearchType::Graph, "graph".parse().unwrap());
+        assert_eq!(SearchType::Summary, "summary".parse().unwrap());
+        assert_eq!(SearchType::Code, "code".parse().unwrap());
+        assert_eq!(SearchType::Hybrid, "hybrid".parse().unwrap());
+    }
+
+    #[test]
+    fn test_search_type_from_str_case_insensitive() {
+        assert_eq!(SearchType::Semantic, "SEMANTIC".parse().unwrap());
+        assert_eq!(SearchType::Hybrid, "HyBrId".parse().unwrap());
+    }
+
+    #[test]
+    fn test_search_type_from_str_invalid() {
+        let result: Result<SearchType, _> = "invalid".parse();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("unknown search type"));
+    }
+
+    #[test]
+    fn test_search_type_default() {
+        assert_eq!(SearchType::default(), SearchType::Hybrid);
+    }
+
+    #[test]
+    fn test_search_query_basic() {
+        let query = SearchQuery {
+            query: "test".to_string(),
+            search_type: SearchType::Semantic,
+            limit: 10,
+            topic: Some("topic1".to_string()),
+            project: Some("proj1".to_string()),
+        };
+        assert_eq!(query.query, "test");
+        assert_eq!(query.search_type, SearchType::Semantic);
+        assert_eq!(query.limit, 10);
+        assert_eq!(query.topic.as_deref(), Some("topic1"));
+        assert_eq!(query.project.as_deref(), Some("proj1"));
     }
 }
 

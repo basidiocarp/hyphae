@@ -16,7 +16,7 @@ mod search;
 pub mod session;
 
 pub use project::SHARED_PROJECT;
-pub use search::UnifiedSearchResult;
+pub use search::{UnifiedSearchResult, dispatch_search};
 
 use std::path::Path;
 use std::sync::Once;
