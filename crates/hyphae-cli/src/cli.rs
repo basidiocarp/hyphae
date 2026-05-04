@@ -436,6 +436,24 @@ pub(crate) enum Commands {
         overwrite: bool,
     },
 
+    /// Export memories and memoirs to an Obsidian vault as Markdown notes
+    ExportObsidian {
+        /// Path to the Obsidian vault directory
+        vault: PathBuf,
+        /// Project namespace for memory filtering
+        #[arg(long)]
+        project: Option<String>,
+        /// Include memoirs and concepts in export
+        #[arg(long)]
+        include_memoirs: bool,
+        /// Show what would be written without creating files
+        #[arg(long)]
+        dry_run: bool,
+        /// Overwrite existing vault files
+        #[arg(long)]
+        overwrite: bool,
+    },
+
     /// Import memories, memoirs, and sessions from a portable archive
     Import {
         /// Path to archive file produced by `hyphae export`

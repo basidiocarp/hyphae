@@ -67,6 +67,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::ExportTraining { .. } => "export_training",
         Commands::Evaluate { .. } => "evaluate",
         Commands::Export { .. } => "export",
+        Commands::ExportObsidian { .. } => "export_obsidian",
         Commands::Import { .. } => "import",
         Commands::Backup { .. } => "backup",
         Commands::Restore { .. } => "restore",
@@ -107,6 +108,7 @@ fn all_projects_allowed(command: &Commands) -> bool {
         | Commands::ExportTraining { .. }
         | Commands::Evaluate { .. }
         | Commands::Export { .. }
+        | Commands::ExportObsidian { .. }
         | Commands::Backup { .. }
         | Commands::Restore { .. }
         | Commands::Audit { .. }
@@ -641,6 +643,23 @@ fn main() -> Result<()> {
                 include_sessions,
                 min_weight,
                 pretty,
+                overwrite,
+            )?;
+        }
+
+        Commands::ExportObsidian {
+            vault,
+            project,
+            include_memoirs,
+            dry_run,
+            overwrite,
+        } => {
+            commands::export_obsidian::cmd_export_obsidian(
+                &store,
+                vault.clone(),
+                project.clone(),
+                include_memoirs,
+                dry_run,
                 overwrite,
             )?;
         }

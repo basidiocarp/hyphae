@@ -162,6 +162,19 @@ Cap is an operator console, not a second-brain product. The relationship is:
 
 ---
 
+## Known v1 Gaps
+
+The following items are in scope per the design table but not implemented in the initial CLI release. Each is a follow-on handoff.
+
+| Gap | Reason deferred |
+|-----|-----------------|
+| `lessons/` export | Requires `list_lessons` query; lesson table access not yet plumbed through `SqliteStore` public API |
+| `sessions/<year>/` export | Requires `list_sessions` query; same boundary issue |
+| Concept `## Relations` body section | `Concept` struct does not yet carry a `links` field at the CLI layer; relations live in a join table queried separately via `MemoirStore::list_links` |
+| Concept `relations:` frontmatter block | Same dependency as above |
+
+---
+
 ## Open Questions
 
 1. **Incremental export** — should re-export skip notes whose `updated_at` has not changed? The `--clean` flag handles deletion; incremental writes reduce I/O but require tracking last-export timestamps. Defer to implementation.
