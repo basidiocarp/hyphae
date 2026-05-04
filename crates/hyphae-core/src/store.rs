@@ -32,6 +32,7 @@ pub trait MemoryStore {
     // CRUD
     fn store(&self, memory: Memory) -> HyphaeResult<MemoryId>;
     fn get(&self, id: &MemoryId) -> HyphaeResult<Option<Memory>>;
+    fn get_by_ids(&self, ids: &[&str], project: Option<&str>) -> HyphaeResult<Vec<Memory>>;
     fn update(&self, memory: &Memory) -> HyphaeResult<()>;
     fn delete(&self, id: &MemoryId) -> HyphaeResult<()>;
     fn invalidate(
@@ -202,6 +203,9 @@ mod tests {
             unimplemented!()
         }
         fn get(&self, _id: &MemoryId) -> HyphaeResult<Option<Memory>> {
+            unimplemented!()
+        }
+        fn get_by_ids(&self, _ids: &[&str], _project: Option<&str>) -> HyphaeResult<Vec<Memory>> {
             unimplemented!()
         }
         fn update(&self, _memory: &Memory) -> HyphaeResult<()> {
@@ -432,6 +436,9 @@ mod tests {
                 unimplemented!()
             }
             fn get(&self, _: &MemoryId) -> HyphaeResult<Option<Memory>> {
+                unimplemented!()
+            }
+            fn get_by_ids(&self, _: &[&str], _: Option<&str>) -> HyphaeResult<Vec<Memory>> {
                 unimplemented!()
             }
             fn update(&self, _: &Memory) -> HyphaeResult<()> {

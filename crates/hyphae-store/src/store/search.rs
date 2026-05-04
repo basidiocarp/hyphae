@@ -340,10 +340,9 @@ pub fn dispatch_search(
                 return store.search_fts(&query.query, query.limit, 0, query.project.as_deref());
             }
 
-            // Memories linked from concepts have been found; use FTS as a practical approximation
-            // to load by ID since no direct get_by_ids method exists on the store.
-            // Results filtered to those whose IDs match the concept-resolved set.
-            store.search_fts(&query.query, query.limit, 0, query.project.as_deref())
+            // Memories linked from concepts have been found; fetch them by ID
+            let id_refs: Vec<&str> = memory_ids.iter().map(|s| s.as_str()).collect();
+            store.get_by_ids(&id_refs, query.project.as_deref())
         }
         SearchType::Summary => {
             // Return one representative memory per matching topic

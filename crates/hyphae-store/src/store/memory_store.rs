@@ -539,6 +539,51 @@ impl MemoryStore for SqliteStore {
         Ok(result)
     }
 
+    fn get_by_ids(&self, ids: &[&str], project: Option<&str>) -> HyphaeResult<Vec<Memory>> {
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
+        let in_clause = placeholders.join(", ");
+        let project_pos = ids.len() + 1;
+
+        let sql = if project.is_some() {
+            format!(
+                "SELECT {SELECT_COLS} FROM memories WHERE id IN ({in_clause}) AND project = ?{project_pos} AND invalidated_at IS NULL ORDER BY updated_at DESC"
+            )
+        } else {
+            format!(
+                "SELECT {SELECT_COLS} FROM memories WHERE id IN ({in_clause}) AND invalidated_at IS NULL ORDER BY updated_at DESC"
+            )
+        };
+
+        let mut stmt = self
+            .conn
+            .prepare_cached(&sql)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = ids
+            .iter()
+            .map(|id| Box::new(id.to_string()) as Box<dyn rusqlite::types::ToSql>)
+            .collect();
+
+        if let Some(proj) = project {
+            param_values.push(Box::new(proj.to_string()));
+        }
+
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            param_values.iter().map(|p| p.as_ref()).collect();
+
+        let memories: Vec<Memory> = stmt
+            .query_map(params_ref.as_slice(), row_to_memory)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        Ok(memories)
+    }
+
     fn update(&self, memory: &Memory) -> HyphaeResult<()> {
         let _span = tracing::info_span!("hyphae.memory.update").entered();
 
