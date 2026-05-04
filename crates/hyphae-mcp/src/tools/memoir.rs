@@ -6,7 +6,7 @@ use spore::logging::workflow_span;
 
 use hyphae_core::{
     Concept, ConceptLink, Importance, Label, Memoir, Memory, MemoryId, MemoryStore, MemoirStore,
-    Relation, memoir_store::{ConceptInput, LinkInput},
+    Relation, consolidate_via_llm, memoir_store::{ConceptInput, LinkInput},
 };
 use hyphae_store::SqliteStore;
 
@@ -268,13 +268,47 @@ pub(crate) fn tool_memoir_refine(
         _ => return ToolResult::text(format!("Refined concept '{name}'")),
     };
 
+    // Auto-consolidate when the concept has been refined beyond the threshold.
+    // Uses revision as the refinement counter; resets to 0 after consolidation.
+    let threshold: u32 = std::env::var("HYPHAE_MEMOIR_CONSOLIDATION_THRESHOLD")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(12);
+
+    let consolidated_definition = if updated.revision > threshold {
+        match consolidate_via_llm(name, &updated.definition) {
+            Some(summary) => {
+                if let Err(e) = store.consolidate_concept_definition(&updated.id, &summary) {
+                    tracing::warn!("failed to persist consolidated definition for '{name}': {e}");
+                    None
+                } else {
+                    Some(summary)
+                }
+            }
+            None => {
+                tracing::warn!(
+                    "LLM consolidation unavailable for '{name}' (r{}), skipping",
+                    updated.revision
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Use consolidated definition for dual-write if consolidation fired.
+    let effective_definition = consolidated_definition
+        .as_deref()
+        .unwrap_or(updated.definition.as_str());
+
     // Dual-write to memory store to update the concept's memory entry with the new definition.
     // Use the same stable ID as add_concept so this upserts the existing entry.
     // This is best-effort: log on error, but do not fail the tool call.
     let memory_id: MemoryId = format!("memoir-{}-{}", memoir.id, name).into();
     let mut memory = Memory::new(
         format!("memoir/{}", memoir.id),
-        format!("{}: {}", name, definition),
+        format!("{}: {}", name, effective_definition),
         Importance::High,
     );
     memory.id = memory_id.clone();
@@ -292,9 +326,22 @@ pub(crate) fn tool_memoir_refine(
         memoir_id: memoir.id.to_string(),
     });
 
+    let consolidated_note = if consolidated_definition.is_some() {
+        " [consolidated]"
+    } else {
+        ""
+    };
+
+    // After consolidation the DB has revision=0; show the post-consolidation state.
+    let display_revision = if consolidated_definition.is_some() {
+        0
+    } else {
+        updated.revision
+    };
+
     ToolResult::text(format!(
-        "Refined '{name}' (r{}, confidence={:.2})",
-        updated.revision,
+        "Refined '{name}' (r{}, confidence={:.2}){consolidated_note}",
+        display_revision,
         updated.confidence.value()
     ))
 }

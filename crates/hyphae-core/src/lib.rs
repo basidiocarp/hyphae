@@ -10,6 +10,7 @@ pub mod git_context;
 pub mod http_embedder;
 pub mod identity;
 pub mod ids;
+pub mod llm_client;
 pub mod memoir;
 pub mod memoir_store;
 pub mod memory;
@@ -33,6 +34,7 @@ pub use identity::{
     ScopedIdentity,
 };
 pub use ids::*;
+pub use llm_client::consolidate_via_llm;
 pub use memoir::{Concept, ConceptLink, Confidence, Label, Memoir, MemoirStats, Relation};
 pub use memoir_store::{ConceptInput, LinkInput, MemoirStore, UpsertReport};
 pub use memory::{

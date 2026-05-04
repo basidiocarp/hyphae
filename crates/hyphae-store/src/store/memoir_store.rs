@@ -391,6 +391,25 @@ impl MemoirStore for SqliteStore {
         Ok(())
     }
 
+    fn consolidate_concept_definition(
+        &self,
+        id: &ConceptId,
+        new_definition: &str,
+    ) -> HyphaeResult<()> {
+        let now = Utc::now().to_rfc3339();
+        let changed = self
+            .conn
+            .execute(
+                "UPDATE concepts SET definition = ?2, revision = 0, updated_at = ?3 WHERE id = ?1",
+                params![id.as_ref(), new_definition, now],
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        if changed == 0 {
+            return Err(HyphaeError::NotFound(id.to_string()));
+        }
+        Ok(())
+    }
+
     fn add_link(&self, link: ConceptLink) -> HyphaeResult<LinkId> {
         let normalized_relation = normalize_relation(&link.relation.to_string());
         self.conn
@@ -903,7 +922,7 @@ impl MemoirStore for SqliteStore {
 
 #[cfg(test)]
 mod tests {
-    use hyphae_core::{ConceptInput, ConceptLink, Label, LinkInput, Memoir, MemoirStore, Relation};
+    use hyphae_core::{Concept, ConceptId, ConceptInput, ConceptLink, Label, LinkInput, Memoir, MemoirStore, Relation};
 
     use super::super::SqliteStore;
     use super::normalize_relation;
@@ -1295,5 +1314,37 @@ mod tests {
         // Missing concept — should return NotFound
         let result = store.remove_link(&memoir_id, "x", "nonexistent", "related_to");
         assert!(result.is_err(), "should error when concept not found");
+    }
+
+    #[test]
+    fn test_consolidate_concept_definition_resets_revision() {
+        let store = test_store();
+        let memoir = Memoir::new("test".to_string(), "".to_string());
+        store.create_memoir(memoir.clone()).unwrap();
+
+        let concept = Concept::new(memoir.id.clone(), "Alpha".to_string(), "original".to_string());
+        store.add_concept(concept.clone()).unwrap();
+
+        // Refine a few times to bump revision (starts at 1)
+        store.refine_concept(&concept.id, "updated 1", &[]).unwrap();
+        store.refine_concept(&concept.id, "updated 2", &[]).unwrap();
+
+        let before = store.get_concept(&concept.id).unwrap().unwrap();
+        assert_eq!(before.revision, 3); // 1 initial + 2 refines
+
+        // Consolidate
+        store.consolidate_concept_definition(&concept.id, "consolidated summary").unwrap();
+
+        let after = store.get_concept(&concept.id).unwrap().unwrap();
+        assert_eq!(after.revision, 0, "revision should reset to 0 after consolidation");
+        assert_eq!(after.definition, "consolidated summary");
+    }
+
+    #[test]
+    fn test_consolidate_concept_definition_not_found() {
+        let store = test_store();
+        let fake_id = ConceptId::from("fake_id_that_does_not_exist");
+        let result = store.consolidate_concept_definition(&fake_id, "whatever");
+        assert!(result.is_err());
     }
 }

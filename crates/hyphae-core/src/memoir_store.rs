@@ -79,6 +79,14 @@ pub trait MemoirStore {
         new_source_ids: &[MemoryId],
     ) -> HyphaeResult<()>;
 
+    /// Replace the concept's definition with a consolidated summary and reset its
+    /// revision counter to 0. Called after LLM consolidation fires.
+    fn consolidate_concept_definition(
+        &self,
+        id: &ConceptId,
+        new_definition: &str,
+    ) -> HyphaeResult<()>;
+
     // --- Graph ---
     fn add_link(&self, link: ConceptLink) -> HyphaeResult<LinkId>;
     fn get_links_from(&self, concept_id: &ConceptId) -> HyphaeResult<Vec<ConceptLink>>;
