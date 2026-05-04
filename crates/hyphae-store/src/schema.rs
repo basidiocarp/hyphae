@@ -1000,6 +1000,20 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         }
     }
 
+    // Migration: add community_id column to concepts
+    let has_community_id: bool = tx
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('concepts') WHERE name='community_id'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if !has_community_id {
+        tx.execute_batch("ALTER TABLE concepts ADD COLUMN community_id TEXT;")
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    }
+
     tx.commit().map_err(|e| {
         HyphaeError::Database(format!("failed to commit migration transaction: {e}"))
     })?;

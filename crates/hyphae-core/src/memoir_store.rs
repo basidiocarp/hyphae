@@ -102,6 +102,12 @@ pub trait MemoirStore {
         depth: usize,
     ) -> HyphaeResult<(Vec<Concept>, Vec<ConceptLink>)>;
 
+    /// List all concept links within a memoir.
+    fn list_all_links(&self, memoir_id: &MemoirId) -> HyphaeResult<Vec<ConceptLink>>;
+
+    /// Set or clear the community ID for a concept.
+    fn set_concept_community(&self, concept_id: &ConceptId, community_id: Option<&str>) -> HyphaeResult<()>;
+
     // --- Stats ---
     fn memoir_stats(&self, memoir_id: &MemoirId) -> HyphaeResult<MemoirStats>;
 

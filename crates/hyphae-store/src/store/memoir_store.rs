@@ -246,7 +246,7 @@ impl MemoirStore for SqliteStore {
         }
 
         let sql = "SELECT c.id, c.memoir_id, c.name, c.definition, c.labels, c.confidence,
-                    c.revision, c.created_at, c.updated_at, c.source_memory_ids
+                    c.revision, c.created_at, c.updated_at, c.source_memory_ids, c.community_id
              FROM concepts c
              JOIN concepts_fts fts ON c.rowid = fts.rowid
              WHERE c.memoir_id = ?1
@@ -281,7 +281,7 @@ impl MemoirStore for SqliteStore {
         }
 
         let sql = "SELECT c.id, c.memoir_id, c.name, c.definition, c.labels, c.confidence,
-                    c.revision, c.created_at, c.updated_at, c.source_memory_ids
+                    c.revision, c.created_at, c.updated_at, c.source_memory_ids, c.community_id
              FROM concepts c
              JOIN concepts_fts fts ON c.rowid = fts.rowid
              WHERE concepts_fts MATCH ?1
@@ -864,6 +864,40 @@ impl MemoirStore for SqliteStore {
             avg_confidence,
             label_counts,
         })
+    }
+
+    fn list_all_links(&self, memoir_id: &MemoirId) -> HyphaeResult<Vec<ConceptLink>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached(
+                "SELECT cl.id, cl.source_id, cl.target_id, cl.relation, cl.weight, cl.link_count, cl.created_at \
+                 FROM concept_links cl \
+                 JOIN concepts c ON cl.source_id = c.id \
+                 WHERE c.memoir_id = ?1",
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![memoir_id.as_ref()], row_to_link)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| HyphaeError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
+    fn set_concept_community(&self, concept_id: &ConceptId, community_id: Option<&str>) -> HyphaeResult<()> {
+        let changed = self
+            .conn
+            .execute(
+                "UPDATE concepts SET community_id = ?2 WHERE id = ?1",
+                params![concept_id.as_ref(), community_id],
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        if changed == 0 {
+            return Err(HyphaeError::NotFound(concept_id.to_string()));
+        }
+        Ok(())
     }
 }
 

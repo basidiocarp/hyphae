@@ -154,6 +154,7 @@ pub struct Concept {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub source_memory_ids: Vec<MemoryId>,
+    pub community_id: Option<String>,
 }
 
 impl Concept {
@@ -170,6 +171,7 @@ impl Concept {
             created_at: now,
             updated_at: now,
             source_memory_ids: Vec::new(),
+            community_id: None,
         }
     }
 }

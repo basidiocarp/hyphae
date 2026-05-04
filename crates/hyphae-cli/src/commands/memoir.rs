@@ -151,6 +151,14 @@ pub(crate) enum MemoirCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Run community detection on a memoir's concept graph
+    Cluster {
+        /// Memoir name
+        memoir: String,
+        /// Emit structured JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 pub(crate) fn dispatch(store: &SqliteStore, args: MemoirArgs) -> Result<()> {
@@ -199,6 +207,7 @@ pub(crate) fn dispatch(store: &SqliteStore, args: MemoirArgs) -> Result<()> {
         MemoirCommand::Unlink { memoir, from, to, relation, json } => {
             cmd_memoir_unlink(store, memoir, from, to, relation, json)
         }
+        MemoirCommand::Cluster { memoir, json } => cmd_memoir_cluster(store, memoir, json),
     }
 }
 
@@ -500,6 +509,37 @@ pub(crate) fn cmd_memoir_unlink(
         println!("{}", serde_json::json!({"status": "ok", "from": from, "to": to, "relation": relation}));
     } else {
         println!("✓ Unlinked '{from}' --[{relation}]--> '{to}' in memoir '{memoir}'");
+    }
+    Ok(())
+}
+
+pub(crate) fn cmd_memoir_cluster(store: &SqliteStore, memoir_name: String, json: bool) -> Result<()> {
+    use hyphae_store::memoir_community::cluster_memoir;
+
+    let memoir = store
+        .get_memoir_by_name(&memoir_name)?
+        .ok_or_else(|| anyhow::anyhow!("memoir not found: {memoir_name}"))?;
+
+    let community_count = cluster_memoir(store, &memoir.id)?;
+    let concept_count = store.list_concepts(&memoir.id)?.len();
+
+    if json {
+        #[derive(serde::Serialize)]
+        struct ClusterPayload {
+            schema_version: &'static str,
+            concept_count: usize,
+            community_count: usize,
+        }
+        println!(
+            "{}",
+            serde_json::to_string(&ClusterPayload {
+                schema_version: "1.0",
+                concept_count,
+                community_count,
+            })?
+        );
+    } else {
+        println!("Clustered {concept_count} concepts into {community_count} communities");
     }
     Ok(())
 }
