@@ -534,6 +534,38 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
             }
         }),
         json!({
+            "name": "hyphae_memoir_unlink",
+            "description": "Remove a specific directed edge between two concepts in a memoir.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "memoir": {
+                        "type": "string",
+                        "description": "Memoir name"
+                    },
+                    "from": {
+                        "type": "string",
+                        "description": "Source concept name"
+                    },
+                    "to": {
+                        "type": "string",
+                        "description": "Target concept name"
+                    },
+                    "relation": {
+                        "type": "string",
+                        "enum": ["part_of", "depends_on", "related_to", "contradicts", "refines", "alternative_to", "caused_by", "instance_of", "superseded_by"],
+                        "description": "Relation type to remove"
+                    }
+                },
+                "required": ["memoir", "from", "to", "relation"]
+            },
+            "annotations": {
+                "readOnlyHint": false,
+                "destructiveHint": true,
+                "idempotentHint": true
+            }
+        }),
+        json!({
             "name": "hyphae_memoir_inspect",
             "description": "Inspect a concept and its graph neighborhood using Breadth-First Search (BFS).",
             "inputSchema": {

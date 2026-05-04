@@ -462,6 +462,35 @@ impl MemoirStore for SqliteStore {
         Ok(())
     }
 
+    fn remove_link(
+        &self,
+        memoir_id: &MemoirId,
+        from_concept: &str,
+        to_concept: &str,
+        relation: &str,
+    ) -> HyphaeResult<()> {
+        let from = self
+            .get_concept_by_name(memoir_id, from_concept)?
+            .ok_or_else(|| HyphaeError::NotFound(format!("concept not found: {from_concept}")))?;
+        let to = self
+            .get_concept_by_name(memoir_id, to_concept)?
+            .ok_or_else(|| HyphaeError::NotFound(format!("concept not found: {to_concept}")))?;
+        let normalized = normalize_relation(relation);
+        let changed = self
+            .conn
+            .execute(
+                "DELETE FROM concept_links WHERE source_id = ?1 AND target_id = ?2 AND relation = ?3",
+                params![from.id.as_ref(), to.id.as_ref(), normalized],
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        if changed == 0 {
+            return Err(HyphaeError::NotFound(format!(
+                "no '{relation}' link from '{from_concept}' to '{to_concept}'"
+            )));
+        }
+        Ok(())
+    }
+
     fn get_neighbors(
         &self,
         concept_id: &ConceptId,
@@ -840,7 +869,7 @@ impl MemoirStore for SqliteStore {
 
 #[cfg(test)]
 mod tests {
-    use hyphae_core::{ConceptInput, Label, LinkInput, Memoir, MemoirStore, Relation};
+    use hyphae_core::{ConceptInput, ConceptLink, Label, LinkInput, Memoir, MemoirStore, Relation};
 
     use super::super::SqliteStore;
     use super::normalize_relation;
@@ -1182,5 +1211,55 @@ mod tests {
             Relation::PartOf,
             "Synonym 'contains' should be normalized to PartOf"
         );
+    }
+
+    #[test]
+    fn test_remove_link_removes_only_specified_relation() {
+        let store = test_store();
+        let memoir = Memoir::new("unlink_test".into(), "Testing remove_link".into());
+        let memoir_id = store.create_memoir(memoir).unwrap();
+
+        let concepts = vec![
+            ConceptInput { name: "a".into(), labels: vec![], description: "concept a".into() },
+            ConceptInput { name: "b".into(), labels: vec![], description: "concept b".into() },
+        ];
+        store.upsert_concepts(&memoir_id, &concepts).unwrap();
+
+        let a = store.get_concept_by_name(&memoir_id, "a").unwrap().unwrap();
+        let b = store.get_concept_by_name(&memoir_id, "b").unwrap().unwrap();
+
+        // Add two distinct links between the same pair
+        store.add_link(ConceptLink::new(a.id.clone(), b.id.clone(), Relation::DependsOn)).unwrap();
+        store.add_link(ConceptLink::new(a.id.clone(), b.id.clone(), Relation::RelatedTo)).unwrap();
+
+        let links = store.get_links_from(&a.id).unwrap();
+        assert_eq!(links.len(), 2, "should have two links before unlink");
+
+        // Remove only the depends_on link
+        store.remove_link(&memoir_id, "a", "b", "depends_on").unwrap();
+
+        let remaining = store.get_links_from(&a.id).unwrap();
+        assert_eq!(remaining.len(), 1, "should have one link after unlink");
+        assert_eq!(remaining[0].relation, Relation::RelatedTo, "related_to should survive");
+    }
+
+    #[test]
+    fn test_remove_link_not_found_errors() {
+        let store = test_store();
+        let memoir = Memoir::new("unlink_err".into(), "".into());
+        let memoir_id = store.create_memoir(memoir).unwrap();
+        let concepts = vec![
+            ConceptInput { name: "x".into(), labels: vec![], description: "".into() },
+            ConceptInput { name: "y".into(), labels: vec![], description: "".into() },
+        ];
+        store.upsert_concepts(&memoir_id, &concepts).unwrap();
+
+        // No link exists yet — should return NotFound
+        let result = store.remove_link(&memoir_id, "x", "y", "related_to");
+        assert!(result.is_err(), "should error when no link exists");
+
+        // Missing concept — should return NotFound
+        let result = store.remove_link(&memoir_id, "x", "nonexistent", "related_to");
+        assert!(result.is_err(), "should error when concept not found");
     }
 }

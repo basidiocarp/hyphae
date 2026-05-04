@@ -132,6 +132,25 @@ pub(crate) enum MemoirCommand {
         #[arg(short, long, default_value = "related_to")]
         relation: String,
     },
+    /// Remove a link between two concepts in a memoir
+    Unlink {
+        /// Memoir name
+        #[arg(short, long)]
+        memoir: String,
+        /// Source concept name
+        #[arg(long)]
+        from: String,
+        /// Target concept name
+        #[arg(long)]
+        to: String,
+        /// Relation type to remove: part_of, depends_on, related_to, contradicts, refines,
+        /// alternative_to, caused_by, instance_of, superseded_by
+        #[arg(short, long, default_value = "related_to")]
+        relation: String,
+        /// Emit structured JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 pub(crate) fn dispatch(store: &SqliteStore, args: MemoirArgs) -> Result<()> {
@@ -177,6 +196,9 @@ pub(crate) fn dispatch(store: &SqliteStore, args: MemoirArgs) -> Result<()> {
             to,
             relation,
         } => cmd_memoir_link(store, memoir, from, to, relation),
+        MemoirCommand::Unlink { memoir, from, to, relation, json } => {
+            cmd_memoir_unlink(store, memoir, from, to, relation, json)
+        }
     }
 }
 
@@ -459,6 +481,26 @@ pub(crate) fn cmd_memoir_link(
     let link = ConceptLink::new(from.id, to.id, relation);
     store.add_link(link)?;
     println!("✓ Linked '{from_name}' --[{relation}]--> '{to_name}'");
+    Ok(())
+}
+
+pub(crate) fn cmd_memoir_unlink(
+    store: &SqliteStore,
+    memoir: String,
+    from: String,
+    to: String,
+    relation: String,
+    json: bool,
+) -> Result<()> {
+    let m = store
+        .get_memoir_by_name(&memoir)?
+        .ok_or_else(|| anyhow::anyhow!("memoir not found: {memoir}"))?;
+    store.remove_link(&m.id, &from, &to, &relation)?;
+    if json {
+        println!("{}", serde_json::json!({"status": "ok", "from": from, "to": to, "relation": relation}));
+    } else {
+        println!("✓ Unlinked '{from}' --[{relation}]--> '{to}' in memoir '{memoir}'");
+    }
     Ok(())
 }
 

@@ -482,6 +482,43 @@ pub(crate) fn tool_memoir_link(
     }
 }
 
+pub(crate) fn tool_memoir_unlink(
+    store: &SqliteStore,
+    args: &Value,
+    trace: &ToolTraceContext,
+) -> ToolResult {
+    let memoir_name = match validate_required_string(args, "memoir") {
+        Ok(n) => n,
+        Err(e) => return e,
+    };
+    let from_name = match validate_required_string(args, "from") {
+        Ok(n) => n,
+        Err(e) => return e,
+    };
+    let to_name = match validate_required_string(args, "to") {
+        Ok(n) => n,
+        Err(e) => return e,
+    };
+    let relation = match validate_required_string(args, "relation") {
+        Ok(r) => r,
+        Err(e) => return e,
+    };
+    let workflow_context = workflow_span_context(trace, None, Some(memoir_name));
+    let _workflow_span = workflow_span("memoir_unlink", &workflow_context).entered();
+
+    let memoir = match resolve_memoir(store, memoir_name) {
+        Ok(m) => m,
+        Err(e) => return e,
+    };
+
+    match store.remove_link(&memoir.id, from_name, to_name, relation) {
+        Ok(()) => ToolResult::text(format!(
+            "Unlinked '{from_name}' --[{relation}]--> '{to_name}' in memoir '{memoir_name}'"
+        )),
+        Err(e) => ToolResult::error(format!("failed to remove link: {e}")),
+    }
+}
+
 pub(crate) fn tool_memoir_inspect(
     store: &SqliteStore,
     args: &Value,
