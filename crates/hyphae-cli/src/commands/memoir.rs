@@ -204,9 +204,13 @@ pub(crate) fn dispatch(store: &SqliteStore, args: MemoirArgs) -> Result<()> {
             to,
             relation,
         } => cmd_memoir_link(store, memoir, from, to, relation),
-        MemoirCommand::Unlink { memoir, from, to, relation, json } => {
-            cmd_memoir_unlink(store, memoir, from, to, relation, json)
-        }
+        MemoirCommand::Unlink {
+            memoir,
+            from,
+            to,
+            relation,
+            json,
+        } => cmd_memoir_unlink(store, memoir, from, to, relation, json),
         MemoirCommand::Cluster { memoir, json } => cmd_memoir_cluster(store, memoir, json),
     }
 }
@@ -506,14 +510,21 @@ pub(crate) fn cmd_memoir_unlink(
         .ok_or_else(|| anyhow::anyhow!("memoir not found: {memoir}"))?;
     store.remove_link(&m.id, &from, &to, &relation)?;
     if json {
-        println!("{}", serde_json::json!({"status": "ok", "from": from, "to": to, "relation": relation}));
+        println!(
+            "{}",
+            serde_json::json!({"status": "ok", "from": from, "to": to, "relation": relation})
+        );
     } else {
         println!("✓ Unlinked '{from}' --[{relation}]--> '{to}' in memoir '{memoir}'");
     }
     Ok(())
 }
 
-pub(crate) fn cmd_memoir_cluster(store: &SqliteStore, memoir_name: String, json: bool) -> Result<()> {
+pub(crate) fn cmd_memoir_cluster(
+    store: &SqliteStore,
+    memoir_name: String,
+    json: bool,
+) -> Result<()> {
     use hyphae_store::memoir_community::cluster_memoir;
 
     let memoir = store

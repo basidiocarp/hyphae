@@ -56,8 +56,23 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
             description TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
-            consolidation_threshold INTEGER NOT NULL DEFAULT 50
+            consolidation_threshold INTEGER NOT NULL DEFAULT 50,
+            author TEXT NOT NULL DEFAULT '',
+            git_hash TEXT,
+            parent_version_id TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS memoir_versions (
+            version_id TEXT PRIMARY KEY,
+            memoir_id TEXT NOT NULL REFERENCES memoirs(id) ON DELETE CASCADE,
+            version_seq INTEGER NOT NULL,
+            author TEXT NOT NULL DEFAULT '',
+            git_hash TEXT,
+            diff_summary TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_memoir_versions_memoir ON memoir_versions(memoir_id, version_seq);
 
         CREATE TABLE IF NOT EXISTS concepts (
             id TEXT PRIMARY KEY,
@@ -886,8 +901,10 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         .unwrap_or(0)
         > 0;
     if !has_link_count {
-        tx.execute_batch("ALTER TABLE concept_links ADD COLUMN link_count INTEGER NOT NULL DEFAULT 1;")
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        tx.execute_batch(
+            "ALTER TABLE concept_links ADD COLUMN link_count INTEGER NOT NULL DEFAULT 1;",
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
     }
 
     // Artifact storage table — typed payloads from the artifact model
@@ -1012,6 +1029,24 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
     if !has_community_id {
         tx.execute_batch("ALTER TABLE concepts ADD COLUMN community_id TEXT;")
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    }
+
+    // Migration: add versioning columns to memoirs
+    let has_memoir_author: bool = tx
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('memoirs') WHERE name='author'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if !has_memoir_author {
+        tx.execute_batch(
+            "ALTER TABLE memoirs ADD COLUMN author TEXT NOT NULL DEFAULT '';
+             ALTER TABLE memoirs ADD COLUMN git_hash TEXT;
+             ALTER TABLE memoirs ADD COLUMN parent_version_id TEXT;",
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
     }
 
     tx.commit().map_err(|e| {

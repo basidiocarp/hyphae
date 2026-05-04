@@ -27,7 +27,7 @@ pub use error::{HyphaeError, HyphaeResult};
 pub use eviction::{DefaultEvictionPolicy, EvictionPolicy};
 #[cfg(feature = "embeddings")]
 pub use fastembed_embedder::FastEmbedder;
-pub use git_context::{GitContext, detect_git_context_from};
+pub use git_context::{GitContext, current_git_hash, detect_git_context_from};
 pub use http_embedder::HttpEmbedder;
 pub use identity::{
     BACKUP_EXPORT_SCHEMA_VERSION, BackupExportManifest, SCOPED_IDENTITY_SCHEMA_VERSION,
@@ -35,7 +35,9 @@ pub use identity::{
 };
 pub use ids::*;
 pub use llm_client::consolidate_via_llm;
-pub use memoir::{Concept, ConceptLink, Confidence, Label, Memoir, MemoirStats, Relation};
+pub use memoir::{
+    Concept, ConceptLink, Confidence, Label, Memoir, MemoirStats, MemoirVersion, Relation,
+};
 pub use memoir_store::{ConceptInput, LinkInput, MemoirStore, UpsertReport};
 pub use memory::{
     ConsolidationConfig, ConsolidationTopicRule, DEFAULT_CONSOLIDATION_THRESHOLD, Importance,

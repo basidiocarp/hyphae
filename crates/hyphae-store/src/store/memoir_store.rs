@@ -33,8 +33,8 @@ impl MemoirStore for SqliteStore {
     fn create_memoir(&self, memoir: Memoir) -> HyphaeResult<MemoirId> {
         self.conn
             .execute(
-                "INSERT INTO memoirs (id, name, description, created_at, updated_at, consolidation_threshold)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO memoirs (id, name, description, created_at, updated_at, consolidation_threshold, author, git_hash, parent_version_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 params![
                     memoir.id.as_ref(),
                     memoir.name,
@@ -42,9 +42,24 @@ impl MemoirStore for SqliteStore {
                     memoir.created_at.to_rfc3339(),
                     memoir.updated_at.to_rfc3339(),
                     memoir.consolidation_threshold,
+                    memoir.author,
+                    memoir.git_hash,
+                    memoir.parent_version_id,
                 ],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let version = hyphae_core::MemoirVersion {
+            version_id: hyphae_core::MemoryId::new().to_string(),
+            memoir_id: memoir.id.clone(),
+            version_seq: 1,
+            author: memoir.author.clone(),
+            git_hash: memoir.git_hash.clone(),
+            diff_summary: "memoir created".to_string(),
+            created_at: Utc::now(),
+        };
+        self.store_memoir_version(version)?;
+
         Ok(memoir.id)
     }
 
@@ -75,13 +90,17 @@ impl MemoirStore for SqliteStore {
             .conn
             .execute(
                 "UPDATE memoirs SET name = ?2, description = ?3, updated_at = ?4,
-                 consolidation_threshold = ?5 WHERE id = ?1",
+                 consolidation_threshold = ?5, author = ?6, git_hash = ?7, parent_version_id = ?8
+                 WHERE id = ?1",
                 params![
                     memoir.id.as_ref(),
                     memoir.name,
                     memoir.description,
                     memoir.updated_at.to_rfc3339(),
                     memoir.consolidation_threshold,
+                    memoir.author,
+                    memoir.git_hash,
+                    memoir.parent_version_id,
                 ],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
@@ -89,6 +108,27 @@ impl MemoirStore for SqliteStore {
         if changed == 0 {
             return Err(HyphaeError::NotFound(memoir.id.to_string()));
         }
+
+        let next_seq: u32 = self
+            .conn
+            .query_row(
+                "SELECT COALESCE(MAX(version_seq), 0) + 1 FROM memoir_versions WHERE memoir_id = ?1",
+                params![memoir.id.as_ref()],
+                |row| row.get(0),
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let version = hyphae_core::MemoirVersion {
+            version_id: hyphae_core::MemoryId::new().to_string(),
+            memoir_id: memoir.id.clone(),
+            version_seq: next_seq,
+            author: memoir.author.clone(),
+            git_hash: memoir.git_hash.clone(),
+            diff_summary: "memoir updated".to_string(),
+            created_at: Utc::now(),
+        };
+        self.store_memoir_version(version)?;
+
         Ok(())
     }
 
@@ -905,7 +945,11 @@ impl MemoirStore for SqliteStore {
         Ok(results)
     }
 
-    fn set_concept_community(&self, concept_id: &ConceptId, community_id: Option<&str>) -> HyphaeResult<()> {
+    fn set_concept_community(
+        &self,
+        concept_id: &ConceptId,
+        community_id: Option<&str>,
+    ) -> HyphaeResult<()> {
         let changed = self
             .conn
             .execute(
@@ -918,11 +962,89 @@ impl MemoirStore for SqliteStore {
         }
         Ok(())
     }
+
+    fn store_memoir_version(&self, version: hyphae_core::MemoirVersion) -> HyphaeResult<()> {
+        let created_at = version.created_at.to_rfc3339();
+        self.conn.execute(
+            "INSERT INTO memoir_versions (version_id, memoir_id, version_seq, author, git_hash, diff_summary, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                version.version_id,
+                version.memoir_id.as_ref(),
+                version.version_seq,
+                version.author,
+                version.git_hash,
+                version.diff_summary,
+                created_at,
+            ],
+        ).map_err(|e| HyphaeError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    fn get_memoir_history(
+        &self,
+        memoir_id: &MemoirId,
+        limit: usize,
+    ) -> HyphaeResult<Vec<hyphae_core::MemoirVersion>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT version_id, memoir_id, version_seq, author, git_hash, diff_summary, created_at
+             FROM memoir_versions WHERE memoir_id = ?1 ORDER BY version_seq DESC LIMIT ?2"
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![memoir_id.as_ref(), limit as i64], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u32>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                ))
+            })
+            .map_err(|e| HyphaeError::Database(e.to_string()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let versions = rows
+            .into_iter()
+            .map(
+                |(vid, mid, seq, author, git_hash, diff_summary, created_at_str)| {
+                    let created_at = created_at_str
+                        .parse::<chrono::DateTime<chrono::Utc>>()
+                        .unwrap_or_else(|_| {
+                            tracing::warn!(
+                                version_id = %vid,
+                                raw = %created_at_str,
+                                "failed to parse memoir_versions.created_at; substituting now()"
+                            );
+                            chrono::Utc::now()
+                        });
+                    hyphae_core::MemoirVersion {
+                        version_id: vid,
+                        memoir_id: hyphae_core::MemoirId::from(mid),
+                        version_seq: seq,
+                        author,
+                        git_hash,
+                        diff_summary,
+                        created_at,
+                    }
+                },
+            )
+            .collect::<Vec<_>>();
+
+        Ok(versions)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use hyphae_core::{Concept, ConceptId, ConceptInput, ConceptLink, Label, LinkInput, Memoir, MemoirStore, Relation};
+    use hyphae_core::{
+        Concept, ConceptId, ConceptInput, ConceptLink, Label, LinkInput, Memoir, MemoirStore,
+        Relation,
+    };
 
     use super::super::SqliteStore;
     use super::normalize_relation;
@@ -1273,8 +1395,16 @@ mod tests {
         let memoir_id = store.create_memoir(memoir).unwrap();
 
         let concepts = vec![
-            ConceptInput { name: "a".into(), labels: vec![], description: "concept a".into() },
-            ConceptInput { name: "b".into(), labels: vec![], description: "concept b".into() },
+            ConceptInput {
+                name: "a".into(),
+                labels: vec![],
+                description: "concept a".into(),
+            },
+            ConceptInput {
+                name: "b".into(),
+                labels: vec![],
+                description: "concept b".into(),
+            },
         ];
         store.upsert_concepts(&memoir_id, &concepts).unwrap();
 
@@ -1282,18 +1412,36 @@ mod tests {
         let b = store.get_concept_by_name(&memoir_id, "b").unwrap().unwrap();
 
         // Add two distinct links between the same pair
-        store.add_link(ConceptLink::new(a.id.clone(), b.id.clone(), Relation::DependsOn)).unwrap();
-        store.add_link(ConceptLink::new(a.id.clone(), b.id.clone(), Relation::RelatedTo)).unwrap();
+        store
+            .add_link(ConceptLink::new(
+                a.id.clone(),
+                b.id.clone(),
+                Relation::DependsOn,
+            ))
+            .unwrap();
+        store
+            .add_link(ConceptLink::new(
+                a.id.clone(),
+                b.id.clone(),
+                Relation::RelatedTo,
+            ))
+            .unwrap();
 
         let links = store.get_links_from(&a.id).unwrap();
         assert_eq!(links.len(), 2, "should have two links before unlink");
 
         // Remove only the depends_on link
-        store.remove_link(&memoir_id, "a", "b", "depends_on").unwrap();
+        store
+            .remove_link(&memoir_id, "a", "b", "depends_on")
+            .unwrap();
 
         let remaining = store.get_links_from(&a.id).unwrap();
         assert_eq!(remaining.len(), 1, "should have one link after unlink");
-        assert_eq!(remaining[0].relation, Relation::RelatedTo, "related_to should survive");
+        assert_eq!(
+            remaining[0].relation,
+            Relation::RelatedTo,
+            "related_to should survive"
+        );
     }
 
     #[test]
@@ -1302,8 +1450,16 @@ mod tests {
         let memoir = Memoir::new("unlink_err".into(), "".into());
         let memoir_id = store.create_memoir(memoir).unwrap();
         let concepts = vec![
-            ConceptInput { name: "x".into(), labels: vec![], description: "".into() },
-            ConceptInput { name: "y".into(), labels: vec![], description: "".into() },
+            ConceptInput {
+                name: "x".into(),
+                labels: vec![],
+                description: "".into(),
+            },
+            ConceptInput {
+                name: "y".into(),
+                labels: vec![],
+                description: "".into(),
+            },
         ];
         store.upsert_concepts(&memoir_id, &concepts).unwrap();
 
@@ -1322,7 +1478,11 @@ mod tests {
         let memoir = Memoir::new("test".to_string(), "".to_string());
         store.create_memoir(memoir.clone()).unwrap();
 
-        let concept = Concept::new(memoir.id.clone(), "Alpha".to_string(), "original".to_string());
+        let concept = Concept::new(
+            memoir.id.clone(),
+            "Alpha".to_string(),
+            "original".to_string(),
+        );
         store.add_concept(concept.clone()).unwrap();
 
         // Refine a few times to bump revision (starts at 1)
@@ -1333,10 +1493,15 @@ mod tests {
         assert_eq!(before.revision, 3); // 1 initial + 2 refines
 
         // Consolidate
-        store.consolidate_concept_definition(&concept.id, "consolidated summary").unwrap();
+        store
+            .consolidate_concept_definition(&concept.id, "consolidated summary")
+            .unwrap();
 
         let after = store.get_concept(&concept.id).unwrap().unwrap();
-        assert_eq!(after.revision, 0, "revision should reset to 0 after consolidation");
+        assert_eq!(
+            after.revision, 0,
+            "revision should reset to 0 after consolidation"
+        );
         assert_eq!(after.definition, "consolidated summary");
     }
 

@@ -18,6 +18,11 @@ pub fn detect_git_context_from(cwd: Option<&Path>) -> GitContext {
     }
 }
 
+/// Returns the current git HEAD commit hash, or None if not in a git repo.
+pub fn current_git_hash(cwd: Option<&Path>) -> Option<String> {
+    git_output(["rev-parse", "HEAD"], cwd).filter(|s| !s.is_empty())
+}
+
 fn git_output<const N: usize>(args: [&str; N], cwd: Option<&Path>) -> Option<String> {
     let mut command = Command::new("git");
     command.args(args);

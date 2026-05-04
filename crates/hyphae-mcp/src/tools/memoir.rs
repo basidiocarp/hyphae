@@ -5,8 +5,9 @@ use serde_json::{Value, json};
 use spore::logging::workflow_span;
 
 use hyphae_core::{
-    Concept, ConceptLink, Importance, Label, Memoir, Memory, MemoryId, MemoryStore, MemoirStore,
-    Relation, consolidate_via_llm, memoir_store::{ConceptInput, LinkInput},
+    Concept, ConceptLink, Importance, Label, Memoir, MemoirStore, Memory, MemoryId, MemoryStore,
+    Relation, consolidate_via_llm,
+    memoir_store::{ConceptInput, LinkInput},
 };
 use hyphae_store::SqliteStore;
 
@@ -657,7 +658,10 @@ pub(crate) fn tool_memoir_inspect(
                 .find(|c| c.id == link.target_id)
                 .map(|c| c.name.as_str())
                 .unwrap_or("?");
-            output.push_str(&format!("  {src} --{}[{}]--> {tgt}\n", link.relation, link.link_count));
+            output.push_str(&format!(
+                "  {src} --{}[{}]--> {tgt}\n",
+                link.relation, link.link_count
+            ));
         }
     }
 
@@ -1237,6 +1241,56 @@ fn query_structure(store: &SqliteStore, concept: &Concept) -> Result<Value, Stri
         "concepts": concepts_json,
         "links": links_json,
     }))
+}
+
+pub(crate) fn tool_memoir_history(
+    store: &SqliteStore,
+    args: &Value,
+    trace: &ToolTraceContext,
+) -> ToolResult {
+    let memoir_name = match validate_required_string(args, "memoir") {
+        Ok(n) => n,
+        Err(e) => return e,
+    };
+    let limit = get_bounded_i64(args, "limit", 20, 1, 1000) as usize;
+    let workflow_context = workflow_span_context(trace, None, Some(memoir_name));
+    let _workflow_span = workflow_span("memoir_history", &workflow_context).entered();
+
+    let memoir = match resolve_memoir(store, memoir_name) {
+        Ok(m) => m,
+        Err(e) => return e,
+    };
+
+    let versions = match store.get_memoir_history(&memoir.id, limit) {
+        Ok(v) => v,
+        Err(e) => return ToolResult::error(format!("failed to get memoir history: {e}")),
+    };
+
+    if versions.is_empty() {
+        return ToolResult::text(format!("No version history for memoir '{memoir_name}'"));
+    }
+
+    let mut output = format!("Version history for memoir '{memoir_name}':\n\n");
+    for (idx, version) in versions.iter().enumerate() {
+        output.push_str(&format!(
+            "[{}] v{} by {} at {}\n",
+            idx + 1,
+            version.version_seq,
+            if version.author.is_empty() {
+                "(unknown)".to_string()
+            } else {
+                version.author.clone()
+            },
+            version.created_at.format("%Y-%m-%d %H:%M:%S UTC")
+        ));
+        output.push_str(&format!("    {}\n", version.diff_summary));
+        if let Some(git_hash) = &version.git_hash {
+            output.push_str(&format!("    git: {}\n", git_hash));
+        }
+        output.push('\n');
+    }
+
+    ToolResult::text(output)
 }
 
 #[cfg(test)]

@@ -71,7 +71,8 @@ pub fn emit(event: MemoirEvent) {
 /// Start the SSE HTTP server in a background tokio runtime thread.
 /// Returns the bound SocketAddr so callers can write it to the endpoint descriptor.
 pub fn start_events_server(port: u16) -> anyhow::Result<SocketAddr> {
-    let bus = BUS.get()
+    let bus = BUS
+        .get()
         .ok_or_else(|| anyhow::anyhow!("MemoirEventBus not initialized; call init_bus() first"))?
         .clone();
 
@@ -87,34 +88,35 @@ pub fn start_events_server(port: u16) -> anyhow::Result<SocketAddr> {
 
         rt.block_on(async move {
             let result = async {
-                let listener = tokio::net::TcpListener::bind(
-                    SocketAddr::from(([127, 0, 0, 1], port))
-                ).await?;
+                let listener =
+                    tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port))).await?;
                 let addr = listener.local_addr()?;
 
-                let router = Router::new().route("/memoir-events", get(move || {
-                    let rx = bus.subscribe();
-                    let stream = BroadcastStream::new(rx).filter_map(|result| async move {
-                        match result {
-                            Ok(event) => {
-                                let data = serde_json::to_string(&event).ok()?;
-                                Some(Ok::<Event, Infallible>(Event::default().data(data)))
+                let router = Router::new().route(
+                    "/memoir-events",
+                    get(move || {
+                        let rx = bus.subscribe();
+                        let stream = BroadcastStream::new(rx).filter_map(|result| async move {
+                            match result {
+                                Ok(event) => {
+                                    let data = serde_json::to_string(&event).ok()?;
+                                    Some(Ok::<Event, Infallible>(Event::default().data(data)))
+                                }
+                                Err(BroadcastStreamRecvError::Lagged(n)) => {
+                                    tracing::warn!("SSE subscriber lagged, dropped {n} events");
+                                    None
+                                }
                             }
-                            Err(BroadcastStreamRecvError::Lagged(n)) => {
-                                tracing::warn!("SSE subscriber lagged, dropped {n} events");
-                                None
-                            }
-                        }
-                    });
-                    async move {
-                        Sse::new(stream).keep_alive(KeepAlive::default())
-                    }
-                }));
+                        });
+                        async move { Sse::new(stream).keep_alive(KeepAlive::default()) }
+                    }),
+                );
 
                 addr_tx.send(Ok(addr)).ok();
                 axum::serve(listener, router).await?;
                 Ok::<(), anyhow::Error>(())
-            }.await;
+            }
+            .await;
 
             if let Err(e) = result {
                 addr_tx.send(Err(e)).ok();
@@ -122,5 +124,7 @@ pub fn start_events_server(port: u16) -> anyhow::Result<SocketAddr> {
         });
     });
 
-    addr_rx.recv().map_err(|_| anyhow::anyhow!("SSE server thread died"))?
+    addr_rx
+        .recv()
+        .map_err(|_| anyhow::anyhow!("SSE server thread died"))?
 }

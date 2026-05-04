@@ -1,6 +1,6 @@
 use crate::error::HyphaeResult;
 use crate::ids::{ConceptId, LinkId, MemoirId, MemoryId};
-use crate::memoir::{Concept, ConceptLink, Label, Memoir, MemoirStats, Relation};
+use crate::memoir::{Concept, ConceptLink, Label, Memoir, MemoirStats, MemoirVersion, Relation};
 
 // ===========================================================================
 // Bulk-upsert input types
@@ -114,7 +114,11 @@ pub trait MemoirStore {
     fn list_all_links(&self, memoir_id: &MemoirId) -> HyphaeResult<Vec<ConceptLink>>;
 
     /// Set or clear the community ID for a concept.
-    fn set_concept_community(&self, concept_id: &ConceptId, community_id: Option<&str>) -> HyphaeResult<()>;
+    fn set_concept_community(
+        &self,
+        concept_id: &ConceptId,
+        community_id: Option<&str>,
+    ) -> HyphaeResult<()>;
 
     // --- Stats ---
     fn memoir_stats(&self, memoir_id: &MemoirId) -> HyphaeResult<MemoirStats>;
@@ -141,4 +145,12 @@ pub trait MemoirStore {
     /// `keep_names`.  Cascades to orphaned links via `ON DELETE CASCADE`.
     /// Returns the number of concepts deleted.
     fn prune_concepts(&self, memoir_id: &MemoirId, keep_names: &[String]) -> HyphaeResult<usize>;
+
+    // --- Memoir versioning ---
+    fn store_memoir_version(&self, version: MemoirVersion) -> HyphaeResult<()>;
+    fn get_memoir_history(
+        &self,
+        memoir_id: &MemoirId,
+        limit: usize,
+    ) -> HyphaeResult<Vec<MemoirVersion>>;
 }

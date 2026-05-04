@@ -182,11 +182,13 @@ pub(crate) fn row_to_memoir(row: &rusqlite::Row) -> rusqlite::Result<Memoir> {
         created_at: parse_dt(&row.get::<_, String>(3)?),
         updated_at: parse_dt(&row.get::<_, String>(4)?),
         consolidation_threshold: row.get::<_, u32>(5)?,
+        author: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
+        git_hash: row.get::<_, Option<String>>(7)?,
+        parent_version_id: row.get::<_, Option<String>>(8)?,
     })
 }
 
-pub(crate) const MEMOIR_COLS: &str =
-    "id, name, description, created_at, updated_at, consolidation_threshold";
+pub(crate) const MEMOIR_COLS: &str = "id, name, description, created_at, updated_at, consolidation_threshold, author, git_hash, parent_version_id";
 
 pub(crate) fn row_to_concept(row: &rusqlite::Row) -> rusqlite::Result<Concept> {
     let id: ConceptId = row.get::<_, String>(0)?.into();
@@ -246,7 +248,8 @@ pub(crate) fn row_to_link(row: &rusqlite::Row) -> rusqlite::Result<ConceptLink> 
     })
 }
 
-pub(crate) const LINK_COLS: &str = "id, source_id, target_id, relation, weight, link_count, created_at";
+pub(crate) const LINK_COLS: &str =
+    "id, source_id, target_id, relation, weight, link_count, created_at";
 
 // ---------------------------------------------------------------------------
 // Document / Chunk helpers

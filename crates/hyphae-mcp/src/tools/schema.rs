@@ -618,6 +618,32 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
             }
         }),
         json!({
+            "name": "hyphae_memoir_history",
+            "description": "View the version history of a memoir. Shows recent changes with author, git hash, and summary.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "memoir": {
+                        "type": "string",
+                        "description": "Name of the memoir"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 20,
+                        "minimum": 1,
+                        "maximum": 1000,
+                        "description": "Number of versions to return"
+                    }
+                },
+                "required": ["memoir"]
+            },
+            "annotations": {
+                "readOnlyHint": true,
+                "destructiveHint": false,
+                "idempotentHint": true
+            }
+        }),
+        json!({
             "name": "hyphae_import_code_graph",
             "description": "Import a code symbol graph from Rhizome (or similar tools) into Hyphae as a memoir. Creates or updates the memoir 'code:{project}' with concepts (symbols) and links (relationships). Idempotent — safe to re-import after incremental changes.",
             "inputSchema": {

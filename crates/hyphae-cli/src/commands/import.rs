@@ -321,6 +321,9 @@ fn archive_memoir_to_domain(rec: &ArchiveMemoirRecord) -> Result<Memoir> {
         created_at,
         updated_at,
         consolidation_threshold: 50,
+        author: String::new(),
+        git_hash: None,
+        parent_version_id: None,
     })
 }
 

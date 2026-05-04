@@ -25,9 +25,10 @@ pub fn cluster_memoir(store: &SqliteStore, memoir_id: &MemoirId) -> HyphaeResult
         node_index.insert(&concept.id, idx);
     }
     for link in &links {
-        if let (Some(&src), Some(&tgt)) =
-            (node_index.get(&link.source_id), node_index.get(&link.target_id))
-        {
+        if let (Some(&src), Some(&tgt)) = (
+            node_index.get(&link.source_id),
+            node_index.get(&link.target_id),
+        ) {
             graph.add_edge(src, tgt, link.link_count);
         }
     }

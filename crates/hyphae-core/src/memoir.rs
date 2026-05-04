@@ -51,6 +51,12 @@ pub struct Memoir {
     pub updated_at: DateTime<Utc>,
     /// Reserved for future use.
     pub consolidation_threshold: u32,
+    /// Agent that last modified this memoir. Empty string if unknown.
+    pub author: String,
+    /// Git HEAD hash at the time of the last write. None outside git repos.
+    pub git_hash: Option<String>,
+    /// Version ID of the immediately preceding write, forming a lineage chain.
+    pub parent_version_id: Option<String>,
 }
 
 impl Memoir {
@@ -63,8 +69,23 @@ impl Memoir {
             created_at: now,
             updated_at: now,
             consolidation_threshold: 50,
+            author: String::new(),
+            git_hash: None,
+            parent_version_id: None,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MemoirVersion {
+    pub version_id: String,
+    pub memoir_id: MemoirId,
+    pub version_seq: u32,
+    pub author: String,
+    pub git_hash: Option<String>,
+    /// Human-readable summary of what changed (e.g. "description updated").
+    pub diff_summary: String,
+    pub created_at: DateTime<Utc>,
 }
 
 // ===========================================================================

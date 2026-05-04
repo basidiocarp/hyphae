@@ -6,9 +6,15 @@
 ///   HYPHAE_LLM_MODEL — model name, e.g. gpt-4o-mini or llama3
 ///   HYPHAE_LLM_API_KEY (optional) — sent as Bearer token
 pub fn consolidate_via_llm(name: &str, definition: &str) -> Option<String> {
-    let base_url = std::env::var("HYPHAE_LLM_URL").ok().filter(|s| !s.is_empty())?;
-    let model = std::env::var("HYPHAE_LLM_MODEL").ok().filter(|s| !s.is_empty())?;
-    let api_key = std::env::var("HYPHAE_LLM_API_KEY").ok().filter(|s| !s.is_empty());
+    let base_url = std::env::var("HYPHAE_LLM_URL")
+        .ok()
+        .filter(|s| !s.is_empty())?;
+    let model = std::env::var("HYPHAE_LLM_MODEL")
+        .ok()
+        .filter(|s| !s.is_empty())?;
+    let api_key = std::env::var("HYPHAE_LLM_API_KEY")
+        .ok()
+        .filter(|s| !s.is_empty());
 
     let timeout_secs: u64 = std::env::var("HYPHAE_LLM_TIMEOUT_SECS")
         .ok()
@@ -36,15 +42,16 @@ pub fn consolidate_via_llm(name: &str, definition: &str) -> Option<String> {
         .timeout_global(Some(std::time::Duration::from_secs(timeout_secs)))
         .build();
     let agent = ureq::Agent::new_with_config(config);
-    let mut req = agent.post(&endpoint).header("Content-Type", "application/json");
+    let mut req = agent
+        .post(&endpoint)
+        .header("Content-Type", "application/json");
     if let Some(key) = api_key {
         req = req.header("Authorization", &format!("Bearer {key}"));
     }
 
     let resp = req.send_json(&body).ok()?;
 
-    let json: serde_json::Value =
-        serde_json::from_reader(resp.into_body().as_reader()).ok()?;
+    let json: serde_json::Value = serde_json::from_reader(resp.into_body().as_reader()).ok()?;
 
     json.get("choices")
         .and_then(|c| c.as_array())

@@ -1,6 +1,6 @@
+pub mod memoir_community;
 mod schema;
 mod store;
-pub mod memoir_community;
 
 pub use hyphae_core::ChunkStore;
 pub use hyphae_core::{Artifact, ArtifactType};
