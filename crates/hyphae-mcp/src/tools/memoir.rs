@@ -473,20 +473,6 @@ pub(crate) fn tool_memoir_link(
         Err(e) => return ToolResult::error(format!("db error: {e}")),
     };
 
-    // Reject duplicate links: same (source, target, relation) triple.
-    let existing_links = match store.get_links_from(&from.id) {
-        Ok(links) => links,
-        Err(e) => return ToolResult::error(format!("db error: {e}")),
-    };
-    if existing_links
-        .iter()
-        .any(|l| l.target_id == to.id && l.relation == relation)
-    {
-        return ToolResult::text(format!(
-            "Link already exists: {from_name} --{relation}--> {to_name}"
-        ));
-    }
-
     let link = ConceptLink::new(from.id, to.id, relation);
     match store.add_link(link) {
         Ok(id) => ToolResult::text(format!(
@@ -563,7 +549,7 @@ pub(crate) fn tool_memoir_inspect(
                 .find(|c| c.id == link.target_id)
                 .map(|c| c.name.as_str())
                 .unwrap_or("?");
-            output.push_str(&format!("  {src} --{}--> {tgt}\n", link.relation));
+            output.push_str(&format!("  {src} --{}[{}]--> {tgt}\n", link.relation, link.link_count));
         }
     }
 

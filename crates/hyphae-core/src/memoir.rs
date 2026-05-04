@@ -260,6 +260,7 @@ pub struct ConceptLink {
     pub target_id: ConceptId,
     pub relation: Relation,
     pub weight: Weight,
+    pub link_count: u32,
     pub created_at: DateTime<Utc>,
 }
 
@@ -271,6 +272,7 @@ impl ConceptLink {
             target_id,
             relation,
             weight: Weight::default(),
+            link_count: 1,
             created_at: Utc::now(),
         }
     }

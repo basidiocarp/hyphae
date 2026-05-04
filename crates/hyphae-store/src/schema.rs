@@ -83,6 +83,7 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
             target_id TEXT NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
             relation TEXT NOT NULL,
             weight REAL NOT NULL DEFAULT 1.0,
+            link_count INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL,
             UNIQUE(source_id, target_id, relation),
             CHECK(source_id != target_id)
@@ -872,6 +873,20 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         > 0;
     if !has_chunk_strategy {
         tx.execute_batch("ALTER TABLE chunks ADD COLUMN chunk_strategy TEXT;")
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    }
+
+    // Migration: add link_count column to concept_links
+    let has_link_count: bool = tx
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('concept_links') WHERE name='link_count'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if !has_link_count {
+        tx.execute_batch("ALTER TABLE concept_links ADD COLUMN link_count INTEGER NOT NULL DEFAULT 1;")
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
     }
 

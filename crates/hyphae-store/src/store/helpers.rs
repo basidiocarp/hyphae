@@ -240,11 +240,12 @@ pub(crate) fn row_to_link(row: &rusqlite::Row) -> rusqlite::Result<ConceptLink> 
         target_id: row.get::<_, String>(2)?.into(),
         relation,
         weight: Weight::new_clamped(row.get::<_, f32>(4)?),
-        created_at: parse_dt(&row.get::<_, String>(5)?),
+        link_count: row.get::<_, u32>(5)?,
+        created_at: parse_dt(&row.get::<_, String>(6)?),
     })
 }
 
-pub(crate) const LINK_COLS: &str = "id, source_id, target_id, relation, weight, created_at";
+pub(crate) const LINK_COLS: &str = "id, source_id, target_id, relation, weight, link_count, created_at";
 
 // ---------------------------------------------------------------------------
 // Document / Chunk helpers

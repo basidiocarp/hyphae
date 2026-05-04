@@ -395,8 +395,9 @@ impl MemoirStore for SqliteStore {
         let normalized_relation = normalize_relation(&link.relation.to_string());
         self.conn
             .execute(
-                "INSERT INTO concept_links (id, source_id, target_id, relation, weight, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO concept_links (id, source_id, target_id, relation, weight, link_count, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6)
+                 ON CONFLICT(source_id, target_id, relation) DO UPDATE SET link_count = link_count + 1",
                 params![
                     link.id.as_ref(),
                     link.source_id.as_ref(),
