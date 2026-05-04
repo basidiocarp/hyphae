@@ -10,6 +10,7 @@ use hyphae_core::{
 };
 use hyphae_store::SqliteStore;
 
+use crate::memoir_events::{MemoirEvent, MemoirEventKind, emit as emit_memoir_event};
 use crate::protocol::ToolResult;
 
 use super::{
@@ -210,6 +211,12 @@ pub(crate) fn tool_memoir_add_concept(
             if let Err(e) = upsert_result {
                 tracing::debug!("failed to write concept to memory store: {e}");
             }
+
+            emit_memoir_event(MemoirEvent {
+                kind: MemoirEventKind::ConceptAdded,
+                memoir_id: memoir_id_for_memory.to_string(),
+            });
+
             ToolResult::text(format!(
                 "Added concept '{name}' to memoir '{memoir_name}': {id}"
             ))
@@ -279,6 +286,11 @@ pub(crate) fn tool_memoir_refine(
     if let Err(e) = upsert_result {
         tracing::debug!("failed to write refined concept to memory store: {e}");
     }
+
+    emit_memoir_event(MemoirEvent {
+        kind: MemoirEventKind::ConceptRefined,
+        memoir_id: memoir.id.to_string(),
+    });
 
     ToolResult::text(format!(
         "Refined '{name}' (r{}, confidence={:.2})",
@@ -475,9 +487,15 @@ pub(crate) fn tool_memoir_link(
 
     let link = ConceptLink::new(from.id, to.id, relation);
     match store.add_link(link) {
-        Ok(id) => ToolResult::text(format!(
-            "Linked: {from_name} --{relation}--> {to_name} ({id})"
-        )),
+        Ok(id) => {
+            emit_memoir_event(MemoirEvent {
+                kind: MemoirEventKind::LinkAdded,
+                memoir_id: memoir.id.to_string(),
+            });
+            ToolResult::text(format!(
+                "Linked: {from_name} --{relation}--> {to_name} ({id})"
+            ))
+        }
         Err(e) => ToolResult::error(format!("failed to link: {e}")),
     }
 }
@@ -512,9 +530,15 @@ pub(crate) fn tool_memoir_unlink(
     };
 
     match store.remove_link(&memoir.id, from_name, to_name, relation) {
-        Ok(()) => ToolResult::text(format!(
-            "Unlinked '{from_name}' --[{relation}]--> '{to_name}' in memoir '{memoir_name}'"
-        )),
+        Ok(()) => {
+            emit_memoir_event(MemoirEvent {
+                kind: MemoirEventKind::LinkRemoved,
+                memoir_id: memoir.id.to_string(),
+            });
+            ToolResult::text(format!(
+                "Unlinked '{from_name}' --[{relation}]--> '{to_name}' in memoir '{memoir_name}'"
+            ))
+        }
         Err(e) => ToolResult::error(format!("failed to remove link: {e}")),
     }
 }

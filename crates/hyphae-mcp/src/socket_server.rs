@@ -35,11 +35,11 @@ const CAPABILITY_ID: &str = "memory.store.v1";
 const PING_METHOD: &str = "PING";
 
 /// Write the `local-service-endpoint-v1` descriptor to the hyphae config dir.
-fn write_endpoint_descriptor(socket_path: &Path) -> anyhow::Result<()> {
+fn write_endpoint_descriptor(socket_path: &Path, events_url: Option<&str>) -> anyhow::Result<()> {
     let config_dir = spore::paths::config_dir("hyphae");
     std::fs::create_dir_all(&config_dir)?;
     let descriptor_path = config_dir.join("hyphae.endpoint.json");
-    let descriptor = json!({
+    let mut descriptor = json!({
         "schema_version": "1.0",
         "transport": "unix-socket",
         "endpoint": socket_path.to_string_lossy(),
@@ -50,6 +50,9 @@ fn write_endpoint_descriptor(socket_path: &Path) -> anyhow::Result<()> {
             "timeout_ms": 1000
         }
     });
+    if let Some(url) = events_url {
+        descriptor["events_url"] = serde_json::Value::String(url.to_string());
+    }
     std::fs::write(&descriptor_path, serde_json::to_string_pretty(&descriptor)?)?;
     Ok(())
 }
@@ -201,7 +204,20 @@ pub fn run_socket_server(
         )
     })?;
 
-    write_endpoint_descriptor(&socket_path)?;
+    // Initialize event bus and start SSE server.
+    crate::memoir_events::init_bus();
+    let events_url = match crate::memoir_events::start_events_server(0) {
+        Ok(addr) => {
+            tracing::info!(addr = %addr, "memoir SSE server ready");
+            Some(format!("http://{addr}/memoir-events"))
+        }
+        Err(e) => {
+            tracing::warn!("memoir SSE server failed to start: {e}");
+            None
+        }
+    };
+
+    write_endpoint_descriptor(&socket_path, events_url.as_deref())?;
 
     tracing::info!(
         socket = %socket_path.display(),
@@ -256,7 +272,7 @@ mod tests {
             std::env::set_var("XDG_CONFIG_HOME", tmp.path());
         }
 
-        write_endpoint_descriptor(&socket_path).expect("descriptor should write");
+        write_endpoint_descriptor(&socket_path, None).expect("descriptor should write");
 
         let descriptor_path = spore::paths::config_dir("hyphae").join("hyphae.endpoint.json");
         assert!(descriptor_path.exists(), "descriptor file should exist");

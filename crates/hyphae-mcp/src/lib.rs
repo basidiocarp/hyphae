@@ -1,4 +1,5 @@
 pub mod memory_protocol;
+pub mod memoir_events;
 pub mod protocol;
 pub mod server;
 #[cfg(unix)]
