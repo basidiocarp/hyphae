@@ -5,8 +5,8 @@ use serde_json::{Value, json};
 use spore::logging::workflow_span;
 
 use hyphae_core::{
-    Concept, ConceptLink, Label, Memoir, MemoirStore, Relation,
-    memoir_store::{ConceptInput, LinkInput},
+    Concept, ConceptLink, Importance, Label, Memoir, Memory, MemoryId, MemoryStore, MemoirStore,
+    Relation, memoir_store::{ConceptInput, LinkInput},
 };
 use hyphae_store::SqliteStore;
 
@@ -179,6 +179,7 @@ pub(crate) fn tool_memoir_add_concept(
         Err(e) => return e,
     };
 
+    let memoir_id_for_memory = memoir.id.clone();
     let mut concept = Concept::new(memoir.id, name.into(), definition.into());
 
     if let Some(labels_str) = get_str(args, "labels") {
@@ -189,9 +190,30 @@ pub(crate) fn tool_memoir_add_concept(
     }
 
     match store.add_concept(concept) {
-        Ok(id) => ToolResult::text(format!(
-            "Added concept '{name}' to memoir '{memoir_name}': {id}"
-        )),
+        Ok(id) => {
+            // Dual-write to memory store so memoir concepts appear in hyphae search results.
+            // Use a stable ID derived from memoir_id + concept_name so updates upsert
+            // the same memory entry. This is best-effort: log on error, but do not fail
+            // the tool call.
+            let memory_id: MemoryId = format!("memoir-{}-{}", memoir_id_for_memory, name).into();
+            let mut memory = Memory::new(
+                format!("memoir/{}", memoir_id_for_memory),
+                format!("{}: {}", name, definition),
+                Importance::High,
+            );
+            memory.id = memory_id.clone();
+            let upsert_result = match store.get(&memory_id) {
+                Ok(Some(_)) => store.update(&memory),
+                Ok(None) => store.store(memory).map(|_| ()),
+                Err(e) => Err(e),
+            };
+            if let Err(e) = upsert_result {
+                tracing::debug!("failed to write concept to memory store: {e}");
+            }
+            ToolResult::text(format!(
+                "Added concept '{name}' to memoir '{memoir_name}': {id}"
+            ))
+        }
         Err(e) => ToolResult::error(format!("failed to add concept: {e}")),
     }
 }
@@ -238,6 +260,25 @@ pub(crate) fn tool_memoir_refine(
         Ok(Some(c)) => c,
         _ => return ToolResult::text(format!("Refined concept '{name}'")),
     };
+
+    // Dual-write to memory store to update the concept's memory entry with the new definition.
+    // Use the same stable ID as add_concept so this upserts the existing entry.
+    // This is best-effort: log on error, but do not fail the tool call.
+    let memory_id: MemoryId = format!("memoir-{}-{}", memoir.id, name).into();
+    let mut memory = Memory::new(
+        format!("memoir/{}", memoir.id),
+        format!("{}: {}", name, definition),
+        Importance::High,
+    );
+    memory.id = memory_id.clone();
+    let upsert_result = match store.get(&memory_id) {
+        Ok(Some(_)) => store.update(&memory),
+        Ok(None) => store.store(memory).map(|_| ()),
+        Err(e) => Err(e),
+    };
+    if let Err(e) = upsert_result {
+        tracing::debug!("failed to write refined concept to memory store: {e}");
+    }
 
     ToolResult::text(format!(
         "Refined '{name}' (r{}, confidence={:.2})",
