@@ -208,6 +208,25 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         CREATE INDEX IF NOT EXISTS idx_chunks_document_id ON chunks(document_id);
         CREATE INDEX IF NOT EXISTS idx_chunks_source_path ON chunks(source_path);
         CREATE INDEX IF NOT EXISTS idx_documents_project_source ON documents(project, source_path);
+
+        -- Knowledge Domain Manifest Layer
+        CREATE TABLE IF NOT EXISTS knowledge_domains (
+            id TEXT PRIMARY KEY,
+            description TEXT NOT NULL DEFAULT '',
+            applies_when TEXT NOT NULL DEFAULT '[]',
+            required_inputs TEXT NOT NULL DEFAULT '[]',
+            query_template TEXT,
+            authority TEXT NOT NULL DEFAULT 'primary',
+            freshness_ttl_secs INTEGER,
+            boundary_note TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_knowledge_domains_created_at
+            ON knowledge_domains(created_at);
+        CREATE INDEX IF NOT EXISTS idx_knowledge_domains_authority
+            ON knowledge_domains(authority);
         ",
     )
     .map_err(|e| HyphaeError::Database(e.to_string()))?;

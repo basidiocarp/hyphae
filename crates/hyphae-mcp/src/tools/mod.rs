@@ -9,6 +9,7 @@ use crate::protocol::ToolResult;
 mod artifact;
 pub(crate) mod context;
 mod dispatch;
+mod domain;
 mod ingest;
 mod memoir;
 mod memory;

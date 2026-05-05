@@ -105,6 +105,26 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                         "type": "string",
                         "enum": ["semantic", "lexical", "fts", "keyword", "graph", "summary", "code", "hybrid"],
                         "description": "Retrieval strategy. One of: semantic (embedding similarity), lexical (FTS keyword), graph (memoir concept traversal), summary (one result per topic), code (keyword biased to code topics), hybrid (FTS + semantic rerank, default). Omitting defaults to hybrid."
+                    },
+                    "query_context": {
+                        "type": "object",
+                        "description": "Optional domain-scoped context. If domain_hint matches a known domain, applies domain rules before searching.",
+                        "properties": {
+                            "domain_hint": {
+                                "type": "string",
+                                "description": "Identifier of a knowledge domain to check applicability rules"
+                            },
+                            "known_inputs": {
+                                "type": "object",
+                                "description": "Known input values to check against domain requirements"
+                            },
+                            "min_confidence": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1,
+                                "description": "Minimum confidence threshold for results"
+                            }
+                        }
                     }
                 },
                 "required": ["query"]
@@ -1276,6 +1296,92 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     "description": "Maximum number of lessons to extract"
                 }
             }
+        },
+        "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true
+        }
+    }));
+
+    // Knowledge domain tools
+    tools.push(json!({
+        "name": "hyphae_domain_upsert",
+        "description": "Create or update a knowledge domain that describes when and how to recall information with specific applicability rules and required inputs",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "Unique identifier for this domain"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Human-readable description of what this domain covers"
+                },
+                "applies_when": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "field": { "type": "string" },
+                            "op": {
+                                "type": "string",
+                                "enum": ["exists", "equals", "contains", "greater_than"]
+                            },
+                            "value": { "type": ["string", "number", "boolean"] }
+                        },
+                        "required": ["field", "op", "value"]
+                    },
+                    "description": "Applicability rules that must be satisfied (empty = always applicable)"
+                },
+                "required_inputs": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string" },
+                            "description": { "type": "string" },
+                            "required": { "type": "boolean" }
+                        },
+                        "required": ["name", "description", "required"]
+                    },
+                    "description": "Input specifications that consumers must provide"
+                },
+                "query_template": {
+                    "type": "string",
+                    "description": "Optional query template for domain-specific searches"
+                },
+                "authority": {
+                    "type": "string",
+                    "enum": ["primary", "derived", "historical"],
+                    "default": "primary",
+                    "description": "Authority level of this domain"
+                },
+                "freshness_ttl_secs": {
+                    "type": "integer",
+                    "description": "Time-to-live for domain knowledge in seconds (optional)"
+                },
+                "boundary_note": {
+                    "type": "string",
+                    "description": "Note about the scope or boundaries of this domain"
+                }
+            },
+            "required": ["id", "description"]
+        },
+        "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true
+        }
+    }));
+
+    tools.push(json!({
+        "name": "hyphae_domain_list",
+        "description": "List all defined knowledge domains",
+        "inputSchema": {
+            "type": "object",
+            "properties": {}
         },
         "annotations": {
             "readOnlyHint": true,

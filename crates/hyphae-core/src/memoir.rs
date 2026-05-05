@@ -138,6 +138,69 @@ impl FromStr for MemoirSource {
 }
 
 // ===========================================================================
+// Knowledge Domain Layer
+// ===========================================================================
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleOp {
+    Exists,
+    Equals,
+    Contains,
+    GreaterThan,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApplicabilityRule {
+    pub field: String,
+    pub op: RuleOp,
+    pub value: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InputSpec {
+    pub name: String,
+    pub description: String,
+    pub required: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KnowledgeDomain {
+    pub id: String,
+    pub description: String,
+    pub applies_when: Vec<ApplicabilityRule>,
+    pub required_inputs: Vec<InputSpec>,
+    pub query_template: Option<String>,
+    pub authority: Authority,
+    pub freshness_ttl_secs: Option<u64>,
+    pub boundary_note: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QueryContext {
+    pub domain_hint: Option<String>,
+    pub known_inputs: std::collections::HashMap<String, serde_json::Value>,
+    pub min_confidence: Option<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum RecallResult {
+    Results {
+        results: Vec<serde_json::Value>,
+        domain: Option<String>,
+    },
+    NeedsInputs {
+        missing: Vec<String>,
+        domain: String,
+    },
+    DomainNotApplicable {
+        domain: String,
+        reason: String,
+    },
+}
+
+// ===========================================================================
 // Memoir
 // ===========================================================================
 

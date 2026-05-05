@@ -3,8 +3,8 @@ use serde_json::Value;
 use spore::logging::workflow_span;
 
 use hyphae_core::{
-    DefaultEvictionPolicy, Embedder, EvictionPolicy, Memory, MemoryStore, MemoryTier, SearchQuery,
-    SearchType, sanitize_query,
+    ApplicabilityRule, DefaultEvictionPolicy, Embedder, EvictionPolicy, Memory, MemoryStore,
+    MemoryTier, QueryContext, RuleOp, SearchQuery, SearchType, sanitize_query,
 };
 use hyphae_store::{SqliteStore, context, dispatch_search};
 
@@ -21,6 +21,33 @@ use super::helpers::dedupe_memory_results;
 // ─────────────────────────────────────────────────────────────────────────────
 
 const STALE_DAYS_THRESHOLD: i64 = 30;
+
+fn check_applicability(
+    rules: &[ApplicabilityRule],
+    inputs: &std::collections::HashMap<String, serde_json::Value>,
+) -> bool {
+    for rule in rules {
+        let value = inputs.get(&rule.field);
+        let passes = match rule.op {
+            RuleOp::Exists => value.is_some(),
+            RuleOp::Equals => value.map(|v| v == &rule.value).unwrap_or(false),
+            RuleOp::Contains => value
+                .and_then(|v| v.as_str())
+                .zip(rule.value.as_str())
+                .map(|(s, pat)| s.contains(pat))
+                .unwrap_or(false),
+            RuleOp::GreaterThan => value
+                .and_then(|v| v.as_f64())
+                .zip(rule.value.as_f64())
+                .map(|(a, b)| a > b)
+                .unwrap_or(false),
+        };
+        if !passes {
+            return false;
+        }
+    }
+    true
+}
 
 fn age_indicator(mem: &Memory) -> Option<String> {
     let days = (Utc::now() - mem.last_accessed).num_days();
@@ -396,6 +423,58 @@ pub(crate) fn tool_recall(
         Some(q) => q,
         None => return ToolResult::error("missing required field: query".into()),
     };
+
+    // Optional QueryContext for domain-scoped recall
+    let query_context: Option<QueryContext> = args
+        .get("query_context")
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+    // Check domain applicability if query_context is provided
+    if let Some(ref ctx) = query_context {
+        if let Some(ref domain_id) = ctx.domain_hint {
+            match store.get_knowledge_domain(domain_id) {
+                Ok(Some(domain)) => {
+                    if !check_applicability(&domain.applies_when, &ctx.known_inputs) {
+                        let result = serde_json::json!({
+                            "type": "domain_not_applicable",
+                            "domain": domain_id,
+                            "reason": format!("applicability conditions not met for domain '{domain_id}'")
+                        });
+                        return match serde_json::to_string_pretty(&result) {
+                            Ok(json) => ToolResult::text(json),
+                            Err(e) => ToolResult::error(format!("serialization error: {e}")),
+                        };
+                    }
+                    let missing: Vec<String> = domain
+                        .required_inputs
+                        .iter()
+                        .filter(|spec| spec.required && !ctx.known_inputs.contains_key(&spec.name))
+                        .map(|spec| spec.name.clone())
+                        .collect();
+                    if !missing.is_empty() {
+                        let result = serde_json::json!({
+                            "type": "needs_inputs",
+                            "domain": domain_id,
+                            "missing": missing
+                        });
+                        return match serde_json::to_string_pretty(&result) {
+                            Ok(json) => ToolResult::text(json),
+                            Err(e) => ToolResult::error(format!("serialization error: {e}")),
+                        };
+                    }
+                }
+                Ok(None) => {
+                    tracing::debug!(
+                        "domain_hint '{domain_id}' not found, using unscoped recall"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("failed to load domain '{domain_id}': {e}");
+                }
+            }
+        }
+    }
+
     let skip_sanitize = args.get("raw").and_then(|v| v.as_bool()).unwrap_or(false);
 
     // Sanitize query unless --raw is requested

@@ -6,6 +6,7 @@ pub mod evaluation;
 pub mod export;
 mod feedback;
 mod helpers;
+mod knowledge_domain_store;
 pub mod insights;
 mod memoir_store;
 mod memory_store;
