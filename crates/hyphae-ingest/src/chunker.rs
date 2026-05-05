@@ -386,9 +386,9 @@ fn chunk_by_function(
 /// Chunk code using AST symbol boundaries from rhizome.
 ///
 /// When `pre_fetched` is `Some`, uses those boundaries directly. Otherwise,
-/// attempts to resolve the file from `metadata.source_path` and call rhizome.
-/// Falls back to `chunk_by_function` when rhizome is unavailable or returns no
-/// symbols.
+/// attempts to resolve the file from `metadata.source_path` and call rhizome's
+/// get_chunk_boundaries tool. Falls back to `chunk_by_function` when rhizome is
+/// unavailable or returns no boundaries.
 fn chunk_by_ast(
     content: &str,
     metadata: &ChunkMetadata,
@@ -396,55 +396,74 @@ fn chunk_by_ast(
     language: &str,
     pre_fetched: Option<Vec<crate::rhizome::SymbolBoundary>>,
 ) -> Vec<Chunk> {
-    let symbols = match pre_fetched {
-        Some(s) if !s.is_empty() => s,
+    // If pre-fetched SymbolBoundary data exists, convert to ChunkBoundary for use
+    let chunk_boundaries = match pre_fetched {
+        Some(s) if !s.is_empty() => {
+            Some(
+                s.iter()
+                    .map(|sb| crate::rhizome::ChunkBoundary {
+                        start_line: sb.line_start,
+                        end_line: sb.line_end,
+                        kind: format!("{}", sb.kind),
+                        name: sb.name.clone(),
+                    })
+                    .collect(),
+            )
+        }
         _ => {
-            // Try to get symbols from rhizome via the source path
+            // Try to get chunk boundaries from rhizome via the source path
             let path = std::path::Path::new(&metadata.source_path);
-            match crate::rhizome::get_symbol_boundaries(path) {
-                Ok(s) if !s.is_empty() => s,
+            match crate::rhizome::get_chunk_boundaries_for_chunking(path, "Function") {
+                Ok(b) if !b.is_empty() => Some(b),
                 Ok(_) => {
                     tracing::debug!(
                         path = %metadata.source_path,
-                        "rhizome returned no symbols, falling back to ByFunction"
+                        "rhizome returned no chunk boundaries, falling back to ByFunction"
                     );
-                    return chunk_by_function(content, metadata, doc_id, language);
+                    None
                 }
                 Err(e) => {
                     tracing::debug!(
                         path = %metadata.source_path,
                         error = %e,
-                        "rhizome unavailable, falling back to ByFunction"
+                        "rhizome get_chunk_boundaries unavailable, falling back to ByFunction"
                     );
-                    return chunk_by_function(content, metadata, doc_id, language);
+                    None
                 }
             }
         }
     };
+
+    // If no chunk boundaries available, fall back to ByFunction strategy
+    if chunk_boundaries.is_none() {
+        return chunk_by_function(content, metadata, doc_id, language);
+    }
+
+    let boundaries = chunk_boundaries.unwrap();
 
     let lines: Vec<&str> = content.lines().collect();
     if lines.is_empty() {
         return vec![];
     }
 
-    // Sort symbols by line_start to process in order
-    let mut sorted = symbols;
-    sorted.sort_by_key(|s| s.line_start);
+    // Sort boundaries by line_start to process in order
+    let mut sorted = boundaries;
+    sorted.sort_by_key(|b| b.start_line);
 
     let mut chunks = Vec::new();
     let mut chunk_index: u32 = 0;
     let mut covered_up_to: usize = 0;
 
-    for sym in &sorted {
+    for boundary in &sorted {
         // Rhizome lines are 1-based; convert to 0-based index
-        let start = sym.line_start.saturating_sub(1) as usize;
-        let end = (sym.line_end as usize).min(lines.len());
+        let start = boundary.start_line.saturating_sub(1) as usize;
+        let end = (boundary.end_line as usize).min(lines.len());
 
         if start >= lines.len() || start >= end {
             continue;
         }
 
-        // Capture any gap (code between previous symbol end and this symbol start)
+        // Capture any gap (code between previous boundary end and this boundary start)
         if start > covered_up_to {
             let gap_content = lines[covered_up_to..start].join("\n");
             let trimmed = gap_content.trim();
@@ -467,17 +486,17 @@ fn chunk_by_ast(
             }
         }
 
-        let symbol_content = lines[start..end].join("\n");
-        let trimmed = symbol_content.trim();
+        let boundary_content = lines[start..end].join("\n");
+        let trimmed = boundary_content.trim();
         if trimmed.is_empty() {
             continue;
         }
 
         let mut chunk_meta = metadata.clone();
         chunk_meta.language = Some(language.to_string());
-        chunk_meta.heading = Some(format!("{} {}", sym.kind, sym.name));
-        chunk_meta.line_start = Some(sym.line_start);
-        chunk_meta.line_end = Some(sym.line_end);
+        chunk_meta.heading = Some(format!("{} {}", boundary.kind, boundary.name));
+        chunk_meta.line_start = Some(boundary.start_line);
+        chunk_meta.line_end = Some(boundary.end_line);
 
         chunks.push(Chunk {
             id: ChunkId::new(),
@@ -495,7 +514,7 @@ fn chunk_by_ast(
         }
     }
 
-    // Capture any trailing content after the last symbol
+    // Capture any trailing content after the last boundary
     if covered_up_to < lines.len() {
         let trailing = lines[covered_up_to..].join("\n");
         let trimmed = trailing.trim();

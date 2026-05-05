@@ -23,6 +23,110 @@ pub fn is_available() -> bool {
     discover(Tool::Rhizome).is_some()
 }
 
+/// Get chunk boundaries for a file via rhizome MCP `get_chunk_boundaries` tool.
+///
+/// This is optimized for chunking and returns boundaries based on the specified
+/// strategy. Returns `Ok(vec)` on success (possibly empty), or `Err` if rhizome
+/// is unavailable or the call fails.
+pub fn get_chunk_boundaries_for_chunking(
+    file: &Path,
+    strategy: &str,
+) -> Result<Vec<ChunkBoundary>, RhizomeError> {
+    // Confirm rhizome is discoverable before spawning an MCP client
+    if !is_available() {
+        return Err(RhizomeError::NotAvailable);
+    }
+
+    let file_str = file
+        .to_str()
+        .ok_or_else(|| RhizomeError::CommandFailed("invalid file path encoding".into()))?;
+
+    let mut client = McpClient::spawn(Tool::Rhizome, &[])
+        .map_err(|e| RhizomeError::CommandFailed(format!("failed to start rhizome MCP: {e}")))?;
+
+    let result = client
+        .call_tool(
+            "get_chunk_boundaries",
+            serde_json::json!({ "file": file_str, "strategy": strategy }),
+        )
+        .map_err(|e| RhizomeError::CommandFailed(format!("get_chunk_boundaries failed: {e}")))?;
+
+    parse_chunk_boundaries_response(result)
+}
+
+/// Parse rhizome MCP `get_chunk_boundaries` response into boundaries.
+///
+/// The response has shape: `[{"type":"text","text":"<JSON object with boundaries array>"}]`
+/// where boundaries is an array of boundary objects with start_line, end_line, kind, name.
+fn parse_chunk_boundaries_response(
+    value: serde_json::Value,
+) -> Result<Vec<ChunkBoundary>, RhizomeError> {
+    let text = value
+        .as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|v| v.get("text"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            RhizomeError::CommandFailed("unexpected get_chunk_boundaries response shape".into())
+        })?;
+
+    let response: serde_json::Value = serde_json::from_str(text).map_err(|e| {
+        RhizomeError::CommandFailed(format!("failed to parse chunk boundaries JSON: {e}"))
+    })?;
+
+    let boundaries = response
+        .get("boundaries")
+        .and_then(|b| b.as_array())
+        .ok_or_else(|| {
+            RhizomeError::CommandFailed("missing or invalid boundaries array".into())
+        })?;
+
+    let mut result = Vec::new();
+    for boundary in boundaries {
+        let start_line = boundary
+            .get("start_line")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+        let end_line = boundary
+            .get("end_line")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+
+        // Skip boundaries with invalid ranges
+        if start_line == 0 || end_line == 0 || start_line > end_line {
+            continue;
+        }
+
+        let kind = boundary
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown")
+            .to_string();
+        let name = boundary
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("anonymous")
+            .to_string();
+
+        result.push(ChunkBoundary {
+            start_line,
+            end_line,
+            kind,
+            name,
+        });
+    }
+    Ok(result)
+}
+
+/// A chunk boundary extracted from rhizome's get_chunk_boundaries output.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChunkBoundary {
+    pub start_line: u32,
+    pub end_line: u32,
+    pub kind: String,
+    pub name: String,
+}
+
 /// Get symbol boundaries for a file via rhizome MCP `get_symbols` tool.
 ///
 /// Returns `Ok(vec)` on success (possibly empty), or `Err` if rhizome is
@@ -360,5 +464,77 @@ mod utils [74:0-100:1]
                 "fn", "method", "class", "struct", "enum", "trait", "const", "mod"
             ]
         );
+    }
+
+    #[test]
+    fn parse_chunk_boundaries_response_basic() {
+        let boundaries_json = serde_json::json!({
+            "boundaries": [
+                {
+                    "start_line": 1,
+                    "end_line": 10,
+                    "kind": "Function",
+                    "name": "main",
+                },
+                {
+                    "start_line": 12,
+                    "end_line": 25,
+                    "kind": "Struct",
+                    "name": "Config",
+                },
+            ]
+        });
+        let response = serde_json::json!([{
+            "type": "text",
+            "text": boundaries_json.to_string(),
+        }]);
+        let boundaries = parse_chunk_boundaries_response(response).unwrap();
+        assert_eq!(boundaries.len(), 2);
+        assert_eq!(boundaries[0].start_line, 1);
+        assert_eq!(boundaries[0].end_line, 10);
+        assert_eq!(boundaries[0].name, "main");
+        assert_eq!(boundaries[0].kind, "Function");
+        assert_eq!(boundaries[1].start_line, 12);
+        assert_eq!(boundaries[1].end_line, 25);
+        assert_eq!(boundaries[1].name, "Config");
+    }
+
+    #[test]
+    fn parse_chunk_boundaries_response_empty_array() {
+        let boundaries_json = serde_json::json!({ "boundaries": [] });
+        let response = serde_json::json!([{
+            "type": "text",
+            "text": boundaries_json.to_string(),
+        }]);
+        let boundaries = parse_chunk_boundaries_response(response).unwrap();
+        assert!(boundaries.is_empty());
+    }
+
+    #[test]
+    fn parse_chunk_boundaries_response_skips_invalid_ranges() {
+        let boundaries_json = serde_json::json!({
+            "boundaries": [
+                { "start_line": 0, "end_line": 10, "kind": "Function", "name": "bad1" },
+                { "start_line": 5, "end_line": 0, "kind": "Function", "name": "bad2" },
+                { "start_line": 10, "end_line": 5, "kind": "Function", "name": "bad3" },
+                { "start_line": 15, "end_line": 20, "kind": "Function", "name": "good" },
+            ]
+        });
+        let response = serde_json::json!([{
+            "type": "text",
+            "text": boundaries_json.to_string(),
+        }]);
+        let boundaries = parse_chunk_boundaries_response(response).unwrap();
+        assert_eq!(boundaries.len(), 1);
+        assert_eq!(boundaries[0].name, "good");
+    }
+
+    #[test]
+    fn parse_chunk_boundaries_response_wrong_shape_returns_err() {
+        let bad = serde_json::json!({"type": "text", "text": "{}"});
+        assert!(parse_chunk_boundaries_response(bad).is_err());
+
+        let empty_arr = serde_json::json!([]);
+        assert!(parse_chunk_boundaries_response(empty_arr).is_err());
     }
 }
