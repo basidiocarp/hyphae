@@ -3,12 +3,11 @@ use rusqlite_migration::{Migrations, M};
 
 use hyphae_core::HyphaeError;
 
-fn migrations() -> Migrations<'static> {
-    Migrations::new(vec![
-        // M0: baseline schema with all CREATE TABLE IF NOT EXISTS and regular indexes
-        // (FTS5 and vec tables are handled separately after migrations complete)
-        M::up(
-            "
+/// Baseline schema SQL — all CREATE TABLE IF NOT EXISTS statements and regular indexes.
+/// Used as M0 in the migration vec and also run inside bootstrap_existing_db to ensure
+/// any tables that were added after a database was first created are present.
+/// FTS5 virtual tables and sqlite-vec tables are handled separately (no IF NOT EXISTS support).
+const BASELINE_SQL: &str = "
             CREATE TABLE IF NOT EXISTS memories (
                 id TEXT PRIMARY KEY,
                 created_at TEXT NOT NULL,
@@ -280,9 +279,12 @@ fn migrations() -> Migrations<'static> {
             CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp);
             CREATE INDEX IF NOT EXISTS idx_audit_log_operation ON audit_log(operation);
             CREATE INDEX IF NOT EXISTS idx_audit_log_memory_id ON audit_log(memory_id);
-            ",
-        ),
-    ])
+            ";
+
+fn migrations() -> Migrations<'static> {
+    // M0: baseline schema — all CREATE TABLE IF NOT EXISTS and regular indexes.
+    // FTS5 and sqlite-vec virtual tables are handled separately after migrations run.
+    Migrations::new(vec![M::up(BASELINE_SQL)])
 }
 
 /// Ensure FTS5 tables and triggers exist (they can't be in migrations baseline)
@@ -502,57 +504,36 @@ fn bootstrap_existing_db(conn: &mut Connection) -> Result<(), HyphaeError> {
         )
         .map(|c| c > 0)
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
-    if table_exists {
-        // Existing pre-migration database: add any missing columns via ALTER TABLE.
-        // Helper to check and add a column
-        let add_column_if_missing = |col_name: &str, col_def: &str| -> Result<(), HyphaeError> {
-            let has_column = conn
-                .prepare(&format!("SELECT {col_name} FROM memories"))
-                .is_ok();
-            if !has_column {
-                conn.execute(&format!("ALTER TABLE memories ADD COLUMN {col_def}"), [])
-                    .map_err(|e| HyphaeError::Database(e.to_string()))?;
-            }
-            Ok(())
-        };
+    if !table_exists {
+        // Fresh database: leave user_version at 0 so to_latest() runs M0.
+        return Ok(());
+    }
 
-        // Add all newer columns that might be missing
-        add_column_if_missing("updated_at", "updated_at TEXT")?;
-        add_column_if_missing("embedding", "embedding BLOB")?;
-        add_column_if_missing("project", "project TEXT")?;
-        add_column_if_missing("branch", "branch TEXT")?;
-        add_column_if_missing("worktree", "worktree TEXT")?;
-        add_column_if_missing("agent_id", "agent_id TEXT")?;
-        add_column_if_missing("expires_at", "expires_at TEXT")?;
-        add_column_if_missing("invalidated_at", "invalidated_at TEXT")?;
-        add_column_if_missing("invalidation_reason", "invalidation_reason TEXT")?;
-        add_column_if_missing("superseded_by", "superseded_by TEXT")?;
-        add_column_if_missing("tier", "tier TEXT NOT NULL DEFAULT 'recall'")?;
+    // Add missing columns to memories that were introduced after the initial schema.
+    // ALTER TABLE fails with "duplicate column name" if the column already exists;
+    // that is the expected case on a fully up-to-date database, so we intentionally discard.
+    // Column patches must run BEFORE execute_batch(BASELINE_SQL) because BASELINE_SQL includes
+    // indexes on these columns; those indexes would fail if the columns don't exist yet.
+    let _ = conn.execute("ALTER TABLE memories ADD COLUMN updated_at TEXT", []);
+    let _ = conn.execute("ALTER TABLE memories ADD COLUMN embedding BLOB", []);
+    let _ = conn.execute("ALTER TABLE memories ADD COLUMN project TEXT", []);
+    let _ = conn.execute("ALTER TABLE memories ADD COLUMN branch TEXT", []);
+    let _ = conn.execute("ALTER TABLE memories ADD COLUMN worktree TEXT", []);
+    let _ = conn.execute("ALTER TABLE memories ADD COLUMN agent_id TEXT", []);
+    let _ = conn.execute("ALTER TABLE memories ADD COLUMN expires_at TEXT", []);
+    let _ = conn.execute("ALTER TABLE memories ADD COLUMN invalidated_at TEXT", []);
+    let _ = conn.execute("ALTER TABLE memories ADD COLUMN invalidation_reason TEXT", []);
+    let _ = conn.execute("ALTER TABLE memories ADD COLUMN superseded_by TEXT", []);
+    let _ = conn.execute("ALTER TABLE memories ADD COLUMN tier TEXT", []);
 
-        // Ensure newer tables exist (created in M0 baseline but may be missing in very old databases).
-        // These are all CREATE TABLE IF NOT EXISTS, so safe to rerun.
-        conn.execute_batch(
-            "
-            CREATE TABLE IF NOT EXISTS hyphae_metadata (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS project_links (
-                source_project TEXT NOT NULL,
-                target_project TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                PRIMARY KEY (source_project, target_project),
-                CHECK(source_project != target_project)
-            );
-            ",
-        )
+    // Run the full baseline SQL to create any tables added after the initial install.
+    // All statements use IF NOT EXISTS — safe to run on any database state.
+    conn.execute_batch(BASELINE_SQL)
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
-        // Stamp user_version so rusqlite_migration skips M0 entirely.
-        conn.execute_batch("PRAGMA user_version = 1;")
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-    }
+    // Stamp user_version so rusqlite_migration skips M0 entirely.
+    conn.execute_batch("PRAGMA user_version = 1;")
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
     Ok(())
 }
 
