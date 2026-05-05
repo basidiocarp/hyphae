@@ -6,7 +6,7 @@
 use serde_json::{Value, json};
 use spore::logging::workflow_span;
 
-use hyphae_core::{Embedder, SCOPED_IDENTITY_SCHEMA_VERSION, ScopedIdentity};
+use hyphae_core::{Embedder, MemoirStore, MemoryStore, SCOPED_IDENTITY_SCHEMA_VERSION, ScopedIdentity};
 use hyphae_store::SqliteStore;
 
 use crate::protocol::ToolResult;
@@ -47,31 +47,95 @@ pub(crate) fn tool_session_start(
         context_signals,
         embedder,
     ) {
-        Ok((session_id, started_at, recalled_context)) => ToolResult::text(
-            json!({
-                "schema_version": SCOPED_IDENTITY_SCHEMA_VERSION,
-                "session_id": session_id,
-                "started_at": started_at,
-                "scoped_identity": ScopedIdentity::new(
-                    Some(project),
-                    project_root,
-                    worktree_id,
-                    scope,
-                    runtime_session_id,
-                ),
-                "recalled_context": recalled_context
-                    .iter()
-                    .map(|(memory, score)| json!({
-                        "content": memory.summary.clone(),
-                        "topic": memory.topic.clone(),
-                        "score": score,
-                    }))
-                    .collect::<Vec<_>>(),
-            })
-            .to_string(),
-        ),
+        Ok((session_id, started_at, recalled_context)) => {
+            let session_context = build_session_context(store, project);
+            ToolResult::text(
+                json!({
+                    "schema_version": SCOPED_IDENTITY_SCHEMA_VERSION,
+                    "session_id": session_id,
+                    "started_at": started_at,
+                    "scoped_identity": ScopedIdentity::new(
+                        Some(project),
+                        project_root,
+                        worktree_id,
+                        scope,
+                        runtime_session_id,
+                    ),
+                    "recalled_context": recalled_context
+                        .iter()
+                        .map(|(memory, score)| json!({
+                            "content": memory.summary.clone(),
+                            "topic": memory.topic.clone(),
+                            "score": score,
+                        }))
+                        .collect::<Vec<_>>(),
+                    "session_context": session_context,
+                })
+                .to_string(),
+            )
+        }
         Err(e) => ToolResult::error(format!("failed to create session: {e}")),
     }
+}
+
+/// Build a `SessionContext` bundle for a project by running pre-baked multi-queries.
+///
+/// Failures in any sub-query are silently ignored so session start cannot fail due to
+/// an empty store or a search error.
+fn build_session_context(store: &SqliteStore, project: &str) -> Value {
+    // Recent episodic memories for this project (FTS search scoped to project).
+    let recent_work: Vec<Value> = store
+        .search_fts_scoped(project, 5, 0, Some(project), None)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|m| {
+            json!({
+                "topic": m.topic,
+                "summary": m.summary,
+            })
+        })
+        .collect();
+
+    // Lessons from past corrections and resolved errors for this project.
+    let mut lesson_memories = Vec::new();
+    for topic in ["corrections", "errors/resolved", "tests/resolved"] {
+        if let Ok(memories) = store.get_by_topic(topic, Some(project)) {
+            lesson_memories.extend(memories);
+        }
+    }
+    let known_patterns: Vec<Value> = lesson_memories
+        .into_iter()
+        .take(10)
+        .map(|m| {
+            json!({
+                "topic": m.topic,
+                "summary": m.summary,
+            })
+        })
+        .collect();
+
+    // Permanent memoirs (knowledge graphs) — global, not project-scoped.
+    let established_facts: Vec<Value> = store
+        .list_memoirs()
+        .unwrap_or_default()
+        .into_iter()
+        .take(10)
+        .map(|memoir| {
+            json!({
+                "name": memoir.name,
+                "description": memoir.description,
+            })
+        })
+        .collect();
+
+    json!({
+        "recent_work": recent_work,
+        "known_patterns": known_patterns,
+        "established_facts": established_facts,
+        "open_items": [],
+        "environment": null,
+        "env_artifact_stale": false,
+    })
 }
 
 /// `hyphae_session_end` — end a coding session.
@@ -740,5 +804,46 @@ mod tests {
         // The key assertion: we get a valid response without panicking,
         // regardless of whether the search found matches or not
         let _ = recalled;
+    }
+
+    #[test]
+    fn test_session_start_returns_session_context_bundle() {
+        let store = test_store();
+
+        let result = tool_session_start(
+            &store,
+            None,
+            &json!({"project": "bundle-proj", "task": "test session context"}),
+            &ToolTraceContext::default(),
+        );
+        assert!(!result.is_error);
+
+        let text = &result.content[0].text;
+        let parsed: Value = serde_json::from_str(text).expect("valid JSON");
+
+        let ctx = &parsed["session_context"];
+        assert!(ctx.is_object(), "session_context must be an object");
+        assert!(
+            ctx["recent_work"].is_array(),
+            "recent_work must be an array"
+        );
+        assert!(
+            ctx["known_patterns"].is_array(),
+            "known_patterns must be an array"
+        );
+        assert!(
+            ctx["established_facts"].is_array(),
+            "established_facts must be an array"
+        );
+        assert!(
+            ctx["open_items"].is_array(),
+            "open_items must be an array"
+        );
+        assert!(ctx["environment"].is_null(), "environment must be null until H-05");
+        assert_eq!(
+            ctx["env_artifact_stale"].as_bool(),
+            Some(false),
+            "env_artifact_stale defaults false"
+        );
     }
 }
