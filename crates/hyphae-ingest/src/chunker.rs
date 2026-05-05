@@ -398,18 +398,16 @@ fn chunk_by_ast(
 ) -> Vec<Chunk> {
     // If pre-fetched SymbolBoundary data exists, convert to ChunkBoundary for use
     let chunk_boundaries = match pre_fetched {
-        Some(s) if !s.is_empty() => {
-            Some(
-                s.iter()
-                    .map(|sb| crate::rhizome::ChunkBoundary {
-                        start_line: sb.line_start,
-                        end_line: sb.line_end,
-                        kind: format!("{}", sb.kind),
-                        name: sb.name.clone(),
-                    })
-                    .collect(),
-            )
-        }
+        Some(s) if !s.is_empty() => Some(
+            s.iter()
+                .map(|sb| crate::rhizome::ChunkBoundary {
+                    start_line: sb.line_start,
+                    end_line: sb.line_end,
+                    kind: sb.kind.to_string(),
+                    name: sb.name.clone(),
+                })
+                .collect(),
+        ),
         _ => {
             // Try to get chunk boundaries from rhizome via the source path
             let path = std::path::Path::new(&metadata.source_path);

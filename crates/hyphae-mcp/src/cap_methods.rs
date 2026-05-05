@@ -28,8 +28,6 @@ pub fn dispatch_cap_method(store: &SqliteStore, method: &str, params: &Value) ->
         "cap_memoir_search_all" => cap_memoir_search_all(store, params),
         "cap_memoir_inspect" => cap_memoir_inspect(store, params),
         "cap_lessons" => cap_lessons(store, params),
-        "cap_gather_context" => cap_gather_context(store, params),
-        "cap_evaluate" => cap_evaluate(store, params),
         _ => json!({"error": "unknown cap method", "method": method, "schema_version": "1.0"}),
     }
 }
@@ -209,10 +207,7 @@ fn cap_search(store: &SqliteStore, params: &Value) -> Value {
             SearchOrder::RankAsc,
         )?;
 
-        let memory_payloads: Vec<Value> = results
-            .iter()
-            .map(|memory| to_memory_payload(memory))
-            .collect();
+        let memory_payloads: Vec<Value> = results.iter().map(to_memory_payload).collect();
 
         Ok::<_, hyphae_core::HyphaeError>(json!({
             "schema_version": "1.0",
@@ -259,10 +254,7 @@ fn cap_search_all(store: &SqliteStore, params: &Value) -> Value {
             SearchOrder::RankAsc,
         )?;
 
-        let memory_payloads: Vec<Value> = results
-            .iter()
-            .map(|memory| to_memory_payload(memory))
-            .collect();
+        let memory_payloads: Vec<Value> = results.iter().map(to_memory_payload).collect();
 
         Ok::<_, hyphae_core::HyphaeError>(json!({
             "schema_version": "1.0",
@@ -731,24 +723,6 @@ fn cap_lessons(store: &SqliteStore, params: &Value) -> Value {
         }),
         Err(e) => json!({"error": format!("lessons failed: {e}"), "schema_version": "1.0"}),
     }
-}
-
-fn cap_gather_context(_store: &SqliteStore, _params: &Value) -> Value {
-    // cap_gather_context is complex and delegates through the MCP tool layer
-    // For now, return a stub that indicates this should be handled by MCP tools
-    json!({
-        "error": "cap_gather_context requires full MCP tool pipeline",
-        "schema_version": "1.0"
-    })
-}
-
-fn cap_evaluate(_store: &SqliteStore, _params: &Value) -> Value {
-    // cap_evaluate is complex and requires evaluation window analysis
-    // For now, return a stub
-    json!({
-        "error": "cap_evaluate requires evaluation analysis",
-        "schema_version": "1.0"
-    })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
