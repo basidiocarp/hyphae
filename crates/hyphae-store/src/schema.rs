@@ -1049,6 +1049,28 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
     }
 
+    // Migration: add memoir metadata columns (decay, authority, source, compiled_at, etc.)
+    let has_decay: bool = tx
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('memoirs') WHERE name='decay'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if !has_decay {
+        tx.execute_batch(
+            "ALTER TABLE memoirs ADD COLUMN decay TEXT NOT NULL DEFAULT 'standard';
+             ALTER TABLE memoirs ADD COLUMN authority TEXT NOT NULL DEFAULT 'primary';
+             ALTER TABLE memoirs ADD COLUMN source TEXT NOT NULL DEFAULT 'agent';
+             ALTER TABLE memoirs ADD COLUMN compiled_at TEXT;
+             ALTER TABLE memoirs ADD COLUMN invalidated_at TEXT;
+             ALTER TABLE memoirs ADD COLUMN invalidated_by TEXT;
+             ALTER TABLE memoirs ADD COLUMN freshness_ttl_secs INTEGER;",
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    }
+
     tx.commit().map_err(|e| {
         HyphaeError::Database(format!("failed to commit migration transaction: {e}"))
     })?;

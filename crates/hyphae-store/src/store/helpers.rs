@@ -175,6 +175,23 @@ pub(crate) fn parse_dt(s: &str) -> DateTime<Utc> {
 }
 
 pub(crate) fn row_to_memoir(row: &rusqlite::Row) -> rusqlite::Result<Memoir> {
+    use hyphae_core::{Authority, Decay, MemoirMeta, MemoirSource};
+
+    let decay_str: String = row.get::<_, Option<String>>(9)?.unwrap_or_else(|| "standard".to_string());
+    let decay = decay_str.parse::<Decay>().unwrap_or_default();
+
+    let authority_str: String = row.get::<_, Option<String>>(10)?.unwrap_or_else(|| "primary".to_string());
+    let authority = authority_str.parse::<Authority>().unwrap_or_default();
+
+    let source_str: String = row.get::<_, Option<String>>(11)?.unwrap_or_else(|| "agent".to_string());
+    let source = source_str.parse::<MemoirSource>().unwrap_or_default();
+
+    let compiled_at_str: Option<String> = row.get(12)?;
+    let compiled_at = compiled_at_str.map(|s| parse_dt(&s));
+
+    let invalidated_at_str: Option<String> = row.get(13)?;
+    let invalidated_at = invalidated_at_str.map(|s| parse_dt(&s));
+
     Ok(Memoir {
         id: row.get::<_, String>(0)?.into(),
         name: row.get(1)?,
@@ -185,10 +202,19 @@ pub(crate) fn row_to_memoir(row: &rusqlite::Row) -> rusqlite::Result<Memoir> {
         author: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
         git_hash: row.get::<_, Option<String>>(7)?,
         parent_version_id: row.get::<_, Option<String>>(8)?,
+        meta: MemoirMeta {
+            decay,
+            authority,
+            source,
+            compiled_at,
+            invalidated_at,
+            invalidated_by: row.get(14)?,
+            freshness_ttl_secs: row.get::<_, Option<i64>>(15)?.map(|v| v as u64),
+        },
     })
 }
 
-pub(crate) const MEMOIR_COLS: &str = "id, name, description, created_at, updated_at, consolidation_threshold, author, git_hash, parent_version_id";
+pub(crate) const MEMOIR_COLS: &str = "id, name, description, created_at, updated_at, consolidation_threshold, author, git_hash, parent_version_id, decay, authority, source, compiled_at, invalidated_at, invalidated_by, freshness_ttl_secs";
 
 pub(crate) fn row_to_concept(row: &rusqlite::Row) -> rusqlite::Result<Concept> {
     let id: ConceptId = row.get::<_, String>(0)?.into();

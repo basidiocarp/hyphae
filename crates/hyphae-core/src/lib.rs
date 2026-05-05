@@ -36,7 +36,8 @@ pub use identity::{
 pub use ids::*;
 pub use llm_client::consolidate_via_llm;
 pub use memoir::{
-    Concept, ConceptLink, Confidence, Label, Memoir, MemoirStats, MemoirVersion, Relation,
+    Authority, Concept, ConceptLink, Confidence, Decay, Label, Memoir, MemoirMeta, MemoirSource,
+    MemoirStats, MemoirVersion, Relation,
 };
 pub use memoir_store::{ConceptInput, LinkInput, MemoirStore, UpsertReport};
 pub use memory::{

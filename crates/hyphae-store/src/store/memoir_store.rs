@@ -33,8 +33,8 @@ impl MemoirStore for SqliteStore {
     fn create_memoir(&self, memoir: Memoir) -> HyphaeResult<MemoirId> {
         self.conn
             .execute(
-                "INSERT INTO memoirs (id, name, description, created_at, updated_at, consolidation_threshold, author, git_hash, parent_version_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                "INSERT INTO memoirs (id, name, description, created_at, updated_at, consolidation_threshold, author, git_hash, parent_version_id, decay, authority, source, compiled_at, invalidated_at, invalidated_by, freshness_ttl_secs)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
                 params![
                     memoir.id.as_ref(),
                     memoir.name,
@@ -45,6 +45,13 @@ impl MemoirStore for SqliteStore {
                     memoir.author,
                     memoir.git_hash,
                     memoir.parent_version_id,
+                    format!("{:?}", memoir.meta.decay).to_lowercase(),
+                    format!("{:?}", memoir.meta.authority).to_lowercase(),
+                    format!("{:?}", memoir.meta.source).to_lowercase(),
+                    memoir.meta.compiled_at.map(|dt| dt.to_rfc3339()),
+                    memoir.meta.invalidated_at.map(|dt| dt.to_rfc3339()),
+                    &memoir.meta.invalidated_by,
+                    memoir.meta.freshness_ttl_secs.map(|v| v as i64),
                 ],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
@@ -90,7 +97,8 @@ impl MemoirStore for SqliteStore {
             .conn
             .execute(
                 "UPDATE memoirs SET name = ?2, description = ?3, updated_at = ?4,
-                 consolidation_threshold = ?5, author = ?6, git_hash = ?7, parent_version_id = ?8
+                 consolidation_threshold = ?5, author = ?6, git_hash = ?7, parent_version_id = ?8,
+                 decay = ?9, authority = ?10, source = ?11, compiled_at = ?12, invalidated_at = ?13, invalidated_by = ?14, freshness_ttl_secs = ?15
                  WHERE id = ?1",
                 params![
                     memoir.id.as_ref(),
@@ -101,6 +109,13 @@ impl MemoirStore for SqliteStore {
                     memoir.author,
                     memoir.git_hash,
                     memoir.parent_version_id,
+                    format!("{:?}", memoir.meta.decay).to_lowercase(),
+                    format!("{:?}", memoir.meta.authority).to_lowercase(),
+                    format!("{:?}", memoir.meta.source).to_lowercase(),
+                    memoir.meta.compiled_at.map(|dt| dt.to_rfc3339()),
+                    memoir.meta.invalidated_at.map(|dt| dt.to_rfc3339()),
+                    &memoir.meta.invalidated_by,
+                    memoir.meta.freshness_ttl_secs.map(|v| v as i64),
                 ],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;

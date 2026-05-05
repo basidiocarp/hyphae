@@ -324,6 +324,7 @@ fn archive_memoir_to_domain(rec: &ArchiveMemoirRecord) -> Result<Memoir> {
         author: String::new(),
         git_hash: None,
         parent_version_id: None,
+        meta: hyphae_core::MemoirMeta::default(),
     })
 }
 

@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::str::FromStr;
 
 use crate::error::{HyphaeError, HyphaeResult};
 use crate::ids::{ConceptId, LinkId, MemoirId, MemoryId};
@@ -39,6 +40,104 @@ impl Default for Confidence {
 }
 
 // ===========================================================================
+// Memoir Metadata
+// ===========================================================================
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Decay {
+    Never,
+    #[default]
+    Standard,
+    Fast,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Authority {
+    #[default]
+    Primary,
+    Derived,
+    Historical,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoirSource {
+    CompiledArtifact,
+    #[default]
+    Agent,
+    Import,
+    System,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MemoirMeta {
+    pub decay: Decay,
+    pub authority: Authority,
+    pub source: MemoirSource,
+    pub compiled_at: Option<DateTime<Utc>>,
+    pub invalidated_at: Option<DateTime<Utc>>,
+    pub invalidated_by: Option<String>,
+    pub freshness_ttl_secs: Option<u64>,
+}
+
+impl Default for MemoirMeta {
+    fn default() -> Self {
+        Self {
+            decay: Decay::Standard,
+            authority: Authority::Primary,
+            source: MemoirSource::Agent,
+            compiled_at: None,
+            invalidated_at: None,
+            invalidated_by: None,
+            freshness_ttl_secs: None,
+        }
+    }
+}
+
+impl FromStr for Decay {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "never" => Ok(Decay::Never),
+            "standard" => Ok(Decay::Standard),
+            "fast" => Ok(Decay::Fast),
+            _ => Err(format!("invalid decay value: {s}")),
+        }
+    }
+}
+
+impl FromStr for Authority {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "primary" => Ok(Authority::Primary),
+            "derived" => Ok(Authority::Derived),
+            "historical" => Ok(Authority::Historical),
+            _ => Err(format!("invalid authority value: {s}")),
+        }
+    }
+}
+
+impl FromStr for MemoirSource {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "compiled_artifact" => Ok(MemoirSource::CompiledArtifact),
+            "compiled artifact" => Ok(MemoirSource::CompiledArtifact),
+            "agent" => Ok(MemoirSource::Agent),
+            "import" => Ok(MemoirSource::Import),
+            "system" => Ok(MemoirSource::System),
+            _ => Err(format!("invalid memoir source value: {s}")),
+        }
+    }
+}
+
+// ===========================================================================
 // Memoir
 // ===========================================================================
 
@@ -57,6 +156,9 @@ pub struct Memoir {
     pub git_hash: Option<String>,
     /// Version ID of the immediately preceding write, forming a lineage chain.
     pub parent_version_id: Option<String>,
+    /// Metadata about decay, authority, source, and compilation state.
+    #[serde(default)]
+    pub meta: MemoirMeta,
 }
 
 impl Memoir {
@@ -72,6 +174,7 @@ impl Memoir {
             author: String::new(),
             git_hash: None,
             parent_version_id: None,
+            meta: MemoirMeta::default(),
         }
     }
 }
