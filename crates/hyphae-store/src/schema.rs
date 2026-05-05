@@ -331,9 +331,13 @@ fn ensure_fts_tables(conn: &Connection) -> Result<(), HyphaeError> {
     } else {
         // Check if memories_fts has project column, if not rebuild
         let has_fts_project: bool = conn
-            .prepare("SELECT COUNT(*) FROM pragma_table_info('memories_fts') WHERE name='project'")
-            .and_then(|mut s| s.query_row([], |row| row.get(0)))
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+            .query_row(
+                "SELECT COALESCE(sql, '') FROM sqlite_master WHERE type='table' AND name='memories_fts'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .map(|sql| sql.contains("project"))
+            .unwrap_or(false);
 
         if !has_fts_project {
             // FTS5 tables cannot be ALTERed, so we must drop and recreate
@@ -467,41 +471,6 @@ fn ensure_fts_tables(conn: &Connection) -> Result<(), HyphaeError> {
     Ok(())
 }
 
-/// Add missing columns to memories table for old databases
-fn add_missing_columns(conn: &Connection) -> Result<(), HyphaeError> {
-    // Helper to check and add a column
-    let add_column_if_missing = |col_name: &str, col_def: &str| -> Result<(), HyphaeError> {
-        let has_column: bool = conn
-            .query_row(
-                "SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name = ?1",
-                [col_name],
-                |row| row.get(0),
-            )
-            .unwrap_or(0)
-            > 0;
-        if !has_column {
-            conn.execute(&format!("ALTER TABLE memories ADD COLUMN {col_def}"), [])
-                .map_err(|e| HyphaeError::Database(e.to_string()))?;
-        }
-        Ok(())
-    };
-
-    // Add all newer columns that might be missing
-    add_column_if_missing("updated_at", "updated_at TEXT")?;
-    add_column_if_missing("embedding", "embedding BLOB")?;
-    add_column_if_missing("project", "project TEXT")?;
-    add_column_if_missing("branch", "branch TEXT")?;
-    add_column_if_missing("worktree", "worktree TEXT")?;
-    add_column_if_missing("agent_id", "agent_id TEXT")?;
-    add_column_if_missing("expires_at", "expires_at TEXT")?;
-    add_column_if_missing("invalidated_at", "invalidated_at TEXT")?;
-    add_column_if_missing("invalidation_reason", "invalidation_reason TEXT")?;
-    add_column_if_missing("superseded_by", "superseded_by TEXT")?;
-    add_column_if_missing("tier", "tier TEXT NOT NULL DEFAULT 'recall'")?;
-
-    Ok(())
-}
-
 /// Ensure all newer indexes exist
 fn ensure_newer_indexes(conn: &Connection) -> Result<(), HyphaeError> {
     conn.execute_batch(
@@ -517,14 +486,14 @@ fn ensure_newer_indexes(conn: &Connection) -> Result<(), HyphaeError> {
     Ok(())
 }
 
-/// Check if this is an old pre-migration database that needs special handling.
-/// Returns true if tables exist but user_version=0 (needs to run migrations without skipping).
-fn is_old_database(conn: &Connection) -> rusqlite::Result<bool> {
-    let user_version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+/// Bootstrap an existing database by adding missing columns and stamping user_version if it has tables but version=0.
+fn bootstrap_existing_db(conn: &mut Connection) -> Result<(), HyphaeError> {
+    let user_version: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
     if user_version != 0 {
-        return Ok(false);
+        return Ok(());
     }
-
     let table_exists: bool = conn
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memories'",
@@ -532,9 +501,59 @@ fn is_old_database(conn: &Connection) -> rusqlite::Result<bool> {
             |r| r.get::<_, i64>(0),
         )
         .map(|c| c > 0)
-        .unwrap_or(false);
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    if table_exists {
+        // Existing pre-migration database: add any missing columns via ALTER TABLE.
+        // Helper to check and add a column
+        let add_column_if_missing = |col_name: &str, col_def: &str| -> Result<(), HyphaeError> {
+            let has_column = conn
+                .prepare(&format!("SELECT {col_name} FROM memories"))
+                .is_ok();
+            if !has_column {
+                conn.execute(&format!("ALTER TABLE memories ADD COLUMN {col_def}"), [])
+                    .map_err(|e| HyphaeError::Database(e.to_string()))?;
+            }
+            Ok(())
+        };
 
-    Ok(table_exists)
+        // Add all newer columns that might be missing
+        add_column_if_missing("updated_at", "updated_at TEXT")?;
+        add_column_if_missing("embedding", "embedding BLOB")?;
+        add_column_if_missing("project", "project TEXT")?;
+        add_column_if_missing("branch", "branch TEXT")?;
+        add_column_if_missing("worktree", "worktree TEXT")?;
+        add_column_if_missing("agent_id", "agent_id TEXT")?;
+        add_column_if_missing("expires_at", "expires_at TEXT")?;
+        add_column_if_missing("invalidated_at", "invalidated_at TEXT")?;
+        add_column_if_missing("invalidation_reason", "invalidation_reason TEXT")?;
+        add_column_if_missing("superseded_by", "superseded_by TEXT")?;
+        add_column_if_missing("tier", "tier TEXT NOT NULL DEFAULT 'recall'")?;
+
+        // Ensure newer tables exist (created in M0 baseline but may be missing in very old databases).
+        // These are all CREATE TABLE IF NOT EXISTS, so safe to rerun.
+        conn.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS hyphae_metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS project_links (
+                source_project TEXT NOT NULL,
+                target_project TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (source_project, target_project),
+                CHECK(source_project != target_project)
+            );
+            ",
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        // Stamp user_version so rusqlite_migration skips M0 entirely.
+        conn.execute_batch("PRAGMA user_version = 1;")
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    }
+    Ok(())
 }
 
 /// Initialize the database schema. `embedding_dims` controls the sqlite-vec vector size.
@@ -543,27 +562,12 @@ pub fn init_db(conn: &mut Connection) -> Result<(), HyphaeError> {
 }
 
 pub fn init_db_with_dims(conn: &mut Connection, embedding_dims: usize) -> Result<(), HyphaeError> {
-    // Check if this is an old database that needs special handling
-    let is_old = is_old_database(conn).map_err(|e| {
-        HyphaeError::Database(format!("failed to check database version: {e}"))
-    })?;
-
-    if is_old {
-        // Old database: add missing columns via ALTER TABLE, then run migrations
-        add_missing_columns(conn)?;
-    }
+    bootstrap_existing_db(conn)?;
 
     // Run migrations (which includes M0 baseline that creates all tables if they don't exist)
     migrations()
         .to_latest(conn)
         .map_err(|e| HyphaeError::Database(format!("schema migration failed: {e}")))?;
-
-    // Mark old databases as migrated
-    if is_old {
-        conn.execute_batch("PRAGMA user_version = 1;").map_err(|e| {
-            HyphaeError::Database(format!("failed to set user_version: {e}"))
-        })?;
-    }
 
     // Ensure FTS5 tables and triggers exist
     ensure_fts_tables(conn)?;
@@ -695,53 +699,28 @@ mod tests {
         let mut conn = Connection::open_in_memory().unwrap();
         init_db(&mut conn).unwrap();
 
-        let memories_has_project: bool = conn
-            .query_row(
-                "SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name='project'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap_or(0)
-            > 0;
+        let memories_has_project = conn.prepare("SELECT project FROM memories").is_ok();
         assert!(
             memories_has_project,
             "memories table should have project column"
         );
 
-        let documents_has_project: bool = conn
-            .query_row(
-                "SELECT COUNT(*) FROM pragma_table_info('documents') WHERE name='project'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap_or(0)
-            > 0;
+        let documents_has_project = conn.prepare("SELECT project FROM documents").is_ok();
         assert!(
             documents_has_project,
             "documents table should have project column"
         );
-        let documents_has_runtime_session_id: bool = conn
-            .query_row(
-                "SELECT COUNT(*) FROM pragma_table_info('documents') WHERE name='runtime_session_id'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap_or(0)
-            > 0;
+        let documents_has_runtime_session_id =
+            conn.prepare("SELECT runtime_session_id FROM documents").is_ok();
         assert!(
             documents_has_runtime_session_id,
             "documents table should have runtime_session_id column"
         );
 
         for column in ["project_root", "worktree_id", "scope", "runtime_session_id"] {
-            let sessions_has_column: bool = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = ?1",
-                    [column],
-                    |row| row.get(0),
-                )
-                .unwrap_or(0)
-                > 0;
+            let sessions_has_column = conn
+                .prepare(&format!("SELECT {column} FROM sessions"))
+                .is_ok();
             assert!(
                 sessions_has_column,
                 "sessions table should have {column} column"
@@ -799,14 +778,9 @@ mod tests {
             "agent_id",
             "tier",
         ] {
-            let has_column: bool = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name = ?1",
-                    [column],
-                    |row| row.get(0),
-                )
-                .unwrap_or(0)
-                > 0;
+            let has_column = conn
+                .prepare(&format!("SELECT {column} FROM memories"))
+                .is_ok();
             assert!(has_column, "memories table should have {column} column");
         }
     }
