@@ -1,3 +1,5 @@
+#[cfg(unix)]
+mod cap_methods;
 pub mod memoir_events;
 pub mod memory_protocol;
 pub mod protocol;

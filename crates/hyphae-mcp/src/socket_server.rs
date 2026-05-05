@@ -28,6 +28,8 @@ use hyphae_store::SqliteStore;
 use serde_json::{Value, json};
 use tracing::{debug, error};
 
+#[cfg(unix)]
+use crate::cap_methods;
 use crate::protocol::{JsonRpcMessage, JsonRpcResponse};
 use crate::tools;
 
@@ -132,6 +134,12 @@ fn handle_connection(
 
         let response = if method == PING_METHOD || method == "ping" {
             JsonRpcResponse::ok(id, json!({}))
+        } else if method.starts_with("cap_") {
+            let args = msg.params.unwrap_or_else(|| json!({}));
+            let store_guard = store.lock().expect("store mutex poisoned");
+            let result = cap_methods::dispatch_cap_method(&store_guard, method, &args);
+            drop(store_guard);
+            JsonRpcResponse::ok(id, result)
         } else {
             let args = msg.params.unwrap_or_else(|| json!({}));
             let store_guard = store.lock().expect("store mutex poisoned");
@@ -366,6 +374,44 @@ mod tests {
         assert_eq!(v["id"], 2);
         // stats should succeed — result present, no error
         assert!(v.get("result").is_some(), "expected result, got: {v}");
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn socket_server_cap_stats_returns_versioned_json() {
+        let tmp = TempDir::new().unwrap();
+        let socket_path = temp_socket_path(&tmp);
+
+        remove_stale_socket(&socket_path);
+        let listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+        let socket_path_clone = socket_path.clone();
+
+        let handle = std::thread::spawn(move || {
+            let store = Arc::new(Mutex::new(temp_store()));
+            let consolidation = Arc::new(ConsolidationConfig::default());
+            if let Ok(stream) = listener.accept().map(|(s, _)| s) {
+                handle_connection(stream, store, consolidation, false, false);
+            }
+        });
+
+        let mut client = std::os::unix::net::UnixStream::connect(&socket_path_clone).unwrap();
+        let request = r#"{"jsonrpc":"2.0","id":3,"method":"cap_stats","params":{}}"#;
+        client.write_all(request.as_bytes()).unwrap();
+        client.write_all(b"\n").unwrap();
+        client.flush().unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+
+        let reader = BufReader::new(&client);
+        let line = reader.lines().next().expect("response").unwrap();
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v["id"], 3);
+        let result = &v["result"];
+        assert!(result.is_object());
+        assert_eq!(result["schema_version"], "1.0");
+        assert!(result["total_memories"].is_number());
+        assert!(result["total_topics"].is_number());
+        assert!(result.get("error").is_none());
 
         handle.join().unwrap();
     }
