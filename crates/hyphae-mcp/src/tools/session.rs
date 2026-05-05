@@ -48,7 +48,7 @@ pub(crate) fn tool_session_start(
         embedder,
     ) {
         Ok((session_id, started_at, recalled_context)) => {
-            let session_context = build_session_context(store, project);
+            let session_context = build_session_context(store, &session_id, project);
             ToolResult::text(
                 json!({
                     "schema_version": SCOPED_IDENTITY_SCHEMA_VERSION,
@@ -82,7 +82,7 @@ pub(crate) fn tool_session_start(
 ///
 /// Failures in any sub-query are silently ignored so session start cannot fail due to
 /// an empty store or a search error.
-fn build_session_context(store: &SqliteStore, project: &str) -> Value {
+fn build_session_context(store: &SqliteStore, session_id: &str, project: &str) -> Value {
     // Recent episodic memories for this project (FTS search scoped to project).
     let recent_work: Vec<Value> = store
         .search_fts_scoped(project, 5, 0, Some(project), None)
@@ -95,6 +95,19 @@ fn build_session_context(store: &SqliteStore, project: &str) -> Value {
             })
         })
         .collect();
+
+    // Log recall event for the memories retrieved via FTS search
+    let memory_ids: Vec<String> = store
+        .search_fts_scoped(project, 5, 0, Some(project), None)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|m| m.id.to_string())
+        .collect();
+    if !memory_ids.is_empty() {
+        if let Err(e) = store.log_recall_event(Some(session_id), "session_start_context", &memory_ids, Some(project)) {
+            tracing::warn!("failed to log session_start recall event: {e}");
+        }
+    }
 
     // Lessons from past corrections and resolved errors for this project.
     let mut lesson_memories = Vec::new();
@@ -844,6 +857,48 @@ mod tests {
             ctx["env_artifact_stale"].as_bool(),
             Some(false),
             "env_artifact_stale defaults false"
+        );
+    }
+
+    #[test]
+    fn test_session_start_logs_recall_event_when_memories_retrieved() {
+        let store = test_store();
+
+        // Store some memories in the project with content that matches the project name
+        // This ensures the FTS search with "test-proj" as the query will find them
+        store
+            .store(
+                Memory::builder(
+                    "session_context".into(),
+                    "test-proj session context test memory important content".into(),
+                    Importance::High,
+                )
+                .project("test-proj".into())
+                .build(),
+            )
+            .unwrap();
+
+        // Start a session which will retrieve memories and should log a recall event
+        let result = tool_session_start(
+            &store,
+            None,
+            &json!({"project": "test-proj", "task": "test recall logging"}),
+            &ToolTraceContext::default(),
+        );
+        assert!(!result.is_error, "session_start should succeed");
+
+        let text = &result.content[0].text;
+        let parsed: Value = serde_json::from_str(text).expect("valid JSON");
+        let session_id = parsed["session_id"].as_str().unwrap();
+
+        // Verify that a recall event was logged
+        let count = store
+            .count_recall_events(Some(session_id), Some("test-proj"), None)
+            .expect("count_recall_events should succeed");
+
+        assert!(
+            count > 0,
+            "A recall event should have been logged for session_start_context"
         );
     }
 }
