@@ -25,6 +25,7 @@ strip = true
 [workspace.dependencies]
 # Database
 rusqlite = { version = "0.39", features = ["bundled"] }
+rusqlite_migration = "2"
 sqlite-vec = "0.1"
 zerocopy = { version = "0.8", features = ["derive"] }
 

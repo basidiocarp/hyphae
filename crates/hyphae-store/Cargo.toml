@@ -10,6 +10,7 @@ repository = "https://github.com/basidiocarp/hyphae"
 [dependencies]
 hyphae-core = { path = "../hyphae-core" }
 rusqlite = { workspace = true }
+rusqlite_migration = { workspace = true }
 sqlite-vec = { workspace = true }
 zerocopy = { workspace = true }
 serde_json = { workspace = true }

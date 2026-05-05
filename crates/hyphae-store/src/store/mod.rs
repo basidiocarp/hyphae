@@ -6,8 +6,8 @@ pub mod evaluation;
 pub mod export;
 mod feedback;
 mod helpers;
-mod knowledge_domain_store;
 pub mod insights;
+mod knowledge_domain_store;
 mod memoir_store;
 mod memory_store;
 pub mod passive;
@@ -56,13 +56,13 @@ impl SqliteStore {
             std::fs::create_dir_all(parent)
                 .map_err(|e| HyphaeError::Database(format!("cannot create db directory: {e}")))?;
         }
-        let conn = Connection::open(path)
+        let mut conn = Connection::open(path)
             .map_err(|e| HyphaeError::Database(format!("cannot open database: {e}")))?;
         conn.execute_batch(
             "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;",
         )
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
-        init_db_with_dims(&conn, embedding_dims)?;
+        init_db_with_dims(&mut conn, embedding_dims)?;
         Ok(Self { conn })
     }
 
@@ -157,11 +157,11 @@ impl SqliteStore {
 
     pub fn in_memory() -> HyphaeResult<Self> {
         ensure_sqlite_vec();
-        let conn = Connection::open_in_memory()
+        let mut conn = Connection::open_in_memory()
             .map_err(|e| HyphaeError::Database(format!("cannot open in-memory db: {e}")))?;
         conn.execute_batch("PRAGMA foreign_keys=ON;")
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
-        init_db(&conn)?;
+        init_db(&mut conn)?;
         Ok(Self { conn })
     }
 

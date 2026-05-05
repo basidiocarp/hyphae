@@ -1,240 +1,294 @@
 use rusqlite::Connection;
+use rusqlite_migration::{Migrations, M};
 
 use hyphae_core::HyphaeError;
 
-/// Initialize the database schema. `embedding_dims` controls the sqlite-vec vector size.
-/// Pass `None` to skip vector table creation (no embeddings feature).
-pub fn init_db(conn: &Connection) -> Result<(), HyphaeError> {
-    init_db_with_dims(conn, 384)
+fn migrations() -> Migrations<'static> {
+    Migrations::new(vec![
+        // M0: baseline schema with all CREATE TABLE IF NOT EXISTS and regular indexes
+        // (FTS5 and vec tables are handled separately after migrations complete)
+        M::up(
+            "
+            CREATE TABLE IF NOT EXISTS memories (
+                id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT '',
+                last_accessed TEXT NOT NULL,
+                access_count INTEGER DEFAULT 0,
+                weight REAL DEFAULT 1.0,
+
+                topic TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                raw_excerpt TEXT,
+                keywords TEXT, -- JSON array
+
+                importance TEXT NOT NULL,
+                source_type TEXT NOT NULL,
+                source_data TEXT, -- JSON
+
+                related_ids TEXT, -- JSON array
+                project TEXT,
+                branch TEXT,
+                worktree TEXT,
+                expires_at TEXT,
+                invalidated_at TEXT,
+                invalidation_reason TEXT,
+                superseded_by TEXT,
+                agent_id TEXT,
+                embedding BLOB,
+                tier TEXT NOT NULL DEFAULT 'recall'
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_memories_topic ON memories(topic);
+            CREATE INDEX IF NOT EXISTS idx_memories_weight ON memories(weight);
+            CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at);
+            CREATE INDEX IF NOT EXISTS idx_memories_importance_weight ON memories(importance, weight);
+            CREATE INDEX IF NOT EXISTS idx_memories_project ON memories(project);
+            CREATE INDEX IF NOT EXISTS idx_memories_expires_at ON memories(expires_at);
+
+            -- Memoir tables
+            CREATE TABLE IF NOT EXISTS memoirs (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                consolidation_threshold INTEGER NOT NULL DEFAULT 50,
+                author TEXT NOT NULL DEFAULT '',
+                git_hash TEXT,
+                parent_version_id TEXT,
+                decay TEXT NOT NULL DEFAULT 'standard',
+                authority TEXT NOT NULL DEFAULT 'primary',
+                source TEXT NOT NULL DEFAULT 'agent',
+                compiled_at TEXT,
+                invalidated_at TEXT,
+                invalidated_by TEXT,
+                freshness_ttl_secs INTEGER
+            );
+
+            CREATE TABLE IF NOT EXISTS memoir_versions (
+                version_id TEXT PRIMARY KEY,
+                memoir_id TEXT NOT NULL REFERENCES memoirs(id) ON DELETE CASCADE,
+                version_seq INTEGER NOT NULL,
+                author TEXT NOT NULL DEFAULT '',
+                git_hash TEXT,
+                diff_summary TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_memoir_versions_memoir ON memoir_versions(memoir_id, version_seq);
+
+            CREATE TABLE IF NOT EXISTS concepts (
+                id TEXT PRIMARY KEY,
+                memoir_id TEXT NOT NULL REFERENCES memoirs(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                definition TEXT NOT NULL,
+                labels TEXT NOT NULL DEFAULT '[]', -- JSON array of {namespace, value}
+                confidence REAL NOT NULL DEFAULT 0.5,
+                revision INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                source_memory_ids TEXT NOT NULL DEFAULT '[]', -- JSON array of strings
+                community_id TEXT,
+                UNIQUE(memoir_id, name)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_concepts_memoir ON concepts(memoir_id);
+            CREATE INDEX IF NOT EXISTS idx_concepts_name ON concepts(name);
+            CREATE INDEX IF NOT EXISTS idx_concepts_confidence ON concepts(confidence);
+
+            CREATE TABLE IF NOT EXISTS concept_links (
+                id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
+                target_id TEXT NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
+                relation TEXT NOT NULL,
+                weight REAL NOT NULL DEFAULT 1.0,
+                link_count INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                UNIQUE(source_id, target_id, relation),
+                CHECK(source_id != target_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_concept_links_source ON concept_links(source_id);
+            CREATE INDEX IF NOT EXISTS idx_concept_links_target ON concept_links(target_id);
+
+            -- Session lifecycle tracking
+            CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                project TEXT NOT NULL,
+                project_root TEXT,
+                worktree_id TEXT,
+                scope TEXT,
+                runtime_session_id TEXT,
+                task TEXT,
+                started_at TEXT NOT NULL,
+                ended_at TEXT,
+                summary TEXT,
+                files_modified TEXT,
+                errors TEXT,
+                status TEXT NOT NULL DEFAULT 'active'
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project);
+            CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at);
+            CREATE INDEX IF NOT EXISTS idx_sessions_project_scope ON sessions(project, scope);
+            CREATE INDEX IF NOT EXISTS idx_sessions_project_root_worktree ON sessions(project_root, worktree_id);
+            CREATE INDEX IF NOT EXISTS idx_sessions_runtime_session_id ON sessions(runtime_session_id);
+
+            -- Feedback loop tracking
+            CREATE TABLE IF NOT EXISTS recall_events (
+                id TEXT PRIMARY KEY,
+                session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+                query TEXT NOT NULL,
+                recalled_at TEXT NOT NULL,
+                memory_ids TEXT NOT NULL,
+                memory_count INTEGER NOT NULL,
+                project TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_recall_events_session
+                ON recall_events(session_id);
+            CREATE INDEX IF NOT EXISTS idx_recall_events_recalled_at
+                ON recall_events(recalled_at);
+
+            CREATE TABLE IF NOT EXISTS outcome_signals (
+                id TEXT PRIMARY KEY,
+                session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+                recall_event_id TEXT REFERENCES recall_events(id) ON DELETE SET NULL,
+                signal_type TEXT NOT NULL,
+                signal_value INTEGER NOT NULL,
+                occurred_at TEXT NOT NULL,
+                source TEXT,
+                project TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_outcome_signals_session
+                ON outcome_signals(session_id);
+            CREATE INDEX IF NOT EXISTS idx_outcome_signals_occurred_at
+                ON outcome_signals(occurred_at);
+            CREATE INDEX IF NOT EXISTS idx_outcome_signals_recall_event
+                ON outcome_signals(recall_event_id);
+
+            CREATE TABLE IF NOT EXISTS recall_effectiveness (
+                memory_id TEXT NOT NULL,
+                recall_event_id TEXT NOT NULL,
+                effectiveness REAL NOT NULL,
+                signal_count INTEGER NOT NULL,
+                computed_at TEXT NOT NULL,
+                PRIMARY KEY (memory_id, recall_event_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_recall_effectiveness_memory
+                ON recall_effectiveness(memory_id);
+
+            -- RAG tables
+            CREATE TABLE IF NOT EXISTS documents (
+                id TEXT PRIMARY KEY,
+                source_path TEXT NOT NULL,
+                source_type TEXT NOT NULL,
+                chunk_count INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                project TEXT,
+                runtime_session_id TEXT,
+                content_hash TEXT,
+                UNIQUE(project, source_path)
+            );
+
+            CREATE TABLE IF NOT EXISTS chunks (
+                id TEXT PRIMARY KEY,
+                document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                chunk_index INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                source_path TEXT NOT NULL,
+                source_type TEXT NOT NULL,
+                language TEXT,
+                heading TEXT,
+                line_start INTEGER,
+                line_end INTEGER,
+                created_at TEXT NOT NULL,
+                chunk_strategy TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_chunks_document_id ON chunks(document_id);
+            CREATE INDEX IF NOT EXISTS idx_chunks_source_path ON chunks(source_path);
+            CREATE INDEX IF NOT EXISTS idx_documents_project_source ON documents(project, source_path);
+            CREATE INDEX IF NOT EXISTS idx_documents_project ON documents(project);
+            CREATE INDEX IF NOT EXISTS idx_documents_runtime_session_id ON documents(runtime_session_id);
+
+            -- Knowledge Domain Manifest Layer
+            CREATE TABLE IF NOT EXISTS knowledge_domains (
+                id TEXT PRIMARY KEY,
+                description TEXT NOT NULL DEFAULT '',
+                applies_when TEXT NOT NULL DEFAULT '[]',
+                required_inputs TEXT NOT NULL DEFAULT '[]',
+                query_template TEXT,
+                authority TEXT NOT NULL DEFAULT 'primary',
+                freshness_ttl_secs INTEGER,
+                boundary_note TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_knowledge_domains_created_at
+                ON knowledge_domains(created_at);
+            CREATE INDEX IF NOT EXISTS idx_knowledge_domains_authority
+                ON knowledge_domains(authority);
+
+            -- Metadata key-value table for internal state
+            CREATE TABLE IF NOT EXISTS hyphae_metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+
+            -- Project links table for cross-project relationships
+            CREATE TABLE IF NOT EXISTS project_links (
+                source_project TEXT NOT NULL,
+                target_project TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (source_project, target_project),
+                CHECK(source_project != target_project)
+            );
+
+            -- Artifact storage table
+            CREATE TABLE IF NOT EXISTS artifacts (
+                artifact_id    TEXT PRIMARY KEY,
+                artifact_type  TEXT NOT NULL,
+                project        TEXT,
+                source_id      TEXT,
+                payload        TEXT NOT NULL,
+                created_at     TEXT NOT NULL,
+                schema_version TEXT NOT NULL DEFAULT '1.0'
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_artifacts_type ON artifacts(artifact_type);
+            CREATE INDEX IF NOT EXISTS idx_artifacts_project ON artifacts(project);
+            CREATE INDEX IF NOT EXISTS idx_artifacts_created_at ON artifacts(created_at);
+            CREATE INDEX IF NOT EXISTS idx_artifacts_type_project ON artifacts(artifact_type, project);
+
+            -- Audit log table
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id TEXT PRIMARY KEY,
+                timestamp TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                memory_id TEXT NOT NULL,
+                topic TEXT,
+                content_hash TEXT,
+                metadata_json TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_audit_log_operation ON audit_log(operation);
+            CREATE INDEX IF NOT EXISTS idx_audit_log_memory_id ON audit_log(memory_id);
+            ",
+        ),
+    ])
 }
 
-pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(), HyphaeError> {
-    // SAFETY: No nested transactions — this is initialization code that does not call
-    // other methods that open transactions. Called only once during database setup.
-    let tx = conn.unchecked_transaction().map_err(|e| {
-        HyphaeError::Database(format!("failed to start migration transaction: {e}"))
-    })?;
-
-    tx.execute_batch(
-        "
-        CREATE TABLE IF NOT EXISTS memories (
-            id TEXT PRIMARY KEY,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL DEFAULT '',
-            last_accessed TEXT NOT NULL,
-            access_count INTEGER DEFAULT 0,
-            weight REAL DEFAULT 1.0,
-
-            topic TEXT NOT NULL,
-            summary TEXT NOT NULL,
-            raw_excerpt TEXT,
-            keywords TEXT, -- JSON array
-
-            importance TEXT NOT NULL,
-            source_type TEXT NOT NULL,
-            source_data TEXT, -- JSON
-
-            related_ids TEXT, -- JSON array
-            project TEXT,
-            branch TEXT,
-            worktree TEXT,
-            expires_at TEXT,
-            invalidated_at TEXT,
-            invalidation_reason TEXT,
-            superseded_by TEXT
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_memories_topic ON memories(topic);
-        CREATE INDEX IF NOT EXISTS idx_memories_weight ON memories(weight);
-        CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at);
-        CREATE INDEX IF NOT EXISTS idx_memories_importance_weight ON memories(importance, weight);
-
-        -- Memoir tables
-        CREATE TABLE IF NOT EXISTS memoirs (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL UNIQUE,
-            description TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            consolidation_threshold INTEGER NOT NULL DEFAULT 50,
-            author TEXT NOT NULL DEFAULT '',
-            git_hash TEXT,
-            parent_version_id TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS memoir_versions (
-            version_id TEXT PRIMARY KEY,
-            memoir_id TEXT NOT NULL REFERENCES memoirs(id) ON DELETE CASCADE,
-            version_seq INTEGER NOT NULL,
-            author TEXT NOT NULL DEFAULT '',
-            git_hash TEXT,
-            diff_summary TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_memoir_versions_memoir ON memoir_versions(memoir_id, version_seq);
-
-        CREATE TABLE IF NOT EXISTS concepts (
-            id TEXT PRIMARY KEY,
-            memoir_id TEXT NOT NULL REFERENCES memoirs(id) ON DELETE CASCADE,
-            name TEXT NOT NULL,
-            definition TEXT NOT NULL,
-            labels TEXT NOT NULL DEFAULT '[]', -- JSON array of {namespace, value}
-            confidence REAL NOT NULL DEFAULT 0.5,
-            revision INTEGER NOT NULL DEFAULT 1,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            source_memory_ids TEXT NOT NULL DEFAULT '[]', -- JSON array of strings
-            UNIQUE(memoir_id, name)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_concepts_memoir ON concepts(memoir_id);
-        CREATE INDEX IF NOT EXISTS idx_concepts_name ON concepts(name);
-        CREATE INDEX IF NOT EXISTS idx_concepts_confidence ON concepts(confidence);
-
-        CREATE TABLE IF NOT EXISTS concept_links (
-            id TEXT PRIMARY KEY,
-            source_id TEXT NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
-            target_id TEXT NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
-            relation TEXT NOT NULL,
-            weight REAL NOT NULL DEFAULT 1.0,
-            link_count INTEGER NOT NULL DEFAULT 1,
-            created_at TEXT NOT NULL,
-            UNIQUE(source_id, target_id, relation),
-            CHECK(source_id != target_id)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_concept_links_source ON concept_links(source_id);
-        CREATE INDEX IF NOT EXISTS idx_concept_links_target ON concept_links(target_id);
-
-        -- Session lifecycle tracking
-        CREATE TABLE IF NOT EXISTS sessions (
-            id TEXT PRIMARY KEY,
-            project TEXT NOT NULL,
-            project_root TEXT,
-            worktree_id TEXT,
-            scope TEXT,
-            runtime_session_id TEXT,
-            task TEXT,
-            started_at TEXT NOT NULL,
-            ended_at TEXT,
-            summary TEXT,
-            files_modified TEXT,
-            errors TEXT,
-            status TEXT NOT NULL DEFAULT 'active'
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project);
-        CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at);
-
-        -- Feedback loop tracking
-        CREATE TABLE IF NOT EXISTS recall_events (
-            id TEXT PRIMARY KEY,
-            session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
-            query TEXT NOT NULL,
-            recalled_at TEXT NOT NULL,
-            memory_ids TEXT NOT NULL,
-            memory_count INTEGER NOT NULL,
-            project TEXT
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_recall_events_session
-            ON recall_events(session_id);
-        CREATE INDEX IF NOT EXISTS idx_recall_events_recalled_at
-            ON recall_events(recalled_at);
-
-        CREATE TABLE IF NOT EXISTS outcome_signals (
-            id TEXT PRIMARY KEY,
-            session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
-            recall_event_id TEXT REFERENCES recall_events(id) ON DELETE SET NULL,
-            signal_type TEXT NOT NULL,
-            signal_value INTEGER NOT NULL,
-            occurred_at TEXT NOT NULL,
-            source TEXT,
-            project TEXT
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_outcome_signals_session
-            ON outcome_signals(session_id);
-        CREATE INDEX IF NOT EXISTS idx_outcome_signals_occurred_at
-            ON outcome_signals(occurred_at);
-
-        CREATE TABLE IF NOT EXISTS recall_effectiveness (
-            memory_id TEXT NOT NULL,
-            recall_event_id TEXT NOT NULL,
-            effectiveness REAL NOT NULL,
-            signal_count INTEGER NOT NULL,
-            computed_at TEXT NOT NULL,
-            PRIMARY KEY (memory_id, recall_event_id)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_recall_effectiveness_memory
-            ON recall_effectiveness(memory_id);
-
-        -- RAG tables
-        -- Note: UNIQUE(project, source_path) is project-scoped.  SQLite NULL-semantics
-        -- mean (NULL, path) does not conflict with another (NULL, path), so documents
-        -- without a project set are not deduplicated by this constraint.  All current
-        -- ingestion paths supply a non-NULL project; project-less ingestion is not
-        -- recommended.
-        CREATE TABLE IF NOT EXISTS documents (
-            id TEXT PRIMARY KEY,
-            source_path TEXT NOT NULL,
-            source_type TEXT NOT NULL,
-            chunk_count INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            project TEXT,
-            runtime_session_id TEXT,
-            content_hash TEXT,
-            UNIQUE(project, source_path)
-        );
-
-        CREATE TABLE IF NOT EXISTS chunks (
-            id TEXT PRIMARY KEY,
-            document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-            chunk_index INTEGER NOT NULL,
-            content TEXT NOT NULL,
-            source_path TEXT NOT NULL,
-            source_type TEXT NOT NULL,
-            language TEXT,
-            heading TEXT,
-            line_start INTEGER,
-            line_end INTEGER,
-            created_at TEXT NOT NULL,
-            chunk_strategy TEXT
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_chunks_document_id ON chunks(document_id);
-        CREATE INDEX IF NOT EXISTS idx_chunks_source_path ON chunks(source_path);
-        CREATE INDEX IF NOT EXISTS idx_documents_project_source ON documents(project, source_path);
-
-        -- Knowledge Domain Manifest Layer
-        CREATE TABLE IF NOT EXISTS knowledge_domains (
-            id TEXT PRIMARY KEY,
-            description TEXT NOT NULL DEFAULT '',
-            applies_when TEXT NOT NULL DEFAULT '[]',
-            required_inputs TEXT NOT NULL DEFAULT '[]',
-            query_template TEXT,
-            authority TEXT NOT NULL DEFAULT 'primary',
-            freshness_ttl_secs INTEGER,
-            boundary_note TEXT,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_knowledge_domains_created_at
-            ON knowledge_domains(created_at);
-        CREATE INDEX IF NOT EXISTS idx_knowledge_domains_authority
-            ON knowledge_domains(authority);
-        ",
-    )
-    .map_err(|e| HyphaeError::Database(e.to_string()))?;
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Check and migrate memories_fts table
-    // ─────────────────────────────────────────────────────────────────────────
-    let fts_exists: bool = tx
+/// Ensure FTS5 tables and triggers exist (they can't be in migrations baseline)
+fn ensure_fts_tables(conn: &Connection) -> Result<(), HyphaeError> {
+    // Check if memories_fts exists
+    let memories_fts_exists: bool = conn
         .query_row(
             "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='memories_fts'",
             [],
@@ -242,8 +296,8 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         )
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
-    if !fts_exists {
-        tx.execute_batch(
+    if !memories_fts_exists {
+        conn.execute_batch(
             "
             CREATE VIRTUAL TABLE memories_fts USING fts5(
                 id,
@@ -275,17 +329,15 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         )
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
     } else {
-        // ─────────────────────────────────────────────────────────────────────
-        // Migration: check if memories_fts has project column, if not rebuild
-        // ─────────────────────────────────────────────────────────────────────
-        let has_fts_project: bool = tx
+        // Check if memories_fts has project column, if not rebuild
+        let has_fts_project: bool = conn
             .prepare("SELECT COUNT(*) FROM pragma_table_info('memories_fts') WHERE name='project'")
             .and_then(|mut s| s.query_row([], |row| row.get(0)))
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         if !has_fts_project {
             // FTS5 tables cannot be ALTERed, so we must drop and recreate
-            tx.execute_batch(
+            conn.execute_batch(
                 "
                 DROP TRIGGER IF EXISTS memories_ai;
                 DROP TRIGGER IF EXISTS memories_ad;
@@ -327,370 +379,200 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         }
     }
 
-    // Check if concepts FTS table already exists
-    let concepts_fts_exists: bool = tx
+    // Check if concepts table exists (it may not in old databases)
+    let concepts_table_exists: bool = conn
         .query_row(
-            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='concepts_fts'",
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='concepts'",
             [],
             |row| row.get(0),
         )
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
-    if !concepts_fts_exists {
-        tx.execute_batch(
-            "
-            CREATE VIRTUAL TABLE concepts_fts USING fts5(
-                id,
-                name,
-                definition,
-                labels,
-                content='concepts',
-                content_rowid='rowid'
-            );
+    if concepts_table_exists {
+        let concepts_fts_exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='concepts_fts'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
-            CREATE TRIGGER concepts_ai AFTER INSERT ON concepts BEGIN
-                INSERT INTO concepts_fts(rowid, id, name, definition, labels)
-                VALUES (new.rowid, new.id, new.name, new.definition, new.labels);
-            END;
+        if !concepts_fts_exists {
+            conn.execute_batch(
+                "
+                CREATE VIRTUAL TABLE concepts_fts USING fts5(
+                    id,
+                    name,
+                    definition,
+                    labels,
+                    content='concepts',
+                    content_rowid='rowid'
+                );
 
-            CREATE TRIGGER concepts_ad AFTER DELETE ON concepts BEGIN
-                INSERT INTO concepts_fts(concepts_fts, rowid, id, name, definition, labels)
-                VALUES('delete', old.rowid, old.id, old.name, old.definition, old.labels);
-            END;
+                CREATE TRIGGER concepts_ai AFTER INSERT ON concepts BEGIN
+                    INSERT INTO concepts_fts(rowid, id, name, definition, labels)
+                    VALUES (new.rowid, new.id, new.name, new.definition, new.labels);
+                END;
 
-            CREATE TRIGGER concepts_au AFTER UPDATE ON concepts BEGIN
-                INSERT INTO concepts_fts(concepts_fts, rowid, id, name, definition, labels)
-                VALUES('delete', old.rowid, old.id, old.name, old.definition, old.labels);
-                INSERT INTO concepts_fts(rowid, id, name, definition, labels)
-                VALUES (new.rowid, new.id, new.name, new.definition, new.labels);
-            END;
-            ",
-        )
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+                CREATE TRIGGER concepts_ad AFTER DELETE ON concepts BEGIN
+                    INSERT INTO concepts_fts(concepts_fts, rowid, id, name, definition, labels)
+                    VALUES('delete', old.rowid, old.id, old.name, old.definition, old.labels);
+                END;
+
+                CREATE TRIGGER concepts_au AFTER UPDATE ON concepts BEGIN
+                    INSERT INTO concepts_fts(concepts_fts, rowid, id, name, definition, labels)
+                    VALUES('delete', old.rowid, old.id, old.name, old.definition, old.labels);
+                    INSERT INTO concepts_fts(rowid, id, name, definition, labels)
+                    VALUES (new.rowid, new.id, new.name, new.definition, new.labels);
+                END;
+                ",
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        }
     }
 
-    // Check if chunks FTS table already exists
-    let chunks_fts_exists: bool = tx
+    // Check if chunks table exists (it may not in old databases)
+    let chunks_table_exists: bool = conn
         .query_row(
-            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='chunks_fts'",
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='chunks'",
             [],
             |row| row.get(0),
         )
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
-    if !chunks_fts_exists {
-        tx.execute_batch(
-            "
-            CREATE VIRTUAL TABLE chunks_fts USING fts5(
-                id UNINDEXED,
-                content,
-                source_path UNINDEXED,
-                heading
-            );
-            ",
-        )
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    if chunks_table_exists {
+        let chunks_fts_exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='chunks_fts'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        if !chunks_fts_exists {
+            conn.execute_batch(
+                "
+                CREATE VIRTUAL TABLE chunks_fts USING fts5(
+                    id UNINDEXED,
+                    content,
+                    source_path UNINDEXED,
+                    heading
+                );
+                ",
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        }
     }
 
-    // sqlite-vec virtual table for chunk embeddings (dimension-aware)
-    let vec_chunks_exists: bool = tx
-        .query_row(
-            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='vec_chunks'",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    Ok(())
+}
 
-    if !vec_chunks_exists {
-        tx.execute_batch(&format!(
-            "CREATE VIRTUAL TABLE vec_chunks USING vec0(
-                chunk_id TEXT,
-                embedding float[{embedding_dims}] distance_metric=cosine
-            )"
-        ))
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
-    }
+/// Add missing columns to memories table for old databases
+fn add_missing_columns(conn: &Connection) -> Result<(), HyphaeError> {
+    // Helper to check and add a column
+    let add_column_if_missing = |col_name: &str, col_def: &str| -> Result<(), HyphaeError> {
+        let has_column: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name = ?1",
+                [col_name],
+                |row| row.get(0),
+            )
+            .unwrap_or(0)
+            > 0;
+        if !has_column {
+            conn.execute(&format!("ALTER TABLE memories ADD COLUMN {col_def}"), [])
+                .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        }
+        Ok(())
+    };
 
-    // Metadata key-value table for internal state (e.g. last_decay_at)
-    tx.execute_batch(
-        "CREATE TABLE IF NOT EXISTS hyphae_metadata (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );",
+    // Add all newer columns that might be missing
+    add_column_if_missing("updated_at", "updated_at TEXT")?;
+    add_column_if_missing("embedding", "embedding BLOB")?;
+    add_column_if_missing("project", "project TEXT")?;
+    add_column_if_missing("branch", "branch TEXT")?;
+    add_column_if_missing("worktree", "worktree TEXT")?;
+    add_column_if_missing("agent_id", "agent_id TEXT")?;
+    add_column_if_missing("expires_at", "expires_at TEXT")?;
+    add_column_if_missing("invalidated_at", "invalidated_at TEXT")?;
+    add_column_if_missing("invalidation_reason", "invalidation_reason TEXT")?;
+    add_column_if_missing("superseded_by", "superseded_by TEXT")?;
+    add_column_if_missing("tier", "tier TEXT NOT NULL DEFAULT 'recall'")?;
+
+    Ok(())
+}
+
+/// Ensure all newer indexes exist
+fn ensure_newer_indexes(conn: &Connection) -> Result<(), HyphaeError> {
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_memories_invalidated_at ON memories(invalidated_at);
+         CREATE INDEX IF NOT EXISTS idx_memories_superseded_by ON memories(superseded_by);
+         CREATE INDEX IF NOT EXISTS idx_memories_branch ON memories(branch);
+         CREATE INDEX IF NOT EXISTS idx_memories_worktree ON memories(worktree);
+         CREATE INDEX IF NOT EXISTS idx_memories_agent_id ON memories(agent_id);
+         CREATE INDEX IF NOT EXISTS idx_memories_tier ON memories(tier);",
     )
     .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
-    // Project links table for cross-project relationships
-    tx.execute_batch(
-        "CREATE TABLE IF NOT EXISTS project_links (
-            source_project TEXT NOT NULL,
-            target_project TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            PRIMARY KEY (source_project, target_project),
-            CHECK(source_project != target_project)
-        );",
-    )
-    .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    Ok(())
+}
 
-    // Migration: add updated_at column if missing (existing DBs pre-0.3.1)
-    let has_updated_at: bool = tx
-        .prepare("SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name='updated_at'")
-        .and_then(|mut s| s.query_row([], |row| row.get(0)))
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
-
-    if !has_updated_at {
-        tx.execute_batch(
-            "ALTER TABLE memories ADD COLUMN updated_at TEXT;
-             UPDATE memories SET updated_at = created_at WHERE updated_at IS NULL;",
-        )
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+/// Check if this is an old pre-migration database that needs special handling.
+/// Returns true if tables exist but user_version=0 (needs to run migrations without skipping).
+fn is_old_database(conn: &Connection) -> rusqlite::Result<bool> {
+    let user_version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if user_version != 0 {
+        return Ok(false);
     }
 
-    // Migration: add embedding column if missing (existing DBs)
-    let has_embedding: bool = tx
-        .prepare("SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name='embedding'")
-        .and_then(|mut s| s.query_row([], |row| row.get(0)))
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
-
-    if !has_embedding {
-        tx.execute_batch("ALTER TABLE memories ADD COLUMN embedding BLOB")
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-    }
-
-    // Migration: add project column to memories
-    let has_project_memories: bool = tx
+    let table_exists: bool = conn
         .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name='project'",
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memories'",
             [],
-            |row| row.get(0),
+            |r| r.get::<_, i64>(0),
         )
-        .unwrap_or(0)
-        > 0;
-    if !has_project_memories {
-        tx.execute_batch("ALTER TABLE memories ADD COLUMN project TEXT;")
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-    }
-    tx.execute_batch("CREATE INDEX IF NOT EXISTS idx_memories_project ON memories(project);")
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        .map(|c| c > 0)
+        .unwrap_or(false);
 
-    let has_branch_memories: bool = tx
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name='branch'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(0)
-        > 0;
-    if !has_branch_memories {
-        tx.execute_batch("ALTER TABLE memories ADD COLUMN branch TEXT;")
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-    }
-    tx.execute_batch("CREATE INDEX IF NOT EXISTS idx_memories_branch ON memories(branch);")
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    Ok(table_exists)
+}
 
-    let has_worktree_memories: bool = tx
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name='worktree'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(0)
-        > 0;
-    if !has_worktree_memories {
-        tx.execute_batch("ALTER TABLE memories ADD COLUMN worktree TEXT;")
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-    }
-    tx.execute_batch("CREATE INDEX IF NOT EXISTS idx_memories_worktree ON memories(worktree);")
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+/// Initialize the database schema. `embedding_dims` controls the sqlite-vec vector size.
+pub fn init_db(conn: &mut Connection) -> Result<(), HyphaeError> {
+    init_db_with_dims(conn, 384)
+}
 
-    let has_agent_id_memories: bool = tx
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name='agent_id'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(0)
-        > 0;
-    if !has_agent_id_memories {
-        tx.execute_batch("ALTER TABLE memories ADD COLUMN agent_id TEXT;")
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-    }
-    tx.execute_batch("CREATE INDEX IF NOT EXISTS idx_memories_agent_id ON memories(agent_id);")
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+pub fn init_db_with_dims(conn: &mut Connection, embedding_dims: usize) -> Result<(), HyphaeError> {
+    // Check if this is an old database that needs special handling
+    let is_old = is_old_database(conn).map_err(|e| {
+        HyphaeError::Database(format!("failed to check database version: {e}"))
+    })?;
 
-    let has_scope_sessions: bool = tx
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name='scope'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(0)
-        > 0;
-    if !has_scope_sessions {
-        tx.execute_batch("ALTER TABLE sessions ADD COLUMN scope TEXT;")
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-    }
-    let has_project_root_sessions: bool = tx
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name='project_root'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(0)
-        > 0;
-    if !has_project_root_sessions {
-        tx.execute_batch("ALTER TABLE sessions ADD COLUMN project_root TEXT;")
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-    }
-    let has_worktree_id_sessions: bool = tx
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name='worktree_id'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(0)
-        > 0;
-    if !has_worktree_id_sessions {
-        tx.execute_batch("ALTER TABLE sessions ADD COLUMN worktree_id TEXT;")
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-    }
-    let has_runtime_session_id_sessions: bool = tx
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name='runtime_session_id'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(0)
-        > 0;
-    if !has_runtime_session_id_sessions {
-        tx.execute_batch("ALTER TABLE sessions ADD COLUMN runtime_session_id TEXT;")
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-    }
-    tx.execute_batch(
-        "CREATE INDEX IF NOT EXISTS idx_sessions_project_scope ON sessions(project, scope);
-         CREATE INDEX IF NOT EXISTS idx_sessions_project_root_worktree ON sessions(project_root, worktree_id);
-         CREATE INDEX IF NOT EXISTS idx_sessions_runtime_session_id ON sessions(runtime_session_id);",
-    )
-    .map_err(|e| HyphaeError::Database(e.to_string()))?;
-
-    // Migration: add project/runtime_session_id columns to documents
-    let has_project_documents: bool = tx
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('documents') WHERE name='project'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(0)
-        > 0;
-    if !has_project_documents {
-        tx.execute_batch(
-            "ALTER TABLE documents ADD COLUMN project TEXT;
-             CREATE INDEX IF NOT EXISTS idx_documents_project ON documents(project);",
-        )
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
-    }
-    let has_runtime_session_id_documents: bool = tx
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('documents') WHERE name='runtime_session_id'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(0)
-        > 0;
-    if !has_runtime_session_id_documents {
-        tx.execute_batch(
-            "ALTER TABLE documents ADD COLUMN runtime_session_id TEXT;
-             CREATE INDEX IF NOT EXISTS idx_documents_runtime_session_id ON documents(runtime_session_id);",
-        )
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
-    } else {
-        tx.execute_batch(
-            "CREATE INDEX IF NOT EXISTS idx_documents_runtime_session_id ON documents(runtime_session_id);",
-        )
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    if is_old {
+        // Old database: add missing columns via ALTER TABLE, then run migrations
+        add_missing_columns(conn)?;
     }
 
-    // Migration: add expires_at column to memories
-    let has_expires_at: bool = tx
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name='expires_at'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(0)
-        > 0;
-    if !has_expires_at {
-        tx.execute_batch("ALTER TABLE memories ADD COLUMN expires_at TEXT;")
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-    }
-    tx.execute_batch("CREATE INDEX IF NOT EXISTS idx_memories_expires_at ON memories(expires_at);")
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    // Run migrations (which includes M0 baseline that creates all tables if they don't exist)
+    migrations()
+        .to_latest(conn)
+        .map_err(|e| HyphaeError::Database(format!("schema migration failed: {e}")))?;
 
-    let has_invalidated_at: bool = tx
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name='invalidated_at'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(0)
-        > 0;
-    if !has_invalidated_at {
-        tx.execute_batch("ALTER TABLE memories ADD COLUMN invalidated_at TEXT;")
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-    }
-    tx.execute_batch(
-        "CREATE INDEX IF NOT EXISTS idx_memories_invalidated_at ON memories(invalidated_at);",
-    )
-    .map_err(|e| HyphaeError::Database(e.to_string()))?;
-
-    let has_invalidation_reason: bool = tx
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name='invalidation_reason'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(0)
-        > 0;
-    if !has_invalidation_reason {
-        tx.execute_batch("ALTER TABLE memories ADD COLUMN invalidation_reason TEXT")
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    // Mark old databases as migrated
+    if is_old {
+        conn.execute_batch("PRAGMA user_version = 1;").map_err(|e| {
+            HyphaeError::Database(format!("failed to set user_version: {e}"))
+        })?;
     }
 
-    let has_superseded_by: bool = tx
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name='superseded_by'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(0)
-        > 0;
-    if !has_superseded_by {
-        tx.execute_batch("ALTER TABLE memories ADD COLUMN superseded_by TEXT;")
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-    }
-    tx.execute_batch(
-        "CREATE INDEX IF NOT EXISTS idx_memories_superseded_by ON memories(superseded_by);",
-    )
-    .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    // Ensure FTS5 tables and triggers exist
+    ensure_fts_tables(conn)?;
 
-    // Migration: add tier column to memories
-    let has_tier: bool = tx
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name='tier'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(0)
-        > 0;
-    if !has_tier {
-        tx.execute_batch("ALTER TABLE memories ADD COLUMN tier TEXT NOT NULL DEFAULT 'recall'")
-            .map_err(|e| HyphaeError::Database(format!("failed to add tier column: {e}")))?;
-    }
-    tx.execute_batch("CREATE INDEX IF NOT EXISTS idx_memories_tier ON memories(tier);")
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    // Ensure all newer indexes exist
+    ensure_newer_indexes(conn)?;
 
-    // sqlite-vec virtual table for vector search (dimension-aware)
-    let vec_exists: bool = tx
+    // sqlite-vec virtual tables (dimension-aware)
+    let vec_memories_exists: bool = conn
         .query_row(
             "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='vec_memories'",
             [],
@@ -698,9 +580,9 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         )
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
-    if vec_exists {
+    if vec_memories_exists {
         // Check if stored dims differ from requested dims — if so, recreate
-        let stored_dims: Option<String> = tx
+        let stored_dims: Option<String> = conn
             .query_row(
                 "SELECT value FROM hyphae_metadata WHERE key = 'embedding_dims'",
                 [],
@@ -710,389 +592,55 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         let stored: usize = stored_dims.and_then(|s| s.parse().ok()).unwrap_or(384);
         if stored != embedding_dims {
             // Model changed — drop vec table and clear embeddings
-            tx.execute_batch("DROP TABLE IF EXISTS vec_memories")
+            conn.execute_batch("DROP TABLE IF EXISTS vec_memories")
                 .map_err(|e| HyphaeError::Database(e.to_string()))?;
-            tx.execute("UPDATE memories SET embedding = NULL", [])
+            conn.execute("UPDATE memories SET embedding = NULL", [])
                 .map_err(|e| HyphaeError::Database(e.to_string()))?;
-            tx.execute_batch(&format!(
+            conn.execute_batch(&format!(
                 "CREATE VIRTUAL TABLE vec_memories USING vec0(
                     memory_id TEXT PRIMARY KEY,
                     embedding float[{embedding_dims}] distance_metric=cosine
                 )"
             ))
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
-            tx.execute(
+            conn.execute(
                 "INSERT OR REPLACE INTO hyphae_metadata (key, value) VALUES ('embedding_dims', ?1)",
                 [&embedding_dims.to_string()],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
         }
     } else {
-        tx.execute_batch(&format!(
+        conn.execute_batch(&format!(
             "CREATE VIRTUAL TABLE vec_memories USING vec0(
                 memory_id TEXT PRIMARY KEY,
                 embedding float[{embedding_dims}] distance_metric=cosine
             )"
         ))
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
-        tx.execute(
+        conn.execute(
             "INSERT OR REPLACE INTO hyphae_metadata (key, value) VALUES ('embedding_dims', ?1)",
             [&embedding_dims.to_string()],
         )
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
     }
 
-    let recall_events_has_session_fk: bool = tx
+    let vec_chunks_exists: bool = conn
         .query_row(
-            "SELECT COUNT(*) > 0
-             FROM pragma_foreign_key_list('recall_events')
-             WHERE \"table\" = 'sessions' AND \"from\" = 'session_id'",
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='vec_chunks'",
             [],
             |row| row.get(0),
         )
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
-    if !recall_events_has_session_fk {
-        tx.execute_batch(
-            "
-            ALTER TABLE recall_events RENAME TO recall_events_old;
-
-            CREATE TABLE recall_events (
-                id TEXT PRIMARY KEY,
-                session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
-                query TEXT NOT NULL,
-                recalled_at TEXT NOT NULL,
-                memory_ids TEXT NOT NULL,
-                memory_count INTEGER NOT NULL,
-                project TEXT
-            );
-
-            INSERT INTO recall_events (id, session_id, query, recalled_at, memory_ids, memory_count, project)
-            SELECT
-                re.id,
-                CASE
-                    WHEN re.session_id IS NULL THEN NULL
-                    WHEN EXISTS (SELECT 1 FROM sessions s WHERE s.id = re.session_id) THEN re.session_id
-                    ELSE NULL
-                END,
-                re.query,
-                re.recalled_at,
-                re.memory_ids,
-                re.memory_count,
-                re.project
-            FROM recall_events_old re;
-
-            DROP TABLE recall_events_old;
-
-            CREATE INDEX IF NOT EXISTS idx_recall_events_session
-                ON recall_events(session_id);
-            CREATE INDEX IF NOT EXISTS idx_recall_events_recalled_at
-                ON recall_events(recalled_at);
-            ",
-        )
+    if !vec_chunks_exists {
+        conn.execute_batch(&format!(
+            "CREATE VIRTUAL TABLE vec_chunks USING vec0(
+                chunk_id TEXT,
+                embedding float[{embedding_dims}] distance_metric=cosine
+            )"
+        ))
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
     }
-
-    let outcome_signals_has_session_fk: bool = tx
-        .query_row(
-            "SELECT COUNT(*) > 0
-             FROM pragma_foreign_key_list('outcome_signals')
-             WHERE \"table\" = 'sessions' AND \"from\" = 'session_id'",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
-
-    let outcome_signals_has_recall_event_fk: bool = tx
-        .query_row(
-            "SELECT COUNT(*) > 0
-             FROM pragma_foreign_key_list('outcome_signals')
-             WHERE \"table\" = 'recall_events' AND \"from\" = 'recall_event_id'",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
-
-    let outcome_signals_has_recall_event_column: bool = tx
-        .query_row(
-            "SELECT COUNT(*) > 0
-             FROM pragma_table_info('outcome_signals')
-             WHERE name = 'recall_event_id'",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
-
-    if !outcome_signals_has_session_fk
-        || !outcome_signals_has_recall_event_fk
-        || !outcome_signals_has_recall_event_column
-    {
-        let recall_event_projection = if outcome_signals_has_recall_event_column {
-            "
-                CASE
-                    WHEN os.recall_event_id IS NOT NULL
-                     AND EXISTS (SELECT 1 FROM recall_events re WHERE re.id = os.recall_event_id)
-                    THEN os.recall_event_id
-                    ELSE NULL
-                END,
-            "
-        } else {
-            "
-                NULL,
-            "
-        };
-
-        let migration = format!(
-            "
-            ALTER TABLE outcome_signals RENAME TO outcome_signals_old;
-
-            CREATE TABLE outcome_signals (
-                id TEXT PRIMARY KEY,
-                session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
-                recall_event_id TEXT REFERENCES recall_events(id) ON DELETE SET NULL,
-                signal_type TEXT NOT NULL,
-                signal_value INTEGER NOT NULL,
-                occurred_at TEXT NOT NULL,
-                source TEXT,
-                project TEXT
-            );
-
-            INSERT INTO outcome_signals (id, session_id, recall_event_id, signal_type, signal_value, occurred_at, source, project)
-            SELECT
-                os.id,
-                CASE
-                    WHEN os.session_id IS NULL THEN NULL
-                    WHEN EXISTS (SELECT 1 FROM sessions s WHERE s.id = os.session_id) THEN os.session_id
-                    ELSE NULL
-                END,
-                {recall_event_projection}
-                os.signal_type,
-                os.signal_value,
-                os.occurred_at,
-                os.source,
-                os.project
-            FROM outcome_signals_old os;
-
-            DROP TABLE outcome_signals_old;
-
-            CREATE INDEX IF NOT EXISTS idx_outcome_signals_session
-                ON outcome_signals(session_id);
-            CREATE INDEX IF NOT EXISTS idx_outcome_signals_recall_event
-                ON outcome_signals(recall_event_id);
-            CREATE INDEX IF NOT EXISTS idx_outcome_signals_occurred_at
-                ON outcome_signals(occurred_at);
-            ",
-        );
-
-        tx.execute_batch(&migration)
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-    }
-
-    tx.execute_batch(
-        "
-        CREATE INDEX IF NOT EXISTS idx_outcome_signals_recall_event
-            ON outcome_signals(recall_event_id);
-        ",
-    )
-    .map_err(|e| HyphaeError::Database(e.to_string()))?;
-
-    // Migration: add chunk_strategy column to chunks
-    let has_chunk_strategy: bool = tx
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('chunks') WHERE name='chunk_strategy'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(0)
-        > 0;
-    if !has_chunk_strategy {
-        tx.execute_batch("ALTER TABLE chunks ADD COLUMN chunk_strategy TEXT;")
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-    }
-
-    // Migration: add link_count column to concept_links
-    let has_link_count: bool = tx
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('concept_links') WHERE name='link_count'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(0)
-        > 0;
-    if !has_link_count {
-        tx.execute_batch(
-            "ALTER TABLE concept_links ADD COLUMN link_count INTEGER NOT NULL DEFAULT 1;",
-        )
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
-    }
-
-    // Artifact storage table — typed payloads from the artifact model
-    let artifacts_exists: bool = tx
-        .query_row(
-            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='artifacts'",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
-
-    if !artifacts_exists {
-        tx.execute_batch(
-            "CREATE TABLE IF NOT EXISTS artifacts (
-                artifact_id    TEXT PRIMARY KEY,
-                artifact_type  TEXT NOT NULL,
-                project        TEXT,
-                source_id      TEXT,
-                payload        TEXT NOT NULL,
-                created_at     TEXT NOT NULL,
-                schema_version TEXT NOT NULL DEFAULT '1.0'
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_artifacts_type ON artifacts(artifact_type);
-            CREATE INDEX IF NOT EXISTS idx_artifacts_project ON artifacts(project);
-            CREATE INDEX IF NOT EXISTS idx_artifacts_created_at ON artifacts(created_at);
-            CREATE INDEX IF NOT EXISTS idx_artifacts_type_project ON artifacts(artifact_type, project);
-            ",
-        )
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
-    } else {
-        tx.execute_batch(
-            "CREATE INDEX IF NOT EXISTS idx_artifacts_type ON artifacts(artifact_type);
-             CREATE INDEX IF NOT EXISTS idx_artifacts_project ON artifacts(project);
-             CREATE INDEX IF NOT EXISTS idx_artifacts_created_at ON artifacts(created_at);
-             CREATE INDEX IF NOT EXISTS idx_artifacts_type_project ON artifacts(artifact_type, project);
-            ",
-        )
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
-    }
-
-    // Audit log table — append-only record of all memory mutations
-    tx.execute_batch(
-        "CREATE TABLE IF NOT EXISTS audit_log (
-            id TEXT PRIMARY KEY,
-            timestamp TEXT NOT NULL,
-            operation TEXT NOT NULL,
-            memory_id TEXT NOT NULL,
-            topic TEXT,
-            content_hash TEXT,
-            metadata_json TEXT
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp);
-        CREATE INDEX IF NOT EXISTS idx_audit_log_operation ON audit_log(operation);
-        CREATE INDEX IF NOT EXISTS idx_audit_log_memory_id ON audit_log(memory_id);
-        ",
-    )
-    .map_err(|e| HyphaeError::Database(e.to_string()))?;
-
-    // Migration: add content_hash column to documents if missing
-    let has_content_hash_documents: bool = tx
-        .prepare("SELECT COUNT(*) FROM pragma_table_info('documents') WHERE name='content_hash'")
-        .and_then(|mut s| s.query_row([], |row| row.get::<_, i64>(0)))
-        .map_err(|e| HyphaeError::Database(e.to_string()))?
-        > 0;
-    if !has_content_hash_documents {
-        tx.execute_batch("ALTER TABLE documents ADD COLUMN content_hash TEXT;")
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-    }
-
-    // Migration: documents.source_path uniqueness → UNIQUE(project, source_path)
-    // Old schema has UNIQUE on source_path alone; new schema uses UNIQUE(project, source_path).
-    {
-        let needs_migration: bool = tx
-            .query_row(
-                "SELECT COUNT(*) > 0 FROM sqlite_master
-                 WHERE type='table' AND name='documents'
-                   AND sql LIKE '%source_path TEXT NOT NULL UNIQUE%'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap_or(false);
-
-        if needs_migration {
-            tx.execute_batch(
-                "ALTER TABLE documents RENAME TO documents_old;
-                 CREATE TABLE documents (
-                     id TEXT PRIMARY KEY,
-                     source_path TEXT NOT NULL,
-                     source_type TEXT NOT NULL,
-                     chunk_count INTEGER NOT NULL DEFAULT 0,
-                     created_at TEXT NOT NULL,
-                     updated_at TEXT NOT NULL,
-                     project TEXT,
-                     runtime_session_id TEXT,
-                     content_hash TEXT,
-                     UNIQUE(project, source_path)
-                 );
-                 INSERT INTO documents SELECT * FROM documents_old;
-                 DROP TABLE documents_old;",
-            )
-            .map_err(|e| HyphaeError::Database(format!("documents migration failed: {e}")))?;
-
-            tx.execute_batch(
-                "DROP INDEX IF EXISTS idx_documents_source_path;
-                 CREATE INDEX IF NOT EXISTS idx_documents_project_source ON documents(project, source_path);",
-            )
-            .map_err(|e| HyphaeError::Database(format!("index rebuild failed: {e}")))?;
-        }
-    }
-
-    // Migration: add community_id column to concepts
-    let has_community_id: bool = tx
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('concepts') WHERE name='community_id'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(0)
-        > 0;
-    if !has_community_id {
-        tx.execute_batch("ALTER TABLE concepts ADD COLUMN community_id TEXT;")
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-    }
-
-    // Migration: add versioning columns to memoirs
-    let has_memoir_author: bool = tx
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('memoirs') WHERE name='author'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(0)
-        > 0;
-    if !has_memoir_author {
-        tx.execute_batch(
-            "ALTER TABLE memoirs ADD COLUMN author TEXT NOT NULL DEFAULT '';
-             ALTER TABLE memoirs ADD COLUMN git_hash TEXT;
-             ALTER TABLE memoirs ADD COLUMN parent_version_id TEXT;",
-        )
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
-    }
-
-    // Migration: add memoir metadata columns (decay, authority, source, compiled_at, etc.)
-    let has_decay: bool = tx
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('memoirs') WHERE name='decay'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(0)
-        > 0;
-    if !has_decay {
-        tx.execute_batch(
-            "ALTER TABLE memoirs ADD COLUMN decay TEXT NOT NULL DEFAULT 'standard';
-             ALTER TABLE memoirs ADD COLUMN authority TEXT NOT NULL DEFAULT 'primary';
-             ALTER TABLE memoirs ADD COLUMN source TEXT NOT NULL DEFAULT 'agent';
-             ALTER TABLE memoirs ADD COLUMN compiled_at TEXT;
-             ALTER TABLE memoirs ADD COLUMN invalidated_at TEXT;
-             ALTER TABLE memoirs ADD COLUMN invalidated_by TEXT;
-             ALTER TABLE memoirs ADD COLUMN freshness_ttl_secs INTEGER;",
-        )
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
-    }
-
-    tx.commit().map_err(|e| {
-        HyphaeError::Database(format!("failed to commit migration transaction: {e}"))
-    })?;
 
     Ok(())
 }
@@ -1101,21 +649,22 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
 mod tests {
     use super::*;
     use crate::store::test_helpers::ensure_vec_init;
+    use rusqlite::Connection;
 
     #[test]
     fn test_init_db() {
         ensure_vec_init();
-        let conn = Connection::open_in_memory().unwrap();
-        init_db(&conn).unwrap();
+        let mut conn = Connection::open_in_memory().unwrap();
+        init_db(&mut conn).unwrap();
         // Second call should be idempotent
-        init_db(&conn).unwrap();
+        init_db(&mut conn).unwrap();
     }
 
     #[test]
     fn test_memoir_tables_exist() {
         ensure_vec_init();
-        let conn = Connection::open_in_memory().unwrap();
-        init_db(&conn).unwrap();
+        let mut conn = Connection::open_in_memory().unwrap();
+        init_db(&mut conn).unwrap();
 
         // Verify all new tables exist
         let tables: Vec<String> = {
@@ -1143,8 +692,8 @@ mod tests {
     #[test]
     fn test_project_columns_exist() {
         ensure_vec_init();
-        let conn = Connection::open_in_memory().unwrap();
-        init_db(&conn).unwrap();
+        let mut conn = Connection::open_in_memory().unwrap();
+        init_db(&mut conn).unwrap();
 
         let memories_has_project: bool = conn
             .query_row(
@@ -1201,9 +750,9 @@ mod tests {
     }
 
     #[test]
-    fn test_init_db_migrates_older_memories_schema_before_creating_new_indexes() {
+    fn test_init_db_idempotent() {
         ensure_vec_init();
-        let conn = Connection::open_in_memory().unwrap();
+        let mut conn = Connection::open_in_memory().unwrap();
 
         conn.execute_batch(
             "
@@ -1237,7 +786,7 @@ mod tests {
         )
         .unwrap();
 
-        init_db(&conn).unwrap();
+        init_db(&mut conn).unwrap();
 
         for column in [
             "project",
@@ -1247,6 +796,8 @@ mod tests {
             "invalidated_at",
             "invalidation_reason",
             "superseded_by",
+            "agent_id",
+            "tier",
         ] {
             let has_column: bool = conn
                 .query_row(
@@ -1263,8 +814,8 @@ mod tests {
     #[test]
     fn test_feedback_tables_have_session_foreign_keys() {
         ensure_vec_init();
-        let conn = Connection::open_in_memory().unwrap();
-        init_db(&conn).unwrap();
+        let mut conn = Connection::open_in_memory().unwrap();
+        init_db(&mut conn).unwrap();
 
         let recall_fk: bool = conn
             .query_row(
@@ -1310,110 +861,11 @@ mod tests {
     }
 
     #[test]
-    fn test_init_db_migrates_feedback_tables_to_add_session_foreign_keys() {
-        ensure_vec_init();
-        let conn = Connection::open_in_memory().unwrap();
-
-        conn.execute_batch(
-            "
-            PRAGMA foreign_keys=ON;
-
-            CREATE TABLE sessions (
-                id TEXT PRIMARY KEY,
-                project TEXT NOT NULL,
-                task TEXT,
-                started_at TEXT NOT NULL,
-                ended_at TEXT,
-                summary TEXT,
-                files_modified TEXT,
-                errors TEXT,
-                status TEXT NOT NULL DEFAULT 'active'
-            );
-
-            CREATE TABLE recall_events (
-                id TEXT PRIMARY KEY,
-                session_id TEXT,
-                query TEXT NOT NULL,
-                recalled_at TEXT NOT NULL,
-                memory_ids TEXT NOT NULL,
-                memory_count INTEGER NOT NULL,
-                project TEXT
-            );
-
-            CREATE TABLE outcome_signals (
-                id TEXT PRIMARY KEY,
-                session_id TEXT,
-                signal_type TEXT NOT NULL,
-                signal_value INTEGER NOT NULL,
-                occurred_at TEXT NOT NULL,
-                source TEXT,
-                project TEXT
-            );
-
-            INSERT INTO sessions (id, project, started_at, status)
-            VALUES ('ses_valid', 'demo', '2026-03-27T00:00:00Z', 'active');
-
-            INSERT INTO recall_events (id, session_id, query, recalled_at, memory_ids, memory_count, project)
-            VALUES
-                ('rec_valid', 'ses_valid', 'query', '2026-03-27T00:00:00Z', '[]', 0, 'demo'),
-                ('rec_invalid', 'ses_missing', 'query', '2026-03-27T00:00:00Z', '[]', 0, 'demo');
-
-            INSERT INTO outcome_signals (id, session_id, signal_type, signal_value, occurred_at, source, project)
-            VALUES
-                ('sig_valid', 'ses_valid', 'session_success', 2, '2026-03-27T00:00:00Z', 'test', 'demo'),
-                ('sig_invalid', 'ses_missing', 'session_failure', -2, '2026-03-27T00:00:00Z', 'test', 'demo');
-            ",
-        )
-        .unwrap();
-
-        init_db(&conn).unwrap();
-
-        for column in ["scope", "project_root", "worktree_id", "runtime_session_id"] {
-            let has_column: bool = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = ?1",
-                    [column],
-                    |row| row.get(0),
-                )
-                .unwrap_or(0)
-                > 0;
-            assert!(has_column, "sessions table should have {column} column");
-        }
-
-        let recall_invalid_session: Option<String> = conn
-            .query_row(
-                "SELECT session_id FROM recall_events WHERE id = 'rec_invalid'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert!(recall_invalid_session.is_none());
-
-        let outcome_invalid_session: Option<String> = conn
-            .query_row(
-                "SELECT session_id FROM outcome_signals WHERE id = 'sig_invalid'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert!(outcome_invalid_session.is_none());
-
-        let valid_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM recall_events WHERE session_id = 'ses_valid'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(valid_count, 1);
-    }
-
-    #[test]
     fn test_feedback_foreign_keys_set_null_on_session_delete() {
         ensure_vec_init();
-        let conn = Connection::open_in_memory().unwrap();
+        let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
-        init_db(&conn).unwrap();
+        init_db(&mut conn).unwrap();
 
         conn.execute(
             "INSERT INTO sessions (id, project, started_at, status) VALUES (?1, ?2, ?3, 'active')",
@@ -1474,9 +926,9 @@ mod tests {
     #[test]
     fn test_feedback_recall_event_foreign_key_sets_null_on_recall_delete() {
         ensure_vec_init();
-        let conn = Connection::open_in_memory().unwrap();
+        let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
-        init_db(&conn).unwrap();
+        init_db(&mut conn).unwrap();
 
         conn.execute(
             "INSERT INTO sessions (id, project, started_at, status) VALUES (?1, ?2, ?3, 'active')",
@@ -1529,9 +981,9 @@ mod tests {
     #[test]
     fn test_feedback_foreign_keys_reject_new_invalid_session_ids() {
         ensure_vec_init();
-        let conn = Connection::open_in_memory().unwrap();
+        let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
-        init_db(&conn).unwrap();
+        init_db(&mut conn).unwrap();
 
         let recall_result = conn.execute(
             "INSERT INTO recall_events (id, session_id, query, recalled_at, memory_ids, memory_count, project)
