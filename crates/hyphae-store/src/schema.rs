@@ -281,6 +281,19 @@ const BASELINE_SQL: &str = "
             CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp);
             CREATE INDEX IF NOT EXISTS idx_audit_log_operation ON audit_log(operation);
             CREATE INDEX IF NOT EXISTS idx_audit_log_memory_id ON audit_log(memory_id);
+
+            -- Shared cross-agent context
+            CREATE TABLE IF NOT EXISTS shared_context (
+                entry_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL DEFAULT '',
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                written_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_shared_context_session_key
+                ON shared_context(session_id, key, written_at DESC);
             ";
 
 fn migrations() -> Migrations<'static> {
@@ -681,6 +694,7 @@ mod tests {
         assert!(tables.contains(&"chunks_fts".to_string()));
         assert!(tables.contains(&"vec_chunks".to_string()));
         assert!(tables.contains(&"recall_effectiveness".to_string()));
+        assert!(tables.contains(&"shared_context".to_string()));
     }
 
     #[test]

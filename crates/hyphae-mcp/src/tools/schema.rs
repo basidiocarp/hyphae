@@ -868,6 +868,62 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }
     }));
 
+    // Shared context tools
+    tools.push(json!({
+        "name": "hyphae_context_put",
+        "description": "Write or overwrite a value in shared cross-agent context. Returns the entry_id of the stored entry.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "session_id": {
+                    "type": "string",
+                    "description": "Session ID for scoping the context"
+                },
+                "agent_id": {
+                    "type": "string",
+                    "description": "Agent identifier that wrote this context (optional, defaults to empty string)"
+                },
+                "key": {
+                    "type": "string",
+                    "description": "Key to store the value under"
+                },
+                "value": {
+                    "description": "JSON value to store (any valid JSON type: object, array, string, number, boolean, or null)"
+                }
+            },
+            "required": ["session_id", "key", "value"]
+        },
+        "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false
+        }
+    }));
+
+    tools.push(json!({
+        "name": "hyphae_context_get",
+        "description": "Retrieve the most recent value for a key from shared cross-agent context. Returns the entry or {found: false} if the key has never been written.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "session_id": {
+                    "type": "string",
+                    "description": "Session ID to scope the lookup"
+                },
+                "key": {
+                    "type": "string",
+                    "description": "Key to retrieve"
+                }
+            },
+            "required": ["session_id", "key"]
+        },
+        "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true
+        }
+    }));
+
     // RAG tools
     tools.push(json!({
         "name": "hyphae_ingest_file",
