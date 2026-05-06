@@ -15,6 +15,7 @@ mod project;
 mod purge;
 mod search;
 pub mod session;
+pub mod shared_context;
 
 pub use project::SHARED_PROJECT;
 pub use search::{UnifiedSearchResult, dispatch_search};

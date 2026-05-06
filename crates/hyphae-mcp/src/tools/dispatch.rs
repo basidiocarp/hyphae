@@ -113,6 +113,9 @@ pub fn call_tool_with_consolidation(
         "hyphae_get_command_chunks" => ingest::tool_get_command_chunks(store, args, trace),
         // Context gathering
         "hyphae_gather_context" => context::tool_gather_context(store, args, project, trace),
+        // Shared context tools
+        "hyphae_context_put" => context::tool_context_put(store, args, trace),
+        "hyphae_context_get" => context::tool_context_get(store, args, trace),
         // Session lifecycle tools
         "hyphae_session_start" => session::tool_session_start(store, embedder, args, trace),
         "hyphae_session_end" => session::tool_session_end(store, args, trace),

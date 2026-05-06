@@ -16,6 +16,7 @@ pub mod memoir_store;
 pub mod memory;
 pub mod sanitize;
 pub mod secrets;
+pub mod shared_context;
 pub mod store;
 pub mod tier;
 
@@ -48,5 +49,6 @@ pub use memory::{
 };
 pub use sanitize::{SanitizedQuery, sanitize_query};
 pub use secrets::detect_secrets;
+pub use shared_context::{SharedContextEntry, SharedContextStore};
 pub use store::{MemoryStore, SearchOrder, TopicMemoryOrder};
 pub use tier::MemoryTier;

@@ -420,6 +420,91 @@ fn is_sensitive_field_name(field_name: &str) -> bool {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Shared cross-agent context tools
+// ─────────────────────────────────────────────────────────────────────────────
+
+use hyphae_core::SharedContextStore;
+
+/// `hyphae_context_put` — write or overwrite a key in shared context.
+pub(crate) fn tool_context_put(
+    store: &SqliteStore,
+    args: &Value,
+    _trace: &ToolTraceContext,
+) -> ToolResult {
+    let session_id = match validate_required_string(args, "session_id") {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+
+    let key = match validate_required_string(args, "key") {
+        Ok(k) => k,
+        Err(e) => return e,
+    };
+
+    let value = match args.get("value") {
+        Some(v) => v.clone(),
+        None => return ToolResult::error("missing required field: value".into()),
+    };
+
+    let agent_id = get_str(args, "agent_id").unwrap_or("");
+
+    match store.put_context(session_id, agent_id, key, value) {
+        Ok(entry_id) => {
+            let result = json!({
+                "entry_id": entry_id,
+                "session_id": session_id,
+                "agent_id": agent_id,
+                "key": key,
+                "status": "stored"
+            });
+            ToolResult::text(result.to_string())
+        }
+        Err(e) => ToolResult::error(format!("failed to store context: {e}")),
+    }
+}
+
+/// `hyphae_context_get` — retrieve the most recent value for a key.
+pub(crate) fn tool_context_get(
+    store: &SqliteStore,
+    args: &Value,
+    _trace: &ToolTraceContext,
+) -> ToolResult {
+    let session_id = match validate_required_string(args, "session_id") {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+
+    let key = match validate_required_string(args, "key") {
+        Ok(k) => k,
+        Err(e) => return e,
+    };
+
+    match store.get_context(session_id, key) {
+        Ok(Some(entry)) => {
+            let result = json!({
+                "found": true,
+                "entry_id": entry.entry_id,
+                "session_id": entry.session_id,
+                "agent_id": entry.agent_id,
+                "key": entry.key,
+                "value": entry.value,
+                "written_at": entry.written_at.to_rfc3339()
+            });
+            ToolResult::text(result.to_string())
+        }
+        Ok(None) => {
+            let result = json!({
+                "found": false,
+                "session_id": session_id,
+                "key": key
+            });
+            ToolResult::text(result.to_string())
+        }
+        Err(e) => ToolResult::error(format!("failed to retrieve context: {e}")),
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
 
