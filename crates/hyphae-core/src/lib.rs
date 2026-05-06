@@ -44,7 +44,7 @@ pub use memoir_store::{ConceptInput, LinkInput, MemoirStore, UpsertReport};
 pub use memory::{
     ConsolidationConfig, ConsolidationTopicRule, DEFAULT_CONSOLIDATION_THRESHOLD, Importance,
     Memory, MemoryBuilder, MemorySource, SearchQuery, SearchType, SessionHost, StoreStats,
-    TopicHealth, Weight,
+    TopicHealth, Weight, WmOp, WmSection, WorkingMemory,
 };
 pub use sanitize::{SanitizedQuery, sanitize_query};
 pub use secrets::detect_secrets;

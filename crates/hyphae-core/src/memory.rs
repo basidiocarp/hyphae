@@ -660,3 +660,48 @@ pub struct TopicHealth {
     pub needs_consolidation: bool,
     pub stale_count: usize,
 }
+
+/// Working Memory operation type for incremental session document updates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum WmOp {
+    /// Keep existing content unchanged.
+    Keep,
+    /// Replace with new content.
+    Update,
+    /// Append new content to existing.
+    Append,
+}
+
+/// A section in a Working Memory document with merge semantics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WmSection {
+    /// Merge operation for incremental updates.
+    pub op: WmOp,
+    /// Section content as Markdown prose or bullet list.
+    pub content: String,
+}
+
+/// Structured session document emitted at session end by hyphae.
+/// Seven fixed sections with per-section merge semantics for incremental updates.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkingMemory {
+    /// Schema version sentinel.
+    pub schema_version: String,
+    /// ID of the hyphae session this document describes.
+    pub session_id: String,
+    /// Session title or task name.
+    pub session_title: WmSection,
+    /// Current state summary from session end.
+    pub current_state: WmSection,
+    /// Task and goals, extracted from session context.
+    pub task_and_goals: WmSection,
+    /// Key facts and decisions from memories.
+    pub key_facts_and_decisions: WmSection,
+    /// Files and context modified or affected.
+    pub files_and_context: WmSection,
+    /// Errors encountered and how they were corrected.
+    pub errors_and_corrections: WmSection,
+    /// Open issues and blockers for future work.
+    pub open_issues: WmSection,
+}

@@ -6,7 +6,10 @@
 use serde_json::{Value, json};
 use spore::logging::workflow_span;
 
-use hyphae_core::{Embedder, MemoirStore, MemoryStore, SCOPED_IDENTITY_SCHEMA_VERSION, ScopedIdentity};
+use hyphae_core::{
+    Embedder, Importance, MemoirStore, Memory, MemoryStore, SCOPED_IDENTITY_SCHEMA_VERSION,
+    ScopedIdentity, WmOp, WmSection, WorkingMemory,
+};
 use hyphae_store::SqliteStore;
 
 use crate::protocol::ToolResult;
@@ -104,7 +107,12 @@ fn build_session_context(store: &SqliteStore, session_id: &str, project: &str) -
         .map(|m| m.id.to_string())
         .collect();
     if !memory_ids.is_empty() {
-        if let Err(e) = store.log_recall_event(Some(session_id), "session_start_context", &memory_ids, Some(project)) {
+        if let Err(e) = store.log_recall_event(
+            Some(session_id),
+            "session_start_context",
+            &memory_ids,
+            Some(project),
+        ) {
             tracing::warn!("failed to log session_start recall event: {e}");
         }
     }
@@ -151,6 +159,97 @@ fn build_session_context(store: &SqliteStore, session_id: &str, project: &str) -
     })
 }
 
+fn build_working_memory(
+    store: &SqliteStore,
+    session_id: &str,
+    task: Option<String>,
+    project: &str,
+    summary: Option<&str>,
+    files_modified: Option<&str>,
+) -> WorkingMemory {
+    let session_title = task.as_deref().unwrap_or(session_id).to_string();
+
+    let current_state = summary.unwrap_or("Session ended.").to_string();
+
+    let task_and_goals = session_title.clone();
+
+    // Populate key facts and decisions from topic-scoped lookup.
+    // Decision memories are stored under "decisions/{project}" by convention.
+    let decisions_topic = format!("decisions/{project}");
+    let key_facts = match store.get_by_topic(&decisions_topic, Some(project)) {
+        Ok(memories) if !memories.is_empty() => memories
+            .iter()
+            .take(10)
+            .map(|m| format!("- {}", m.summary.lines().next().unwrap_or("")))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => "None identified.".to_string(),
+    };
+
+    // Extract files from files_modified JSON array
+    let files_context = match files_modified {
+        Some(json_str) => match serde_json::from_str::<Vec<String>>(json_str) {
+            Ok(files) => {
+                if files.is_empty() {
+                    "None modified.".to_string()
+                } else {
+                    files
+                        .iter()
+                        .map(|f| format!("- {}", f))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                }
+            }
+            Err(_) => "None recorded.".to_string(),
+        },
+        None => "None recorded.".to_string(),
+    };
+
+    // Populate errors and corrections from topic-scoped lookup
+    let errors = match store.get_by_topic("errors/resolved", Some(project)) {
+        Ok(memories) if !memories.is_empty() => memories
+            .iter()
+            .take(5)
+            .map(|m| format!("- {}", m.summary.lines().next().unwrap_or("")))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => "None encountered.".to_string(),
+    };
+
+    WorkingMemory {
+        schema_version: "1".to_string(),
+        session_id: session_id.to_string(),
+        session_title: WmSection {
+            op: WmOp::Update,
+            content: session_title,
+        },
+        current_state: WmSection {
+            op: WmOp::Update,
+            content: current_state,
+        },
+        task_and_goals: WmSection {
+            op: WmOp::Update,
+            content: task_and_goals,
+        },
+        key_facts_and_decisions: WmSection {
+            op: WmOp::Update,
+            content: key_facts,
+        },
+        files_and_context: WmSection {
+            op: WmOp::Update,
+            content: files_context,
+        },
+        errors_and_corrections: WmSection {
+            op: WmOp::Update,
+            content: errors,
+        },
+        open_issues: WmSection {
+            op: WmOp::Update,
+            content: "None identified.".to_string(),
+        },
+    }
+}
+
 /// `hyphae_session_end` — end a coding session.
 pub(crate) fn tool_session_end(
     store: &SqliteStore,
@@ -185,17 +284,51 @@ pub(crate) fn tool_session_end(
         files_modified.as_deref(),
         errors_encountered.as_deref(),
     ) {
-        Ok((project, _started_at, task, _ended_at, duration_minutes)) => ToolResult::text(
-            json!({
-                "schema_version": SCOPED_IDENTITY_SCHEMA_VERSION,
-                "stored": true,
-                "project": project,
-                "scoped_identity": scoped_identity,
-                "task": task,
-                "duration_minutes": duration_minutes,
-            })
-            .to_string(),
-        ),
+        Ok((project, _started_at, task, _ended_at, duration_minutes)) => {
+            // Build working memory document (best-effort, errors silently ignored)
+            let wm = build_working_memory(
+                store,
+                session_id,
+                task.clone(),
+                &project,
+                summary,
+                files_modified.as_deref(),
+            );
+            let working_memory_json = match serde_json::to_value(&wm) {
+                Ok(v) => {
+                    if let Ok(json_str) = serde_json::to_string(&wm) {
+                        let memory = Memory::builder(
+                            "sessions/working-memory".into(),
+                            json_str,
+                            Importance::High,
+                        )
+                        .project(project.clone())
+                        .build();
+                        if let Err(e) = store.store(memory) {
+                            tracing::warn!("failed to store working memory: {e}");
+                        }
+                    }
+                    v
+                }
+                Err(e) => {
+                    tracing::warn!("failed to serialize working memory: {e}");
+                    json!({"schema_version": "1", "session_id": session_id, "error": "serialization failed"})
+                }
+            };
+
+            ToolResult::text(
+                json!({
+                    "schema_version": SCOPED_IDENTITY_SCHEMA_VERSION,
+                    "stored": true,
+                    "project": project,
+                    "scoped_identity": scoped_identity,
+                    "task": task,
+                    "duration_minutes": duration_minutes,
+                    "working_memory": working_memory_json,
+                })
+                .to_string(),
+            )
+        }
         Err(e) => ToolResult::error(format!("{e}")),
     }
 }
@@ -493,11 +626,71 @@ mod tests {
             Some("test-proj")
         );
         assert_eq!(end_parsed["task"].as_str(), None);
+        assert!(
+            !end_parsed["working_memory"].is_null(),
+            "working_memory must be present and non-null"
+        );
+        assert_eq!(
+            end_parsed["working_memory"]["schema_version"].as_str(),
+            Some("1")
+        );
+        assert!(
+            end_parsed["working_memory"]["session_id"].is_string(),
+            "working_memory must include session_id"
+        );
+        assert!(
+            end_parsed["working_memory"]["current_state"]["content"]
+                .as_str()
+                .is_some(),
+            "working_memory current_state must have content"
+        );
 
         let session_memories = store
             .get_by_topic("session/test-proj", Some("test-proj"))
             .unwrap();
         assert!(session_memories.is_empty());
+    }
+
+    #[test]
+    fn test_session_end_working_memory_includes_seeded_decisions() {
+        let store = test_store();
+
+        // Seed a decision memory under "decisions/test-proj"
+        store
+            .store(
+                Memory::builder(
+                    "decisions/test-proj".into(),
+                    "Chose SQLite over Postgres for local-first storage".into(),
+                    Importance::High,
+                )
+                .project("test-proj".into())
+                .build(),
+            )
+            .unwrap();
+
+        let start_result = tool_session_start(
+            &store,
+            None,
+            &json!({"project": "test-proj"}),
+            &ToolTraceContext::default(),
+        );
+        let parsed: Value = serde_json::from_str(&start_result.content[0].text).unwrap();
+        let session_id = parsed["session_id"].as_str().unwrap();
+
+        let end_result = tool_session_end(
+            &store,
+            &json!({"session_id": session_id, "summary": "Done"}),
+            &ToolTraceContext::default(),
+        );
+        assert!(!end_result.is_error);
+        let end_parsed: Value = serde_json::from_str(&end_result.content[0].text).unwrap();
+        let key_facts = end_parsed["working_memory"]["key_facts_and_decisions"]["content"]
+            .as_str()
+            .unwrap_or("");
+        assert!(
+            key_facts.contains("SQLite"),
+            "key_facts_and_decisions must include the seeded decision memory, got: {key_facts}"
+        );
     }
 
     #[test]
@@ -848,11 +1041,11 @@ mod tests {
             ctx["established_facts"].is_array(),
             "established_facts must be an array"
         );
+        assert!(ctx["open_items"].is_array(), "open_items must be an array");
         assert!(
-            ctx["open_items"].is_array(),
-            "open_items must be an array"
+            ctx["environment"].is_null(),
+            "environment must be null until H-05"
         );
-        assert!(ctx["environment"].is_null(), "environment must be null until H-05");
         assert_eq!(
             ctx["env_artifact_stale"].as_bool(),
             Some(false),
