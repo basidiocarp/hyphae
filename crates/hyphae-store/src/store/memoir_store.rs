@@ -184,8 +184,8 @@ impl MemoirStore for SqliteStore {
         self.conn
             .execute(
                 "INSERT INTO concepts (id, memoir_id, name, definition, labels, confidence,
-                 revision, created_at, updated_at, source_memory_ids)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                 revision, created_at, updated_at, source_memory_ids, abstract_text, overview_text)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
                     concept.id.as_ref(),
                     concept.memoir_id.as_ref(),
@@ -197,6 +197,8 @@ impl MemoirStore for SqliteStore {
                     concept.created_at.to_rfc3339(),
                     concept.updated_at.to_rfc3339(),
                     source_ids_json,
+                    concept.abstract_text,
+                    concept.overview_text,
                 ],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
@@ -236,8 +238,10 @@ impl MemoirStore for SqliteStore {
         let changed = self
             .conn
             .execute(
+                // community_id is intentionally excluded — use set_concept_community() to change it.
                 "UPDATE concepts SET memoir_id = ?2, name = ?3, definition = ?4, labels = ?5,
-                 confidence = ?6, revision = ?7, updated_at = ?8, source_memory_ids = ?9
+                 confidence = ?6, revision = ?7, updated_at = ?8, source_memory_ids = ?9,
+                 abstract_text = ?10, overview_text = ?11
                  WHERE id = ?1",
                 params![
                     concept.id.as_ref(),
@@ -249,6 +253,8 @@ impl MemoirStore for SqliteStore {
                     concept.revision,
                     concept.updated_at.to_rfc3339(),
                     source_ids_json,
+                    concept.abstract_text,
+                    concept.overview_text,
                 ],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
@@ -301,7 +307,8 @@ impl MemoirStore for SqliteStore {
         }
 
         let sql = "SELECT c.id, c.memoir_id, c.name, c.definition, c.labels, c.confidence,
-                    c.revision, c.created_at, c.updated_at, c.source_memory_ids, c.community_id
+                    c.revision, c.created_at, c.updated_at, c.source_memory_ids, c.community_id,
+                    c.abstract_text, c.overview_text
              FROM concepts c
              JOIN concepts_fts fts ON c.rowid = fts.rowid
              WHERE c.memoir_id = ?1
@@ -336,7 +343,8 @@ impl MemoirStore for SqliteStore {
         }
 
         let sql = "SELECT c.id, c.memoir_id, c.name, c.definition, c.labels, c.confidence,
-                    c.revision, c.created_at, c.updated_at, c.source_memory_ids, c.community_id
+                    c.revision, c.created_at, c.updated_at, c.source_memory_ids, c.community_id,
+                    c.abstract_text, c.overview_text
              FROM concepts c
              JOIN concepts_fts fts ON c.rowid = fts.rowid
              WHERE concepts_fts MATCH ?1
@@ -1526,5 +1534,65 @@ mod tests {
         let fake_id = ConceptId::from("fake_id_that_does_not_exist");
         let result = store.consolidate_concept_definition(&fake_id, "whatever");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_abstract_and_overview_text_roundtrip() {
+        let store = test_store();
+        let memoir = Memoir::new("test_tiered_content".into(), "".into());
+        let memoir_id = store.create_memoir(memoir).unwrap();
+
+        let mut concept = Concept::new(
+            memoir_id.clone(),
+            "TestConcept".to_string(),
+            "A detailed definition of the concept.".to_string(),
+        );
+        concept.abstract_text = Some("Short abstract summary".to_string());
+        concept.overview_text =
+            Some("This is a longer overview paragraph providing context.".to_string());
+
+        let concept_id = store.add_concept(concept.clone()).unwrap();
+
+        // Retrieve by ID and verify round-trip
+        let retrieved = store.get_concept(&concept_id).unwrap().unwrap();
+        assert_eq!(
+            retrieved.abstract_text,
+            Some("Short abstract summary".to_string())
+        );
+        assert_eq!(
+            retrieved.overview_text,
+            Some("This is a longer overview paragraph providing context.".to_string())
+        );
+
+        // Retrieve by name and verify round-trip
+        let retrieved_by_name = store
+            .get_concept_by_name(&memoir_id, "TestConcept")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            retrieved_by_name.abstract_text,
+            Some("Short abstract summary".to_string())
+        );
+        assert_eq!(
+            retrieved_by_name.overview_text,
+            Some("This is a longer overview paragraph providing context.".to_string())
+        );
+
+        // Update the concept with new tiered content and verify
+        let mut updated = retrieved.clone();
+        updated.abstract_text = Some("Updated abstract".to_string());
+        updated.overview_text = Some("Updated overview with more details.".to_string());
+
+        store.update_concept(&updated).unwrap();
+
+        let final_concept = store.get_concept(&concept_id).unwrap().unwrap();
+        assert_eq!(
+            final_concept.abstract_text,
+            Some("Updated abstract".to_string())
+        );
+        assert_eq!(
+            final_concept.overview_text,
+            Some("Updated overview with more details.".to_string())
+        );
     }
 }

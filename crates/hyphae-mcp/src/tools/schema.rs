@@ -456,6 +456,16 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     "labels": {
                         "type": "string",
                         "description": "Comma-separated labels (namespace:value or plain tag). E.g. 'domain:arch,type:decision'"
+                    },
+                    "abstract_text": {
+                        "type": "string",
+                        "maxLength": 150,
+                        "description": "Short abstract or summary (≤150 characters)"
+                    },
+                    "overview_text": {
+                        "type": "string",
+                        "maxLength": 500,
+                        "description": "Overview paragraph providing context (≤500 characters)"
                     }
                 },
                 "required": ["memoir", "name", "definition"]
@@ -484,6 +494,16 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                         "type": "string",
                         "maxLength": 32768,
                         "description": "New, refined definition"
+                    },
+                    "abstract_text": {
+                        "type": "string",
+                        "maxLength": 150,
+                        "description": "Short abstract or summary (≤150 characters)"
+                    },
+                    "overview_text": {
+                        "type": "string",
+                        "maxLength": 500,
+                        "description": "Overview paragraph providing context (≤500 characters)"
                     }
                 },
                 "required": ["memoir", "name", "definition"]

@@ -191,6 +191,30 @@ pub(crate) fn tool_memoir_add_concept(
             .collect();
     }
 
+    // Parse optional tiered-content fields
+    let abstract_text: Option<String> = args
+        .get("abstract_text")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let overview_text: Option<String> = args
+        .get("overview_text")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+
+    if let Some(ref t) = abstract_text {
+        if let Err(e) = validate_max_length(t, "abstract_text", 150) {
+            return e;
+        }
+    }
+    if let Some(ref t) = overview_text {
+        if let Err(e) = validate_max_length(t, "overview_text", 500) {
+            return e;
+        }
+    }
+
+    concept.abstract_text = abstract_text;
+    concept.overview_text = overview_text;
+
     match store.add_concept(concept) {
         Ok(id) => {
             // Dual-write to memory store so memoir concepts appear in hyphae search results.
@@ -264,10 +288,48 @@ pub(crate) fn tool_memoir_refine(
         return ToolResult::error(format!("failed to refine: {e}"));
     }
 
-    let updated = match store.get_concept(&concept.id) {
+    let mut updated = match store.get_concept(&concept.id) {
         Ok(Some(c)) => c,
         _ => return ToolResult::text(format!("Refined concept '{name}'")),
     };
+
+    // Parse optional tiered-content fields and update if provided
+    let abstract_text: Option<String> = args
+        .get("abstract_text")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let overview_text: Option<String> = args
+        .get("overview_text")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+
+    if let Some(ref t) = abstract_text {
+        if let Err(e) = validate_max_length(t, "abstract_text", 150) {
+            return e;
+        }
+    }
+    if let Some(ref t) = overview_text {
+        if let Err(e) = validate_max_length(t, "overview_text", 500) {
+            return e;
+        }
+    }
+
+    if abstract_text.is_some() || overview_text.is_some() {
+        if let Some(text) = abstract_text {
+            updated.abstract_text = Some(text);
+        }
+        if let Some(text) = overview_text {
+            updated.overview_text = Some(text);
+        }
+        if let Err(e) = store.update_concept(&updated) {
+            return ToolResult::error(format!("failed to update tiered content: {e}"));
+        }
+        // Refresh to get the confirmed state
+        updated = match store.get_concept(&updated.id) {
+            Ok(Some(c)) => c,
+            _ => updated,
+        };
+    }
 
     // Auto-consolidate when the concept has been refined beyond the threshold.
     // Uses revision as the refinement counter; resets to 0 after consolidation.

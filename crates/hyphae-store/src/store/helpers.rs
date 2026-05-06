@@ -259,11 +259,13 @@ pub(crate) fn row_to_concept(row: &rusqlite::Row) -> rusqlite::Result<Concept> {
         updated_at: parse_dt(&row.get::<_, String>(8)?),
         source_memory_ids,
         community_id: row.get::<_, Option<String>>(10)?,
+        abstract_text: row.get::<_, Option<String>>(11)?,
+        overview_text: row.get::<_, Option<String>>(12)?,
     })
 }
 
 pub(crate) const CONCEPT_COLS: &str = "id, memoir_id, name, definition, labels, confidence, \
-     revision, created_at, updated_at, source_memory_ids, community_id";
+     revision, created_at, updated_at, source_memory_ids, community_id, abstract_text, overview_text";
 
 pub(crate) fn row_to_link(row: &rusqlite::Row) -> rusqlite::Result<ConceptLink> {
     let relation_str: String = row.get(3)?;

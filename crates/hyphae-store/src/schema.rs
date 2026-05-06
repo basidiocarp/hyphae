@@ -89,6 +89,8 @@ const BASELINE_SQL: &str = "
                 updated_at TEXT NOT NULL,
                 source_memory_ids TEXT NOT NULL DEFAULT '[]', -- JSON array of strings
                 community_id TEXT,
+                abstract_text TEXT,
+                overview_text TEXT,
                 UNIQUE(memoir_id, name)
             );
 
@@ -528,6 +530,10 @@ fn bootstrap_existing_db(conn: &mut Connection) -> Result<(), HyphaeError> {
     );
     let _ = conn.execute("ALTER TABLE memories ADD COLUMN superseded_by TEXT", []);
     let _ = conn.execute("ALTER TABLE memories ADD COLUMN tier TEXT", []);
+
+    // Add tiered-memoir-content columns to concepts table
+    let _ = conn.execute("ALTER TABLE concepts ADD COLUMN abstract_text TEXT", []);
+    let _ = conn.execute("ALTER TABLE concepts ADD COLUMN overview_text TEXT", []);
 
     // Run the full baseline SQL to create any tables added after the initial install.
     // All statements use IF NOT EXISTS — safe to run on any database state.
