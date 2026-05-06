@@ -1,9 +1,7 @@
 use serde_json::{Value, json};
 use std::str::FromStr;
 
-use hyphae_core::{
-    ApplicabilityRule, Authority, InputSpec, KnowledgeDomain,
-};
+use hyphae_core::{ApplicabilityRule, Authority, InputSpec, KnowledgeDomain};
 use hyphae_store::SqliteStore;
 
 use crate::protocol::ToolResult;

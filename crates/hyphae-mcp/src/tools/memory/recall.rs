@@ -464,9 +464,7 @@ pub(crate) fn tool_recall(
                     }
                 }
                 Ok(None) => {
-                    tracing::debug!(
-                        "domain_hint '{domain_id}' not found, using unscoped recall"
-                    );
+                    tracing::debug!("domain_hint '{domain_id}' not found, using unscoped recall");
                 }
                 Err(e) => {
                     tracing::warn!("failed to load domain '{domain_id}': {e}");

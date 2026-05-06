@@ -1,5 +1,5 @@
 use rusqlite::Connection;
-use rusqlite_migration::{Migrations, M};
+use rusqlite_migration::{M, Migrations};
 
 use hyphae_core::HyphaeError;
 
@@ -522,7 +522,10 @@ fn bootstrap_existing_db(conn: &mut Connection) -> Result<(), HyphaeError> {
     let _ = conn.execute("ALTER TABLE memories ADD COLUMN agent_id TEXT", []);
     let _ = conn.execute("ALTER TABLE memories ADD COLUMN expires_at TEXT", []);
     let _ = conn.execute("ALTER TABLE memories ADD COLUMN invalidated_at TEXT", []);
-    let _ = conn.execute("ALTER TABLE memories ADD COLUMN invalidation_reason TEXT", []);
+    let _ = conn.execute(
+        "ALTER TABLE memories ADD COLUMN invalidation_reason TEXT",
+        [],
+    );
     let _ = conn.execute("ALTER TABLE memories ADD COLUMN superseded_by TEXT", []);
     let _ = conn.execute("ALTER TABLE memories ADD COLUMN tier TEXT", []);
 
@@ -691,8 +694,9 @@ mod tests {
             documents_has_project,
             "documents table should have project column"
         );
-        let documents_has_runtime_session_id =
-            conn.prepare("SELECT runtime_session_id FROM documents").is_ok();
+        let documents_has_runtime_session_id = conn
+            .prepare("SELECT runtime_session_id FROM documents")
+            .is_ok();
         assert!(
             documents_has_runtime_session_id,
             "documents table should have runtime_session_id column"

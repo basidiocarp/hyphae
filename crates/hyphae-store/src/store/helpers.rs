@@ -177,13 +177,19 @@ pub(crate) fn parse_dt(s: &str) -> DateTime<Utc> {
 pub(crate) fn row_to_memoir(row: &rusqlite::Row) -> rusqlite::Result<Memoir> {
     use hyphae_core::{Authority, Decay, MemoirMeta, MemoirSource};
 
-    let decay_str: String = row.get::<_, Option<String>>(9)?.unwrap_or_else(|| "standard".to_string());
+    let decay_str: String = row
+        .get::<_, Option<String>>(9)?
+        .unwrap_or_else(|| "standard".to_string());
     let decay = decay_str.parse::<Decay>().unwrap_or_default();
 
-    let authority_str: String = row.get::<_, Option<String>>(10)?.unwrap_or_else(|| "primary".to_string());
+    let authority_str: String = row
+        .get::<_, Option<String>>(10)?
+        .unwrap_or_else(|| "primary".to_string());
     let authority = authority_str.parse::<Authority>().unwrap_or_default();
 
-    let source_str: String = row.get::<_, Option<String>>(11)?.unwrap_or_else(|| "agent".to_string());
+    let source_str: String = row
+        .get::<_, Option<String>>(11)?
+        .unwrap_or_else(|| "agent".to_string());
     let source = source_str.parse::<MemoirSource>().unwrap_or_default();
 
     let compiled_at_str: Option<String> = row.get(12)?;

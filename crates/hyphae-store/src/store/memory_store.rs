@@ -14,6 +14,54 @@ use super::helpers::{
 };
 use super::search::sanitize_fts_query;
 
+/// Hotness = sigmoid(ln(1 + access_count)) * exp(-age_days / half_life_days).
+/// Returns a value in [0.0, 1.0].
+fn hotness_score(
+    access_count: u32,
+    last_accessed: &chrono::DateTime<chrono::Utc>,
+    half_life_days: f32,
+) -> f32 {
+    let age_days = (chrono::Utc::now() - *last_accessed).num_seconds().max(0) as f32 / 86_400.0;
+    let frequency = (1.0 + access_count as f32).ln();
+    let sig = 1.0 / (1.0 + (-frequency).exp());
+    let decay = (-age_days / half_life_days).exp();
+    (sig * decay).clamp(0.0, 1.0)
+}
+
+#[derive(Clone, Debug)]
+struct HotnessConfig {
+    alpha: f32,
+    half_life_days: f32,
+}
+
+impl Default for HotnessConfig {
+    fn default() -> Self {
+        Self {
+            alpha: 0.15,
+            half_life_days: 7.0,
+        }
+    }
+}
+
+impl HotnessConfig {
+    fn from_env() -> Self {
+        let alpha = std::env::var("HYPHAE_HOTNESS_ALPHA")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.15_f32)
+            .clamp(0.0, 1.0);
+        let half_life_days = std::env::var("HYPHAE_HOTNESS_HALF_LIFE_DAYS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(7.0_f32)
+            .max(0.1);
+        Self {
+            alpha,
+            half_life_days,
+        }
+    }
+}
+
 impl SqliteStore {
     pub fn search_fts_scoped(
         &self,
@@ -57,6 +105,10 @@ impl SqliteStore {
         for row in rows {
             results.push(row.map_err(|e| HyphaeError::Database(e.to_string()))?);
         }
+
+        let result_ids: Vec<&str> = results.iter().map(|m| m.id.as_ref()).collect();
+        let _ = self.increment_access_counts(result_ids.as_slice());
+
         Ok(results)
     }
 
@@ -120,6 +172,10 @@ impl SqliteStore {
         for row in rows {
             results.push(row.map_err(|e| HyphaeError::Database(e.to_string()))?);
         }
+
+        let result_ids: Vec<&str> = results.iter().map(|m| m.id.as_ref()).collect();
+        let _ = self.increment_access_counts(result_ids.as_slice());
+
         Ok(results)
     }
 
@@ -257,6 +313,8 @@ impl SqliteStore {
             }
         };
 
+        let cfg = HotnessConfig::from_env();
+
         let mut scored: Vec<(String, f32)> = Vec::new();
         for id in candidate_ids {
             let fts_score = fts_scores.get(&id).copied().unwrap_or(0.0);
@@ -266,9 +324,14 @@ impl SqliteStore {
                 .get(&id)
                 .map(|memory| (memory.weight.value() - 0.5) * 0.05)
                 .unwrap_or(0.0);
-            let combined =
+            let hot = all_memories
+                .get(&id)
+                .map(|m| hotness_score(m.access_count, &m.last_accessed, cfg.half_life_days))
+                .unwrap_or(0.0);
+            let similarity =
                 0.3 * fts_score + 0.7 * vec_score + static_weight_bias + 0.12 * learned_score;
-            scored.push((id, combined.clamp(0.0, 1.5)));
+            let combined = similarity * (1.0 - cfg.alpha) + hot * cfg.alpha;
+            scored.push((id, combined.clamp(0.0, 1.0)));
         }
 
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -279,6 +342,9 @@ impl SqliteStore {
             .take(limit)
             .filter_map(|(id, score)| all_memories.remove(&id).map(|mem| (mem, score)))
             .collect();
+
+        let result_ids: Vec<&str> = results.iter().map(|(m, _)| m.id.as_ref()).collect();
+        let _ = self.increment_access_counts(result_ids.as_slice());
 
         Ok(results)
     }
@@ -446,6 +512,38 @@ impl SqliteStore {
         tx.commit()
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
         Ok(id)
+    }
+
+    fn increment_access_counts(&self, ids: &[&str]) -> HyphaeResult<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let now = Utc::now().to_rfc3339();
+        let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
+        let in_clause = placeholders.join(",");
+        let sql = format!(
+            "UPDATE memories SET access_count = access_count + 1, last_accessed = ?{} WHERE id IN ({})",
+            ids.len() + 1,
+            in_clause
+        );
+
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = ids
+            .iter()
+            .map(|id| Box::new(id.to_string()) as Box<dyn rusqlite::types::ToSql>)
+            .collect();
+        param_values.push(Box::new(now));
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            param_values.iter().map(|p| p.as_ref()).collect();
+
+        self.conn
+            .execute(sql.as_str(), params_ref.as_slice())
+            .map_err(|e| {
+                tracing::warn!("increment_access_counts failed (best-effort): {e}");
+                HyphaeError::Database(e.to_string())
+            })?;
+
+        Ok(())
     }
 }
 
@@ -1084,6 +1182,8 @@ impl MemoryStore for SqliteStore {
             }
         };
 
+        let cfg = HotnessConfig::from_env();
+
         let mut scored: Vec<(String, f32)> = Vec::new();
         for id in candidate_ids {
             let fts_score = fts_scores.get(&id).copied().unwrap_or(0.0);
@@ -1093,9 +1193,14 @@ impl MemoryStore for SqliteStore {
                 .get(&id)
                 .map(|memory| (memory.weight.value() - 0.5) * 0.05)
                 .unwrap_or(0.0);
-            let combined =
+            let hot = all_memories
+                .get(&id)
+                .map(|m| hotness_score(m.access_count, &m.last_accessed, cfg.half_life_days))
+                .unwrap_or(0.0);
+            let similarity =
                 0.3 * fts_score + 0.7 * vec_score + static_weight_bias + 0.12 * learned_score;
-            scored.push((id, combined.clamp(0.0, 1.5)));
+            let combined = similarity * (1.0 - cfg.alpha) + hot * cfg.alpha;
+            scored.push((id, combined.clamp(0.0, 1.0)));
         }
 
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -1106,6 +1211,9 @@ impl MemoryStore for SqliteStore {
             .take(limit)
             .filter_map(|(id, score)| all_memories.remove(&id).map(|mem| (mem, score)))
             .collect();
+
+        let result_ids: Vec<&str> = results.iter().map(|(m, _)| m.id.as_ref()).collect();
+        let _ = self.increment_access_counts(result_ids.as_slice());
 
         Ok(results)
     }
@@ -1853,5 +1961,37 @@ impl MemoryStore for SqliteStore {
         tx.commit()
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
         Ok(changed)
+    }
+}
+
+#[cfg(test)]
+mod hotness_tests {
+    use super::*;
+    use chrono::Utc;
+
+    #[test]
+    fn hotness_zero_access_count_never_recalled() {
+        let score = hotness_score(0, &Utc::now(), 7.0);
+        assert!(score > 0.0 && score < 1.0, "score={score}");
+    }
+
+    #[test]
+    fn hotness_high_count_recent_scores_high() {
+        let score = hotness_score(50, &Utc::now(), 7.0);
+        assert!(score > 0.9, "score={score}");
+    }
+
+    #[test]
+    fn hotness_decays_with_age() {
+        let recent = hotness_score(10, &Utc::now(), 7.0);
+        let old = hotness_score(10, &(Utc::now() - chrono::Duration::days(30)), 7.0);
+        assert!(recent > old, "recent={recent} old={old}");
+    }
+
+    #[test]
+    fn hotness_config_defaults() {
+        let cfg = HotnessConfig::default();
+        assert_eq!(cfg.alpha, 0.15);
+        assert_eq!(cfg.half_life_days, 7.0);
     }
 }

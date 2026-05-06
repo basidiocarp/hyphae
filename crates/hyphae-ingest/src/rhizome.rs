@@ -77,9 +77,7 @@ fn parse_chunk_boundaries_response(
     let boundaries = response
         .get("boundaries")
         .and_then(|b| b.as_array())
-        .ok_or_else(|| {
-            RhizomeError::CommandFailed("missing or invalid boundaries array".into())
-        })?;
+        .ok_or_else(|| RhizomeError::CommandFailed("missing or invalid boundaries array".into()))?;
 
     let mut result = Vec::new();
     for boundary in boundaries {

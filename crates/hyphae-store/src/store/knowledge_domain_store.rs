@@ -2,7 +2,9 @@ use chrono::Utc;
 use rusqlite::{OptionalExtension, params};
 use std::str::FromStr;
 
-use hyphae_core::{ApplicabilityRule, Authority, HyphaeError, HyphaeResult, InputSpec, KnowledgeDomain};
+use hyphae_core::{
+    ApplicabilityRule, Authority, HyphaeError, HyphaeResult, InputSpec, KnowledgeDomain,
+};
 
 use super::SqliteStore;
 
@@ -66,10 +68,10 @@ impl SqliteStore {
                 let authority_str: String = row.get(5)?;
                 let freshness_ttl_secs: Option<i64> = row.get(6)?;
 
-                let applies_when: Vec<ApplicabilityRule> = serde_json::from_str(&applies_when_json)
-                    .unwrap_or_default();
-                let required_inputs: Vec<InputSpec> = serde_json::from_str(&required_inputs_json)
-                    .unwrap_or_default();
+                let applies_when: Vec<ApplicabilityRule> =
+                    serde_json::from_str(&applies_when_json).unwrap_or_default();
+                let required_inputs: Vec<InputSpec> =
+                    serde_json::from_str(&required_inputs_json).unwrap_or_default();
                 let authority = Authority::from_str(&authority_str).unwrap_or_default();
 
                 Ok(KnowledgeDomain {
@@ -105,10 +107,10 @@ impl SqliteStore {
                 let authority_str: String = row.get(5)?;
                 let freshness_ttl_secs: Option<i64> = row.get(6)?;
 
-                let applies_when: Vec<ApplicabilityRule> = serde_json::from_str(&applies_when_json)
-                    .unwrap_or_default();
-                let required_inputs: Vec<InputSpec> = serde_json::from_str(&required_inputs_json)
-                    .unwrap_or_default();
+                let applies_when: Vec<ApplicabilityRule> =
+                    serde_json::from_str(&applies_when_json).unwrap_or_default();
+                let required_inputs: Vec<InputSpec> =
+                    serde_json::from_str(&required_inputs_json).unwrap_or_default();
                 let authority = Authority::from_str(&authority_str).unwrap_or_default();
 
                 Ok(KnowledgeDomain {
