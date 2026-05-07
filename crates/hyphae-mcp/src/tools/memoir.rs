@@ -653,6 +653,29 @@ pub(crate) fn tool_memoir_unlink(
     }
 }
 
+pub(crate) fn tool_memoir_invalidate_link(
+    store: &SqliteStore,
+    args: &Value,
+    trace: &ToolTraceContext,
+) -> ToolResult {
+    let link_id_str = match get_str(args, "link_id") {
+        Some(s) => s,
+        None => return ToolResult::error("missing required field: link_id".into()),
+    };
+    let link_id: hyphae_core::LinkId = link_id_str.to_string().into();
+    let workflow_context = workflow_span_context(trace, None, Some(link_id_str));
+    let _workflow_span = workflow_span("memoir_invalidate_link", &workflow_context).entered();
+
+    match store.invalidate_link(&link_id) {
+        Ok(()) => {
+            // Note: memoir_id not available from link_id alone; would require new trait method.
+            // Not emitting event to avoid sending empty memoir_id.
+            ToolResult::text(format!("Link {link_id} invalidated."))
+        }
+        Err(e) => ToolResult::error(format!("failed to invalidate link: {e}")),
+    }
+}
+
 pub(crate) fn tool_memoir_inspect(
     store: &SqliteStore,
     args: &Value,

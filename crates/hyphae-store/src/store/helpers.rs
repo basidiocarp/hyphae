@@ -271,6 +271,18 @@ pub(crate) fn row_to_link(row: &rusqlite::Row) -> rusqlite::Result<ConceptLink> 
     let relation_str: String = row.get(3)?;
     let relation: Relation = relation_str.parse().unwrap_or(Relation::RelatedTo);
 
+    let valid_from_str: Option<String> = row.get(7)?;
+    let valid_from = match valid_from_str.as_deref().filter(|s| !s.is_empty()) {
+        Some(s) => parse_dt(s),
+        None => parse_dt(&row.get::<_, String>(6)?), // fall back to created_at
+    };
+
+    let valid_to_str: Option<String> = row.get(8)?;
+    let valid_to = valid_to_str
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(parse_dt);
+
     Ok(ConceptLink {
         id: row.get::<_, String>(0)?.into(),
         source_id: row.get::<_, String>(1)?.into(),
@@ -279,11 +291,13 @@ pub(crate) fn row_to_link(row: &rusqlite::Row) -> rusqlite::Result<ConceptLink> 
         weight: Weight::new_clamped(row.get::<_, f32>(4)?),
         link_count: row.get::<_, u32>(5)?,
         created_at: parse_dt(&row.get::<_, String>(6)?),
+        valid_from,
+        valid_to,
     })
 }
 
 pub(crate) const LINK_COLS: &str =
-    "id, source_id, target_id, relation, weight, link_count, created_at";
+    "id, source_id, target_id, relation, weight, link_count, created_at, valid_from, valid_to";
 
 // ---------------------------------------------------------------------------
 // Document / Chunk helpers

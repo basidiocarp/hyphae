@@ -106,6 +106,8 @@ const BASELINE_SQL: &str = "
                 weight REAL NOT NULL DEFAULT 1.0,
                 link_count INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL,
+                valid_from TEXT NOT NULL DEFAULT '',
+                valid_to TEXT,
                 UNIQUE(source_id, target_id, relation),
                 CHECK(source_id != target_id)
             );
@@ -547,6 +549,10 @@ fn bootstrap_existing_db(conn: &mut Connection) -> Result<(), HyphaeError> {
     // Add tiered-memoir-content columns to concepts table
     let _ = conn.execute("ALTER TABLE concepts ADD COLUMN abstract_text TEXT", []);
     let _ = conn.execute("ALTER TABLE concepts ADD COLUMN overview_text TEXT", []);
+
+    // Add temporal validity columns to concept_links table
+    let _ = conn.execute("ALTER TABLE concept_links ADD COLUMN valid_from TEXT NOT NULL DEFAULT ''", []);
+    let _ = conn.execute("ALTER TABLE concept_links ADD COLUMN valid_to TEXT", []);
 
     // Run the full baseline SQL to create any tables added after the initial install.
     // All statements use IF NOT EXISTS — safe to run on any database state.

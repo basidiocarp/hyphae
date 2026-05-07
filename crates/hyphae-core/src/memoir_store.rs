@@ -92,6 +92,7 @@ pub trait MemoirStore {
     fn get_links_from(&self, concept_id: &ConceptId) -> HyphaeResult<Vec<ConceptLink>>;
     fn get_links_to(&self, concept_id: &ConceptId) -> HyphaeResult<Vec<ConceptLink>>;
     fn delete_link(&self, id: &LinkId) -> HyphaeResult<()>;
+    fn invalidate_link(&self, id: &LinkId) -> HyphaeResult<()>;
     fn remove_link(
         &self,
         memoir_id: &MemoirId,

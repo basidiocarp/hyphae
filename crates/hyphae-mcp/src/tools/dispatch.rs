@@ -88,6 +88,7 @@ pub fn call_tool_with_consolidation(
         "hyphae_memoir_search_all" => memoir::tool_memoir_search_all(store, args, trace),
         "hyphae_memoir_link" => memoir::tool_memoir_link(store, args, trace),
         "hyphae_memoir_unlink" => memoir::tool_memoir_unlink(store, args, trace),
+        "hyphae_memoir_invalidate_link" => memoir::tool_memoir_invalidate_link(store, args, trace),
         "hyphae_memoir_inspect" => memoir::tool_memoir_inspect(store, args, trace),
         "hyphae_memoir_history" => memoir::tool_memoir_history(store, args, trace),
         "hyphae_import_code_graph" => {

@@ -477,9 +477,12 @@ impl MemoirStore for SqliteStore {
         let normalized_relation = normalize_relation(&link.relation.to_string());
         self.conn
             .execute(
-                "INSERT INTO concept_links (id, source_id, target_id, relation, weight, link_count, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6)
-                 ON CONFLICT(source_id, target_id, relation) DO UPDATE SET link_count = link_count + 1",
+                "INSERT INTO concept_links (id, source_id, target_id, relation, weight, link_count, created_at, valid_from, valid_to)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7, ?8)
+                 ON CONFLICT(source_id, target_id, relation) DO UPDATE SET
+                    link_count = link_count + 1,
+                    valid_from = excluded.valid_from,
+                    valid_to = NULL",
                 params![
                     link.id.as_ref(),
                     link.source_id.as_ref(),
@@ -487,6 +490,8 @@ impl MemoirStore for SqliteStore {
                     normalized_relation,
                     link.weight.value(),
                     link.created_at.to_rfc3339(),
+                    link.valid_from.to_rfc3339(),
+                    link.valid_to.map(|dt| dt.to_rfc3339()),
                 ],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
@@ -494,7 +499,7 @@ impl MemoirStore for SqliteStore {
     }
 
     fn get_links_from(&self, concept_id: &ConceptId) -> HyphaeResult<Vec<ConceptLink>> {
-        let sql = format!("SELECT {LINK_COLS} FROM concept_links WHERE source_id = ?1");
+        let sql = format!("SELECT {LINK_COLS} FROM concept_links WHERE source_id = ?1 AND (valid_to IS NULL OR valid_to = '')");
         let mut stmt = self
             .conn
             .prepare_cached(&sql)
@@ -512,7 +517,7 @@ impl MemoirStore for SqliteStore {
     }
 
     fn get_links_to(&self, concept_id: &ConceptId) -> HyphaeResult<Vec<ConceptLink>> {
-        let sql = format!("SELECT {LINK_COLS} FROM concept_links WHERE target_id = ?1");
+        let sql = format!("SELECT {LINK_COLS} FROM concept_links WHERE target_id = ?1 AND (valid_to IS NULL OR valid_to = '')");
         let mut stmt = self
             .conn
             .prepare_cached(&sql)
@@ -540,6 +545,21 @@ impl MemoirStore for SqliteStore {
 
         if changed == 0 {
             return Err(HyphaeError::NotFound(id.to_string()));
+        }
+        Ok(())
+    }
+
+    fn invalidate_link(&self, id: &LinkId) -> HyphaeResult<()> {
+        let now = Utc::now().to_rfc3339();
+        let changed = self
+            .conn
+            .execute(
+                "UPDATE concept_links SET valid_to = ?1 WHERE id = ?2 AND (valid_to IS NULL OR valid_to = '')",
+                params![now, id.as_ref()],
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        if changed == 0 {
+            return Err(HyphaeError::NotFound(format!("link not found or already invalidated: {id}")));
         }
         Ok(())
     }
@@ -582,9 +602,9 @@ impl MemoirStore for SqliteStore {
 
         let base = format!(
             "SELECT {CONCEPT_COLS} FROM concepts WHERE id IN (
-                SELECT target_id FROM concept_links WHERE source_id = ?1 {{filter}}
+                SELECT target_id FROM concept_links WHERE source_id = ?1 AND (valid_to IS NULL OR valid_to = '') {{filter}}
                 UNION
-                SELECT source_id FROM concept_links WHERE target_id = ?1 {{filter}}
+                SELECT source_id FROM concept_links WHERE target_id = ?1 AND (valid_to IS NULL OR valid_to = '') {{filter}}
             )"
         );
 
@@ -648,7 +668,7 @@ impl MemoirStore for SqliteStore {
 
             // Batch-fetch outgoing links for all frontier nodes
             let outgoing_sql = format!(
-                "SELECT {LINK_COLS} FROM concept_links WHERE source_id IN ({placeholders})"
+                "SELECT {LINK_COLS} FROM concept_links WHERE source_id IN ({placeholders}) AND (valid_to IS NULL OR valid_to = '')"
             );
             let params: Vec<&dyn rusqlite::types::ToSql> = frontier
                 .iter()
@@ -666,7 +686,7 @@ impl MemoirStore for SqliteStore {
 
             // Batch-fetch incoming links for all frontier nodes
             let incoming_sql = format!(
-                "SELECT {LINK_COLS} FROM concept_links WHERE target_id IN ({placeholders})"
+                "SELECT {LINK_COLS} FROM concept_links WHERE target_id IN ({placeholders}) AND (valid_to IS NULL OR valid_to = '')"
             );
             let mut stmt = self
                 .conn
@@ -952,10 +972,10 @@ impl MemoirStore for SqliteStore {
         let mut stmt = self
             .conn
             .prepare_cached(
-                "SELECT cl.id, cl.source_id, cl.target_id, cl.relation, cl.weight, cl.link_count, cl.created_at \
+                "SELECT cl.id, cl.source_id, cl.target_id, cl.relation, cl.weight, cl.link_count, cl.created_at, cl.valid_from, cl.valid_to \
                  FROM concept_links cl \
                  JOIN concepts c ON cl.source_id = c.id \
-                 WHERE c.memoir_id = ?1",
+                 WHERE c.memoir_id = ?1 AND (cl.valid_to IS NULL OR cl.valid_to = '')",
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
         let rows = stmt
@@ -1065,7 +1085,7 @@ impl MemoirStore for SqliteStore {
 #[cfg(test)]
 mod tests {
     use hyphae_core::{
-        Concept, ConceptId, ConceptInput, ConceptLink, Label, LinkInput, Memoir, MemoirStore,
+        Concept, ConceptId, ConceptInput, ConceptLink, HyphaeError, Label, LinkInput, Memoir, MemoirStore,
         Relation,
     };
 
@@ -1594,5 +1614,65 @@ mod tests {
             final_concept.overview_text,
             Some("Updated overview with more details.".to_string())
         );
+    }
+
+    #[test]
+    fn test_temporal_link_invalidation() {
+        let store = test_store();
+        let memoir = Memoir::new("test_temporal".into(), "".into());
+        let memoir_id = store.create_memoir(memoir).unwrap();
+
+        // Create two concepts
+        let concept_a = Concept::new(
+            memoir_id.clone(),
+            "ConceptA".to_string(),
+            "First concept".to_string(),
+        );
+        let concept_b = Concept::new(
+            memoir_id.clone(),
+            "ConceptB".to_string(),
+            "Second concept".to_string(),
+        );
+
+        let id_a = store.add_concept(concept_a).unwrap();
+        let id_b = store.add_concept(concept_b).unwrap();
+
+        // Create a link between them
+        let link = ConceptLink::new(id_a.clone(), id_b.clone(), Relation::DependsOn);
+        let link_id = store.add_link(link).unwrap();
+
+        // Verify link appears in get_links_from (currently valid)
+        let links_from = store.get_links_from(&id_a).unwrap();
+        assert_eq!(links_from.len(), 1);
+        assert_eq!(links_from[0].id, link_id);
+        assert!(links_from[0].valid_to.is_none());
+
+        // Verify link appears in get_links_to (currently valid)
+        let links_to = store.get_links_to(&id_b).unwrap();
+        assert_eq!(links_to.len(), 1);
+        assert_eq!(links_to[0].id, link_id);
+
+        // Invalidate the link
+        store.invalidate_link(&link_id).unwrap();
+
+        // Verify link does NOT appear in get_links_from (currently valid filter)
+        let links_from_after = store.get_links_from(&id_a).unwrap();
+        assert_eq!(links_from_after.len(), 0);
+
+        // Verify link does NOT appear in get_links_to (currently valid filter)
+        let links_to_after = store.get_links_to(&id_b).unwrap();
+        assert_eq!(links_to_after.len(), 0);
+
+        // Verify link has valid_to set
+        let neighbors = store.get_neighbors(&id_a, None).unwrap();
+        assert_eq!(neighbors.len(), 0, "invalidated links should not appear in neighbors");
+
+        // Verify double-invalidation is rejected
+        let double_invalidate = store.invalidate_link(&link_id);
+        assert!(double_invalidate.is_err(), "double-invalidation should fail");
+        match double_invalidate {
+            Err(HyphaeError::NotFound(_)) => {}, // Expected
+            _ => panic!("expected NotFound error on double-invalidation"),
+        }
     }
 }

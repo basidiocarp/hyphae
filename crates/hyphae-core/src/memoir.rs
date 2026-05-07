@@ -455,10 +455,13 @@ pub struct ConceptLink {
     pub weight: Weight,
     pub link_count: u32,
     pub created_at: DateTime<Utc>,
+    pub valid_from: DateTime<Utc>,
+    pub valid_to: Option<DateTime<Utc>>,
 }
 
 impl ConceptLink {
     pub fn new(source_id: ConceptId, target_id: ConceptId, relation: Relation) -> Self {
+        let now = Utc::now();
         Self {
             id: LinkId::new(),
             source_id,
@@ -466,7 +469,9 @@ impl ConceptLink {
             relation,
             weight: Weight::default(),
             link_count: 1,
-            created_at: Utc::now(),
+            created_at: now,
+            valid_from: now,
+            valid_to: None,
         }
     }
 }
