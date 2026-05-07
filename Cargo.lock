@@ -1373,7 +1373,7 @@ dependencies = [
 
 [[package]]
 name = "hyphae-cli"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1401,7 +1401,7 @@ dependencies = [
 
 [[package]]
 name = "hyphae-core"
-version = "0.10.17"
+version = "0.11.0"
 dependencies = [
  "chrono",
  "directories",
@@ -1416,7 +1416,7 @@ dependencies = [
 
 [[package]]
 name = "hyphae-ingest"
-version = "0.10.17"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1433,7 +1433,7 @@ dependencies = [
 
 [[package]]
 name = "hyphae-mcp"
-version = "0.10.18"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1454,7 +1454,7 @@ dependencies = [
 
 [[package]]
 name = "hyphae-store"
-version = "0.10.17"
+version = "0.11.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -3158,8 +3158,8 @@ dependencies = [
 
 [[package]]
 name = "spore"
-version = "0.4.11"
-source = "git+https://github.com/basidiocarp/spore?rev=0bc2e878010e75e30e26fa517d747e97d59628b0#0bc2e878010e75e30e26fa517d747e97d59628b0"
+version = "0.5.0"
+source = "git+https://github.com/basidiocarp/spore?tag=v0.5.0#3d942cf0712a977df3f7de29f62d47930b666521"
 dependencies = [
  "anyhow",
  "chrono",
