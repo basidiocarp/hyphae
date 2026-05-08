@@ -215,6 +215,11 @@ pub(crate) fn tool_memoir_add_concept(
     concept.abstract_text = abstract_text;
     concept.overview_text = overview_text;
 
+    // Parse optional block_type
+    if let Some(block_type_str) = get_str(args, "block_type") {
+        concept.block_type = serde_json::from_str(&format!("\"{block_type_str}\"")).ok();
+    }
+
     match store.add_concept(concept) {
         Ok(id) => {
             // Dual-write to memory store so memoir concepts appear in hyphae search results.
@@ -414,6 +419,8 @@ pub(crate) fn tool_memoir_search(
     args: &Value,
     trace: &ToolTraceContext,
 ) -> ToolResult {
+    use hyphae_core::MemoryBlockType;
+
     let memoir_name = match get_str(args, "memoir") {
         Some(n) => n,
         None => return ToolResult::error("missing required field: memoir".into()),
@@ -426,13 +433,15 @@ pub(crate) fn tool_memoir_search(
     let _workflow_span = workflow_span("memoir_search", &workflow_context).entered();
     let limit = get_bounded_i64(args, "limit", 10, 1, 100) as usize;
     let label_str = get_str(args, "label");
+    let block_type_filter: Option<MemoryBlockType> = get_str(args, "block_type")
+        .and_then(|s| serde_json::from_str(&format!("\"{s}\"")).ok());
 
     let memoir = match resolve_memoir(store, memoir_name) {
         Ok(m) => m,
         Err(e) => return e,
     };
 
-    let results = if let Some(lbl) = label_str {
+    let mut results = if let Some(lbl) = label_str {
         let parsed: Label = match lbl.parse() {
             Ok(l) => l,
             Err(e) => return ToolResult::error(format!("invalid label: {e}")),
@@ -454,6 +463,15 @@ pub(crate) fn tool_memoir_search(
             Err(e) => return ToolResult::error(format!("search error: {e}")),
         }
     };
+
+    // Apply block_type filter if provided.
+    // None block_type is treated as Custom per spec: "Existing concepts without block_type default to custom."
+    if let Some(filter_type) = block_type_filter {
+        results.retain(|c| {
+            let concept_type = c.block_type.unwrap_or(MemoryBlockType::Custom);
+            concept_type == filter_type
+        });
+    }
 
     if results.is_empty() {
         return ToolResult::text("No concepts found.".into());

@@ -39,7 +39,7 @@ pub use ids::*;
 pub use llm_client::consolidate_via_llm;
 pub use memoir::{
     ApplicabilityRule, Authority, Concept, ConceptLink, Confidence, Decay, InputSpec,
-    KnowledgeDomain, Label, Memoir, MemoirMeta, MemoirSource, MemoirStats, MemoirVersion,
+    KnowledgeDomain, Label, MemoryBlockType, Memoir, MemoirMeta, MemoirSource, MemoirStats, MemoirVersion,
     QueryContext, RecallResult, Relation, RuleOp,
 };
 pub use memoir_store::{ConceptInput, LinkInput, MemoirStore, UpsertReport};

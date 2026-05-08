@@ -326,6 +326,23 @@ impl std::str::FromStr for Label {
 }
 
 // ===========================================================================
+// Memory Block Type
+// ===========================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryBlockType {
+    Persona,
+    Context,
+    Project,
+    Error,
+    Decision,
+    Preference,
+    #[default]
+    Custom,
+}
+
+// ===========================================================================
 // Concept
 // ===========================================================================
 
@@ -344,6 +361,7 @@ pub struct Concept {
     pub community_id: Option<String>,
     pub abstract_text: Option<String>,
     pub overview_text: Option<String>,
+    pub block_type: Option<MemoryBlockType>,
 }
 
 impl Concept {
@@ -363,6 +381,7 @@ impl Concept {
             community_id: None,
             abstract_text: None,
             overview_text: None,
+            block_type: None,
         }
     }
 }

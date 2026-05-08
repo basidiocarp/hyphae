@@ -466,6 +466,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                         "type": "string",
                         "maxLength": 500,
                         "description": "Overview paragraph providing context (≤500 characters)"
+                    },
+                    "block_type": {
+                        "type": "string",
+                        "description": "Role label for this concept: persona, context, project, error, decision, preference, or custom (default)",
+                        "enum": ["persona", "context", "project", "error", "decision", "preference", "custom"]
                     }
                 },
                 "required": ["memoir", "name", "definition"]
@@ -531,6 +536,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     "label": {
                         "type": "string",
                         "description": "Filter by label (e.g. 'domain:tech')"
+                    },
+                    "block_type": {
+                        "type": "string",
+                        "description": "Filter by block type: persona, context, project, error, decision, preference, or custom",
+                        "enum": ["persona", "context", "project", "error", "decision", "preference", "custom"]
                     },
                     "limit": {
                         "type": "integer",

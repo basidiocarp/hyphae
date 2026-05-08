@@ -91,6 +91,7 @@ const BASELINE_SQL: &str = "
                 community_id TEXT,
                 abstract_text TEXT,
                 overview_text TEXT,
+                block_type TEXT NULL DEFAULT NULL,
                 UNIQUE(memoir_id, name)
             );
 
@@ -620,6 +621,9 @@ fn bootstrap_existing_db(conn: &mut Connection) -> Result<(), HyphaeError> {
     // Add tiered-memoir-content columns to concepts table
     let _ = conn.execute("ALTER TABLE concepts ADD COLUMN abstract_text TEXT", []);
     let _ = conn.execute("ALTER TABLE concepts ADD COLUMN overview_text TEXT", []);
+
+    // Add block_type column to concepts table
+    let _ = conn.execute("ALTER TABLE concepts ADD COLUMN block_type TEXT NULL DEFAULT NULL", []);
 
     // Add temporal validity columns to concept_links table
     let _ = conn.execute("ALTER TABLE concept_links ADD COLUMN valid_from TEXT NOT NULL DEFAULT ''", []);

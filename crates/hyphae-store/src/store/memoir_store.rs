@@ -180,12 +180,14 @@ impl MemoirStore for SqliteStore {
     fn add_concept(&self, concept: Concept) -> HyphaeResult<ConceptId> {
         let labels_json = serde_json::to_string(&concept.labels)?;
         let source_ids_json = serde_json::to_string(&concept.source_memory_ids)?;
+        let block_type_str = concept.block_type
+            .and_then(|bt| serde_json::to_value(bt).ok().and_then(|v| v.as_str().map(str::to_string)));
 
         self.conn
             .execute(
                 "INSERT INTO concepts (id, memoir_id, name, definition, labels, confidence,
-                 revision, created_at, updated_at, source_memory_ids, abstract_text, overview_text)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                 revision, created_at, updated_at, source_memory_ids, abstract_text, overview_text, block_type)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                 params![
                     concept.id.as_ref(),
                     concept.memoir_id.as_ref(),
@@ -199,6 +201,7 @@ impl MemoirStore for SqliteStore {
                     source_ids_json,
                     concept.abstract_text,
                     concept.overview_text,
+                    block_type_str,
                 ],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
@@ -234,6 +237,8 @@ impl MemoirStore for SqliteStore {
     fn update_concept(&self, concept: &Concept) -> HyphaeResult<()> {
         let labels_json = serde_json::to_string(&concept.labels)?;
         let source_ids_json = serde_json::to_string(&concept.source_memory_ids)?;
+        let block_type_str = concept.block_type
+            .and_then(|bt| serde_json::to_value(bt).ok().and_then(|v| v.as_str().map(str::to_string)));
 
         let changed = self
             .conn
@@ -241,7 +246,7 @@ impl MemoirStore for SqliteStore {
                 // community_id is intentionally excluded — use set_concept_community() to change it.
                 "UPDATE concepts SET memoir_id = ?2, name = ?3, definition = ?4, labels = ?5,
                  confidence = ?6, revision = ?7, updated_at = ?8, source_memory_ids = ?9,
-                 abstract_text = ?10, overview_text = ?11
+                 abstract_text = ?10, overview_text = ?11, block_type = ?12
                  WHERE id = ?1",
                 params![
                     concept.id.as_ref(),
@@ -255,6 +260,7 @@ impl MemoirStore for SqliteStore {
                     source_ids_json,
                     concept.abstract_text,
                     concept.overview_text,
+                    block_type_str,
                 ],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
@@ -308,7 +314,7 @@ impl MemoirStore for SqliteStore {
 
         let sql = "SELECT c.id, c.memoir_id, c.name, c.definition, c.labels, c.confidence,
                     c.revision, c.created_at, c.updated_at, c.source_memory_ids, c.community_id,
-                    c.abstract_text, c.overview_text
+                    c.abstract_text, c.overview_text, c.block_type
              FROM concepts c
              JOIN concepts_fts fts ON c.rowid = fts.rowid
              WHERE c.memoir_id = ?1
@@ -344,7 +350,7 @@ impl MemoirStore for SqliteStore {
 
         let sql = "SELECT c.id, c.memoir_id, c.name, c.definition, c.labels, c.confidence,
                     c.revision, c.created_at, c.updated_at, c.source_memory_ids, c.community_id,
-                    c.abstract_text, c.overview_text
+                    c.abstract_text, c.overview_text, c.block_type
              FROM concepts c
              JOIN concepts_fts fts ON c.rowid = fts.rowid
              WHERE concepts_fts MATCH ?1
