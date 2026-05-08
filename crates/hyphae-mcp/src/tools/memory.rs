@@ -3,6 +3,7 @@ mod helpers;
 mod lessons;
 mod maintenance;
 mod recall;
+mod reflexion;
 mod store;
 
 pub(crate) use evaluate::tool_evaluate;
@@ -13,4 +14,5 @@ pub(crate) use maintenance::{
 };
 #[allow(unused_imports)]
 pub(crate) use recall::{is_session_query, tool_recall};
+pub(crate) use reflexion::{tool_reflexion_record, tool_reflexion_search};
 pub(crate) use store::{tool_forget, tool_invalidate, tool_store, tool_update};

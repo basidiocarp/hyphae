@@ -1380,6 +1380,79 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }
     }));
 
+    tools.push(json!({
+        "name": "hyphae_reflexion_record",
+        "description": "Store a structured reflexion entry capturing error type, root cause, fix applied, and abstract pattern for future recall.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "error_type": {
+                    "type": "string",
+                    "description": "Category of error (e.g. 'logic', 'type', 'runtime', 'integration')"
+                },
+                "root_cause": {
+                    "type": "string",
+                    "description": "Concise description of the root cause of the error"
+                },
+                "fix_applied": {
+                    "type": "string",
+                    "description": "Description of the fix that resolved the error"
+                },
+                "abstract_pattern": {
+                    "type": "string",
+                    "description": "Reusable abstract pattern extracted from the error and fix"
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project name to scope the record (optional)"
+                },
+                "confidence": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high"],
+                    "default": "medium",
+                    "description": "Confidence level that this pattern generalizes"
+                }
+            },
+            "required": ["error_type", "root_cause", "fix_applied", "abstract_pattern"]
+        },
+        "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false
+        }
+    }));
+
+    tools.push(json!({
+        "name": "hyphae_reflexion_search",
+        "description": "Search reflexion records by query, returning structured entries sorted by confidence then recency.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Natural language search query"
+                },
+                "error_type": {
+                    "type": "string",
+                    "description": "Filter results to a specific error type (optional)"
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": 10,
+                    "minimum": 1,
+                    "maximum": 100,
+                    "description": "Maximum number of results to return"
+                }
+            },
+            "required": ["query"]
+        },
+        "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true
+        }
+    }));
+
     // Knowledge domain tools
     tools.push(json!({
         "name": "hyphae_domain_upsert",

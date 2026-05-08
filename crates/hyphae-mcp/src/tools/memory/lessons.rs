@@ -1,7 +1,7 @@
 use serde_json::Value;
 use spore::logging::workflow_span;
 
-use hyphae_core::{Memory, MemoryStore};
+use hyphae_core::{Memory, MemoryStore, ReflexionStore};
 use hyphae_store::SqliteStore;
 
 use crate::protocol::ToolResult;
@@ -113,15 +113,58 @@ pub(crate) fn tool_extract_lessons(
     lessons.sort();
     lessons.truncate(limit);
 
-    let mut output = format!(
-        "Lessons extracted from {} corrections, {} error resolutions, {} test fixes:\n\n",
-        corrections.len(),
-        errors_resolved.len(),
-        tests_resolved.len()
-    );
+    // Collect reflexion patterns
+    let reflexion_records = store
+        .list_reflexions_by_pattern(20)
+        .unwrap_or_default();
 
-    for (i, lesson) in lessons.iter().enumerate() {
-        output.push_str(&format!("{}. {}\n", i + 1, lesson));
+    let mut reflexion_patterns: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+
+    for record in &reflexion_records {
+        *reflexion_patterns
+            .entry(record.abstract_pattern.clone())
+            .or_insert(0) += 1;
+    }
+
+    // Only mention reflexion patterns in the header when there are some — avoids
+    // a misleading "0 reflexion patterns" line when no reflexion records exist yet.
+    let mut output = if reflexion_patterns.is_empty() {
+        format!(
+            "Lessons extracted from {} corrections, {} error resolutions, {} test fixes:\n\n",
+            corrections.len(),
+            errors_resolved.len(),
+            tests_resolved.len(),
+        )
+    } else {
+        format!(
+            "Lessons extracted from {} corrections, {} error resolutions, {} test fixes, {} reflexion patterns:\n\n",
+            corrections.len(),
+            errors_resolved.len(),
+            tests_resolved.len(),
+            reflexion_records.len(),
+        )
+    };
+
+    let mut lesson_idx = 1;
+
+    for lesson in lessons.iter().take(limit) {
+        output.push_str(&format!("{}. {}\n", lesson_idx, lesson));
+        lesson_idx += 1;
+    }
+
+    if !reflexion_patterns.is_empty() {
+        output.push_str("\nReflexion-derived patterns:\n");
+        let mut sorted_patterns: Vec<_> = reflexion_patterns.iter().collect();
+        sorted_patterns.sort_by_key(|&(_, count)| std::cmp::Reverse(*count));
+
+        for (pattern, count) in sorted_patterns.iter().take(limit.saturating_sub(lessons.len())) {
+            output.push_str(&format!(
+                "{}. [reflexion] {}: {} occurrences\n",
+                lesson_idx, pattern, count
+            ));
+            lesson_idx += 1;
+        }
     }
 
     output.push_str("\nUse these lessons to avoid repeating past mistakes.\n");

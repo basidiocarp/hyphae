@@ -14,6 +14,7 @@ pub mod llm_client;
 pub mod memoir;
 pub mod memoir_store;
 pub mod memory;
+pub mod reflexion;
 pub mod sanitize;
 pub mod secrets;
 pub mod shared_context;
@@ -46,6 +47,9 @@ pub use memory::{
     ConsolidationConfig, ConsolidationTopicRule, DEFAULT_CONSOLIDATION_THRESHOLD, Importance,
     Memory, MemoryBuilder, MemorySource, SearchQuery, SearchType, SessionHost, StoreStats,
     TopicHealth, Weight, WmOp, WmSection, WorkingMemory,
+};
+pub use reflexion::{
+    ReflexionConfidence, ReflexionErrorType, ReflexionRecord, ReflexionStore,
 };
 pub use sanitize::{SanitizedQuery, sanitize_query};
 pub use secrets::detect_secrets;

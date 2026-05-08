@@ -75,6 +75,9 @@ pub fn call_tool_with_consolidation(
         "hyphae_memory_embed_all" => memory::tool_embed_all(store, embedder, args, project, trace),
         "hyphae_extract_lessons" => memory::tool_extract_lessons(store, args, project, trace),
         "hyphae_evaluate" => memory::tool_evaluate(store, args, project, trace),
+        // Reflexion tools
+        "hyphae_reflexion_record" => memory::tool_reflexion_record(store, args, trace),
+        "hyphae_reflexion_search" => memory::tool_reflexion_search(store, args, trace),
         // Cross-project tools
         "hyphae_recall_global" => memory::tool_recall_global(store, args, compact, trace),
         "hyphae_promote_to_memoir" => memory::tool_promote_to_memoir(store, args, project, trace),

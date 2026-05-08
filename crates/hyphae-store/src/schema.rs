@@ -296,6 +296,24 @@ const BASELINE_SQL: &str = "
 
             CREATE INDEX IF NOT EXISTS idx_shared_context_session_key
                 ON shared_context(session_id, key, written_at DESC);
+
+            -- Reflexion records for structured error learning
+            CREATE TABLE IF NOT EXISTS reflexion_records (
+                id TEXT PRIMARY KEY,
+                error_type TEXT NOT NULL,
+                root_cause TEXT NOT NULL,
+                fix_applied TEXT NOT NULL,
+                abstract_pattern TEXT NOT NULL,
+                project TEXT,
+                confidence TEXT NOT NULL DEFAULT 'medium',
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_reflexion_records_error_type ON reflexion_records(error_type);
+            CREATE INDEX IF NOT EXISTS idx_reflexion_records_confidence ON reflexion_records(confidence);
+            CREATE INDEX IF NOT EXISTS idx_reflexion_records_created_at ON reflexion_records(created_at);
+            CREATE INDEX IF NOT EXISTS idx_reflexion_records_project ON reflexion_records(project);
+            CREATE INDEX IF NOT EXISTS idx_reflexion_records_confidence_created ON reflexion_records(confidence, created_at DESC);
             ";
 
 fn migrations() -> Migrations<'static> {
@@ -447,6 +465,59 @@ fn ensure_fts_tables(conn: &Connection) -> Result<(), HyphaeError> {
                     VALUES('delete', old.rowid, old.id, old.name, old.definition, old.labels);
                     INSERT INTO concepts_fts(rowid, id, name, definition, labels)
                     VALUES (new.rowid, new.id, new.name, new.definition, new.labels);
+                END;
+                ",
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        }
+    }
+
+    // Check if reflexion_records table exists and create FTS if needed
+    let reflexion_table_exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='reflexion_records'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+    if reflexion_table_exists {
+        let reflexion_fts_exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='reflexion_fts'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        if !reflexion_fts_exists {
+            conn.execute_batch(
+                "
+                CREATE VIRTUAL TABLE reflexion_fts USING fts5(
+                    id,
+                    root_cause,
+                    fix_applied,
+                    abstract_pattern,
+                    project UNINDEXED,
+                    content='reflexion_records',
+                    content_rowid='rowid'
+                );
+
+                CREATE TRIGGER reflexion_ai AFTER INSERT ON reflexion_records BEGIN
+                    INSERT INTO reflexion_fts(rowid, id, root_cause, fix_applied, abstract_pattern, project)
+                    VALUES (new.rowid, new.id, new.root_cause, new.fix_applied, new.abstract_pattern, new.project);
+                END;
+
+                CREATE TRIGGER reflexion_ad AFTER DELETE ON reflexion_records BEGIN
+                    INSERT INTO reflexion_fts(reflexion_fts, rowid, id, root_cause, fix_applied, abstract_pattern, project)
+                    VALUES('delete', old.rowid, old.id, old.root_cause, old.fix_applied, old.abstract_pattern, old.project);
+                END;
+
+                CREATE TRIGGER reflexion_au AFTER UPDATE ON reflexion_records BEGIN
+                    INSERT INTO reflexion_fts(reflexion_fts, rowid, id, root_cause, fix_applied, abstract_pattern, project)
+                    VALUES('delete', old.rowid, old.id, old.root_cause, old.fix_applied, old.abstract_pattern, old.project);
+                    INSERT INTO reflexion_fts(rowid, id, root_cause, fix_applied, abstract_pattern, project)
+                    VALUES (new.rowid, new.id, new.root_cause, new.fix_applied, new.abstract_pattern, new.project);
                 END;
                 ",
             )

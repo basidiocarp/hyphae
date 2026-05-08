@@ -13,6 +13,7 @@ mod memory_store;
 pub mod passive;
 mod project;
 mod purge;
+mod reflexion_store;
 mod search;
 pub mod session;
 pub mod shared_context;
