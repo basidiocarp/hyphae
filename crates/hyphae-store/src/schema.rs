@@ -320,7 +320,36 @@ const BASELINE_SQL: &str = "
 fn migrations() -> Migrations<'static> {
     // M0: baseline schema — all CREATE TABLE IF NOT EXISTS and regular indexes.
     // FTS5 and sqlite-vec virtual tables are handled separately after migrations run.
-    Migrations::new(vec![M::up(BASELINE_SQL)])
+    //
+    // M1: adds named-typed-memory-block columns to the memoirs table.
+    // Uses up_with_hook and ignores duplicate-column errors so this is safe to run
+    // against both fresh installs (where BASELINE_SQL already created the columns)
+    // and existing databases that pre-date these columns.
+    Migrations::new(vec![
+        M::up(BASELINE_SQL),
+        M::up_with_hook("", |conn| {
+            let _ = conn.execute(
+                "ALTER TABLE memoirs ADD COLUMN decay TEXT NOT NULL DEFAULT 'standard'",
+                [],
+            );
+            let _ = conn.execute(
+                "ALTER TABLE memoirs ADD COLUMN authority TEXT NOT NULL DEFAULT 'primary'",
+                [],
+            );
+            let _ = conn.execute(
+                "ALTER TABLE memoirs ADD COLUMN source TEXT NOT NULL DEFAULT 'agent'",
+                [],
+            );
+            let _ = conn.execute("ALTER TABLE memoirs ADD COLUMN compiled_at TEXT", []);
+            let _ = conn.execute("ALTER TABLE memoirs ADD COLUMN invalidated_at TEXT", []);
+            let _ = conn.execute("ALTER TABLE memoirs ADD COLUMN invalidated_by TEXT", []);
+            let _ = conn.execute(
+                "ALTER TABLE memoirs ADD COLUMN freshness_ttl_secs INTEGER",
+                [],
+            );
+            Ok(())
+        }),
+    ])
 }
 
 /// Ensure FTS5 tables and triggers exist (they can't be in migrations baseline)
@@ -634,6 +663,27 @@ fn bootstrap_existing_db(conn: &mut Connection) -> Result<(), HyphaeError> {
         [],
     );
     let _ = conn.execute("ALTER TABLE concept_links ADD COLUMN valid_to TEXT", []);
+
+    // Add named-typed-memory-block columns to memoirs table
+    let _ = conn.execute(
+        "ALTER TABLE memoirs ADD COLUMN decay TEXT NOT NULL DEFAULT 'standard'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE memoirs ADD COLUMN authority TEXT NOT NULL DEFAULT 'primary'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE memoirs ADD COLUMN source TEXT NOT NULL DEFAULT 'agent'",
+        [],
+    );
+    let _ = conn.execute("ALTER TABLE memoirs ADD COLUMN compiled_at TEXT", []);
+    let _ = conn.execute("ALTER TABLE memoirs ADD COLUMN invalidated_at TEXT", []);
+    let _ = conn.execute("ALTER TABLE memoirs ADD COLUMN invalidated_by TEXT", []);
+    let _ = conn.execute(
+        "ALTER TABLE memoirs ADD COLUMN freshness_ttl_secs INTEGER",
+        [],
+    );
 
     // Run the full baseline SQL to create any tables added after the initial install.
     // All statements use IF NOT EXISTS — safe to run on any database state.
