@@ -433,8 +433,8 @@ pub(crate) fn tool_memoir_search(
     let _workflow_span = workflow_span("memoir_search", &workflow_context).entered();
     let limit = get_bounded_i64(args, "limit", 10, 1, 100) as usize;
     let label_str = get_str(args, "label");
-    let block_type_filter: Option<MemoryBlockType> = get_str(args, "block_type")
-        .and_then(|s| serde_json::from_str(&format!("\"{s}\"")).ok());
+    let block_type_filter: Option<MemoryBlockType> =
+        get_str(args, "block_type").and_then(|s| serde_json::from_str(&format!("\"{s}\"")).ok());
 
     let memoir = match resolve_memoir(store, memoir_name) {
         Ok(m) => m,

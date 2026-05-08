@@ -261,7 +261,8 @@ pub(crate) fn row_to_concept(row: &rusqlite::Row) -> rusqlite::Result<Concept> {
         community_id: row.get::<_, Option<String>>(10)?,
         abstract_text: row.get::<_, Option<String>>(11)?,
         overview_text: row.get::<_, Option<String>>(12)?,
-        block_type: row.get::<_, Option<String>>(13)?
+        block_type: row
+            .get::<_, Option<String>>(13)?
             .and_then(|s| serde_json::from_str(&format!("\"{s}\"")).ok()),
     })
 }

@@ -180,8 +180,11 @@ impl MemoirStore for SqliteStore {
     fn add_concept(&self, concept: Concept) -> HyphaeResult<ConceptId> {
         let labels_json = serde_json::to_string(&concept.labels)?;
         let source_ids_json = serde_json::to_string(&concept.source_memory_ids)?;
-        let block_type_str = concept.block_type
-            .and_then(|bt| serde_json::to_value(bt).ok().and_then(|v| v.as_str().map(str::to_string)));
+        let block_type_str = concept.block_type.and_then(|bt| {
+            serde_json::to_value(bt)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_string))
+        });
 
         self.conn
             .execute(
@@ -237,8 +240,11 @@ impl MemoirStore for SqliteStore {
     fn update_concept(&self, concept: &Concept) -> HyphaeResult<()> {
         let labels_json = serde_json::to_string(&concept.labels)?;
         let source_ids_json = serde_json::to_string(&concept.source_memory_ids)?;
-        let block_type_str = concept.block_type
-            .and_then(|bt| serde_json::to_value(bt).ok().and_then(|v| v.as_str().map(str::to_string)));
+        let block_type_str = concept.block_type.and_then(|bt| {
+            serde_json::to_value(bt)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_string))
+        });
 
         let changed = self
             .conn
@@ -505,7 +511,9 @@ impl MemoirStore for SqliteStore {
     }
 
     fn get_links_from(&self, concept_id: &ConceptId) -> HyphaeResult<Vec<ConceptLink>> {
-        let sql = format!("SELECT {LINK_COLS} FROM concept_links WHERE source_id = ?1 AND (valid_to IS NULL OR valid_to = '')");
+        let sql = format!(
+            "SELECT {LINK_COLS} FROM concept_links WHERE source_id = ?1 AND (valid_to IS NULL OR valid_to = '')"
+        );
         let mut stmt = self
             .conn
             .prepare_cached(&sql)
@@ -523,7 +531,9 @@ impl MemoirStore for SqliteStore {
     }
 
     fn get_links_to(&self, concept_id: &ConceptId) -> HyphaeResult<Vec<ConceptLink>> {
-        let sql = format!("SELECT {LINK_COLS} FROM concept_links WHERE target_id = ?1 AND (valid_to IS NULL OR valid_to = '')");
+        let sql = format!(
+            "SELECT {LINK_COLS} FROM concept_links WHERE target_id = ?1 AND (valid_to IS NULL OR valid_to = '')"
+        );
         let mut stmt = self
             .conn
             .prepare_cached(&sql)
@@ -565,7 +575,9 @@ impl MemoirStore for SqliteStore {
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
         if changed == 0 {
-            return Err(HyphaeError::NotFound(format!("link not found or already invalidated: {id}")));
+            return Err(HyphaeError::NotFound(format!(
+                "link not found or already invalidated: {id}"
+            )));
         }
         Ok(())
     }
@@ -1091,8 +1103,8 @@ impl MemoirStore for SqliteStore {
 #[cfg(test)]
 mod tests {
     use hyphae_core::{
-        Concept, ConceptId, ConceptInput, ConceptLink, HyphaeError, Label, LinkInput, Memoir, MemoirStore,
-        Relation,
+        Concept, ConceptId, ConceptInput, ConceptLink, HyphaeError, Label, LinkInput, Memoir,
+        MemoirStore, Relation,
     };
 
     use super::super::SqliteStore;
@@ -1671,13 +1683,20 @@ mod tests {
 
         // Verify link has valid_to set
         let neighbors = store.get_neighbors(&id_a, None).unwrap();
-        assert_eq!(neighbors.len(), 0, "invalidated links should not appear in neighbors");
+        assert_eq!(
+            neighbors.len(),
+            0,
+            "invalidated links should not appear in neighbors"
+        );
 
         // Verify double-invalidation is rejected
         let double_invalidate = store.invalidate_link(&link_id);
-        assert!(double_invalidate.is_err(), "double-invalidation should fail");
+        assert!(
+            double_invalidate.is_err(),
+            "double-invalidation should fail"
+        );
         match double_invalidate {
-            Err(HyphaeError::NotFound(_)) => {}, // Expected
+            Err(HyphaeError::NotFound(_)) => {} // Expected
             _ => panic!("expected NotFound error on double-invalidation"),
         }
     }

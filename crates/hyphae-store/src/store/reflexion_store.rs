@@ -1,7 +1,10 @@
 use chrono::Utc;
 use rusqlite::params;
 
-use hyphae_core::{HyphaeError, HyphaeResult, ReflexionConfidence, ReflexionErrorType, ReflexionRecord, ReflexionStore};
+use hyphae_core::{
+    HyphaeError, HyphaeResult, ReflexionConfidence, ReflexionErrorType, ReflexionRecord,
+    ReflexionStore,
+};
 
 use super::SqliteStore;
 use super::search::sanitize_fts_query;
@@ -80,10 +83,12 @@ impl ReflexionStore for SqliteStore {
                  LIMIT ?2"
             };
 
-            let mut stmt = self.conn.prepare(sql).map_err(|e| HyphaeError::Database(e.to_string()))?;
+            let mut stmt = self
+                .conn
+                .prepare(sql)
+                .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
-            let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> =
-                vec![Box::new(sanitized)];
+            let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(sanitized)];
             if let Some(ref et) = error_type_str {
                 param_values.push(Box::new(et.clone()));
             }
@@ -117,7 +122,10 @@ impl ReflexionStore for SqliteStore {
                  LIMIT ?2"
             };
 
-            let mut stmt = self.conn.prepare(sql).map_err(|e| HyphaeError::Database(e.to_string()))?;
+            let mut stmt = self
+                .conn
+                .prepare(sql)
+                .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
             let like_pattern = format!("%{}%", query_lower);
             let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> =
@@ -154,9 +162,7 @@ impl ReflexionStore for SqliteStore {
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         let records = stmt
-            .query_map(params![limit as i32], |row| {
-                self.reflexion_from_row(row)
-            })
+            .query_map(params![limit as i32], |row| self.reflexion_from_row(row))
             .map_err(|e| HyphaeError::Database(e.to_string()))?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
@@ -166,10 +172,7 @@ impl ReflexionStore for SqliteStore {
 }
 
 impl SqliteStore {
-    fn reflexion_from_row(
-        &self,
-        row: &rusqlite::Row,
-    ) -> rusqlite::Result<ReflexionRecord> {
+    fn reflexion_from_row(&self, row: &rusqlite::Row) -> rusqlite::Result<ReflexionRecord> {
         let id: String = row.get(0)?;
         let error_type_str: String = row.get(1)?;
         let root_cause: String = row.get(2)?;

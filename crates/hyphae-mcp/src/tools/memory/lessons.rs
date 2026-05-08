@@ -114,9 +114,7 @@ pub(crate) fn tool_extract_lessons(
     lessons.truncate(limit);
 
     // Collect reflexion patterns
-    let reflexion_records = store
-        .list_reflexions_by_pattern(20)
-        .unwrap_or_default();
+    let reflexion_records = store.list_reflexions_by_pattern(20).unwrap_or_default();
 
     let mut reflexion_patterns: std::collections::HashMap<String, usize> =
         std::collections::HashMap::new();
@@ -158,7 +156,10 @@ pub(crate) fn tool_extract_lessons(
         let mut sorted_patterns: Vec<_> = reflexion_patterns.iter().collect();
         sorted_patterns.sort_by_key(|&(_, count)| std::cmp::Reverse(*count));
 
-        for (pattern, count) in sorted_patterns.iter().take(limit.saturating_sub(lessons.len())) {
+        for (pattern, count) in sorted_patterns
+            .iter()
+            .take(limit.saturating_sub(lessons.len()))
+        {
             output.push_str(&format!(
                 "{}. [reflexion] {}: {} occurrences\n",
                 lesson_idx, pattern, count

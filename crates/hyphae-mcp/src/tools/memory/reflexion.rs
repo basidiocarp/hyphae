@@ -1,8 +1,10 @@
 use chrono::Utc;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use spore::logging::workflow_span;
 
-use hyphae_core::{MemoryId, ReflexionConfidence, ReflexionErrorType, ReflexionRecord, ReflexionStore};
+use hyphae_core::{
+    MemoryId, ReflexionConfidence, ReflexionErrorType, ReflexionRecord, ReflexionStore,
+};
 use hyphae_store::SqliteStore;
 
 use crate::protocol::ToolResult;
@@ -73,10 +75,13 @@ pub(crate) fn tool_reflexion_record(
 
     let record_id = record.id.clone();
     match store.store_reflexion(&record) {
-        Ok(_) => ToolResult::text(json!({
-            "id": record_id,
-            "stored_at": Utc::now().to_rfc3339()
-        }).to_string()),
+        Ok(_) => ToolResult::text(
+            json!({
+                "id": record_id,
+                "stored_at": Utc::now().to_rfc3339()
+            })
+            .to_string(),
+        ),
         Err(e) => ToolResult::error(format!("failed to store reflexion record: {e}")),
     }
 }

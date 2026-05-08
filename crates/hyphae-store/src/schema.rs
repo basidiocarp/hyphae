@@ -623,10 +623,16 @@ fn bootstrap_existing_db(conn: &mut Connection) -> Result<(), HyphaeError> {
     let _ = conn.execute("ALTER TABLE concepts ADD COLUMN overview_text TEXT", []);
 
     // Add block_type column to concepts table
-    let _ = conn.execute("ALTER TABLE concepts ADD COLUMN block_type TEXT NULL DEFAULT NULL", []);
+    let _ = conn.execute(
+        "ALTER TABLE concepts ADD COLUMN block_type TEXT NULL DEFAULT NULL",
+        [],
+    );
 
     // Add temporal validity columns to concept_links table
-    let _ = conn.execute("ALTER TABLE concept_links ADD COLUMN valid_from TEXT NOT NULL DEFAULT ''", []);
+    let _ = conn.execute(
+        "ALTER TABLE concept_links ADD COLUMN valid_from TEXT NOT NULL DEFAULT ''",
+        [],
+    );
     let _ = conn.execute("ALTER TABLE concept_links ADD COLUMN valid_to TEXT", []);
 
     // Run the full baseline SQL to create any tables added after the initial install.

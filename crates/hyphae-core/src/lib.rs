@@ -39,8 +39,8 @@ pub use ids::*;
 pub use llm_client::consolidate_via_llm;
 pub use memoir::{
     ApplicabilityRule, Authority, Concept, ConceptLink, Confidence, Decay, InputSpec,
-    KnowledgeDomain, Label, MemoryBlockType, Memoir, MemoirMeta, MemoirSource, MemoirStats, MemoirVersion,
-    QueryContext, RecallResult, Relation, RuleOp,
+    KnowledgeDomain, Label, Memoir, MemoirMeta, MemoirSource, MemoirStats, MemoirVersion,
+    MemoryBlockType, QueryContext, RecallResult, Relation, RuleOp,
 };
 pub use memoir_store::{ConceptInput, LinkInput, MemoirStore, UpsertReport};
 pub use memory::{
@@ -48,9 +48,7 @@ pub use memory::{
     Memory, MemoryBuilder, MemorySource, SearchQuery, SearchType, SessionHost, StoreStats,
     TopicHealth, Weight, WmOp, WmSection, WorkingMemory,
 };
-pub use reflexion::{
-    ReflexionConfidence, ReflexionErrorType, ReflexionRecord, ReflexionStore,
-};
+pub use reflexion::{ReflexionConfidence, ReflexionErrorType, ReflexionRecord, ReflexionStore};
 pub use sanitize::{SanitizedQuery, sanitize_query};
 pub use secrets::detect_secrets;
 pub use shared_context::{SharedContextEntry, SharedContextStore};
