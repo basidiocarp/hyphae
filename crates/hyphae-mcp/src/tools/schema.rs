@@ -4,6 +4,41 @@ use serde_json::{Value, json};
 /// `hyphae_memory_embed_all` tool is omitted.
 pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
     let mut tools = vec![
+        // Constitution policy tool
+        json!({
+            "name": "hyphae_constitution_store",
+            "description": "Store a permanent governance policy that never decays and is excluded from consolidation. Use for rules that must persist indefinitely across all sessions, such as security policies or architectural constraints.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "maxLength": 32768,
+                        "description": "The governance policy text to store permanently"
+                    },
+                    "topic": {
+                        "type": "string",
+                        "description": "Category for the policy. Defaults to 'constitution/<project>' when omitted."
+                    },
+                    "keywords": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Keywords to improve search"
+                    },
+                    "raw_excerpt": {
+                        "type": "string",
+                        "maxLength": 65536,
+                        "description": "Optional verbatim excerpt (e.g. exact rule text)"
+                    }
+                },
+                "required": ["content"]
+            },
+            "annotations": {
+                "readOnlyHint": false,
+                "destructiveHint": false,
+                "idempotentHint": false
+            }
+        }),
         // Memory tools
         json!({
             "name": "hyphae_memory_store",

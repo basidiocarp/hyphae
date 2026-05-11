@@ -46,6 +46,10 @@ pub fn call_tool_with_consolidation(
     trace: &super::ToolTraceContext,
 ) -> ToolResult {
     match name {
+        // Constitution policy tool
+        "hyphae_constitution_store" => memory::tool_constitution_store(
+            store, embedder, args, compact, project, trace,
+        ),
         // Memory tools
         "hyphae_memory_store" => memory::tool_store(
             store,

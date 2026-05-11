@@ -1564,7 +1564,7 @@ impl MemoryStore for SqliteStore {
                     END
                     / (1.0 + access_count * 0.1)
                 ))
-                WHERE importance != 'critical' AND invalidated_at IS NULL",
+                WHERE importance NOT IN ('critical', 'constitution') AND invalidated_at IS NULL",
                 params![decay_factor],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
@@ -1596,7 +1596,7 @@ impl MemoryStore for SqliteStore {
             "DELETE FROM vec_memories WHERE memory_id IN (
                 SELECT id FROM memories
                 WHERE weight < ?1
-                  AND importance NOT IN ('critical', 'high')
+                  AND importance NOT IN ('critical', 'high', 'constitution')
                   AND invalidated_at IS NULL
             )",
             params![weight_threshold],
@@ -1607,7 +1607,7 @@ impl MemoryStore for SqliteStore {
             .execute(
                 "DELETE FROM memories
                  WHERE weight < ?1
-                   AND importance NOT IN ('critical', 'high')
+                   AND importance NOT IN ('critical', 'high', 'constitution')
                    AND invalidated_at IS NULL",
                 params![weight_threshold],
             )

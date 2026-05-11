@@ -75,10 +75,22 @@ pub(crate) fn tool_consolidate(
     // Derive importance from the highest-importance source memory so that a
     // consolidation of critical or high-importance memories does not silently
     // downgrade them to High.
+    //
+    // Constitution memories are permanently exempt from consolidation — they
+    // represent governance policy that must never be merged or discarded.
     let importance = match store.get_by_topic(topic, None) {
         Ok(ref memories) if !memories.is_empty() => {
+            if memories
+                .iter()
+                .any(|m| m.importance == Importance::Constitution)
+            {
+                return ToolResult::error(format!(
+                    "topic '{topic}' contains constitution memories and cannot be consolidated"
+                ));
+            }
             fn rank(i: Importance) -> u8 {
                 match i {
+                    Importance::Constitution => 5,
                     Importance::Critical => 4,
                     Importance::High => 3,
                     Importance::Medium => 2,

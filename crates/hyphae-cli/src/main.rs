@@ -76,6 +76,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Purge { .. } => "purge",
         Commands::AuditSecrets { .. } => "audit_secrets",
         Commands::Audit { .. } => "audit",
+        Commands::Constitution(_) => "constitution",
         Commands::Changelog { .. } => "changelog",
         Commands::AutoRecall { .. } => "auto_recall",
         Commands::RecallBundle(_) => "recall_bundle",
@@ -140,6 +141,7 @@ fn all_projects_allowed(command: &Commands) -> bool {
         | Commands::ServeSocket { .. }
         | Commands::Memoir(_)
         | Commands::Feedback(_)
+        | Commands::Constitution(_)
         | Commands::Prune { .. }
         | Commands::Consolidate { .. }
         | Commands::ImportClaudeMemory { .. }
@@ -685,6 +687,29 @@ fn main() -> Result<()> {
 
         Commands::Audit { command } => {
             commands::audit::dispatch(&store, command)?;
+        }
+
+        Commands::Constitution(args) => {
+            use crate::cli::ConstitutionCommand;
+            match args.command {
+                ConstitutionCommand::List => {
+                    commands::constitution::cmd_list(
+                        &store,
+                        resolved_project.as_deref(),
+                    )?;
+                }
+                ConstitutionCommand::Add { content, topic } => {
+                    commands::constitution::cmd_add(
+                        &store,
+                        &content,
+                        topic.as_deref(),
+                        resolved_project.as_deref(),
+                    )?;
+                }
+                ConstitutionCommand::Remove { id } => {
+                    commands::constitution::cmd_remove(&store, &id)?;
+                }
+            }
         }
 
         Commands::AuditSecrets { topic, detailed } => {

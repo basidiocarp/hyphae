@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
 use crate::commands::context::GatherContextArgs;
@@ -9,6 +9,38 @@ use crate::commands::memory::{MemoryArgs, SearchOrder};
 use crate::commands::project::ProjectArgs;
 use crate::commands::recall_bundle::RecallBundleArgs;
 use crate::commands::session::SessionArgs;
+
+// ===========================================================================
+// Constitution subcommand types
+// ===========================================================================
+
+#[derive(Args)]
+pub(crate) struct ConstitutionArgs {
+    #[command(subcommand)]
+    pub(crate) command: ConstitutionCommand,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum ConstitutionCommand {
+    /// List all constitution (permanent governance policy) memories
+    List,
+
+    /// Store a new constitution memory
+    Add {
+        /// The governance policy text to store permanently
+        #[arg(short, long)]
+        content: String,
+        /// Topic for the policy. Defaults to 'constitution/<project>'
+        #[arg(short, long)]
+        topic: Option<String>,
+    },
+
+    /// Remove a constitution memory by ID (irreversible)
+    Remove {
+        /// ID of the constitution memory to delete
+        id: String,
+    },
+}
 
 #[derive(Parser)]
 #[command(name = "hyphae", version)]
@@ -494,6 +526,9 @@ pub(crate) enum Commands {
         #[arg(long)]
         detailed: bool,
     },
+
+    /// Manage permanent governance policy memories (constitution layer)
+    Constitution(ConstitutionArgs),
 
     /// View and manage the memory mutation audit log
     Audit {

@@ -356,6 +356,8 @@ impl MemoryBuilder {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Importance {
+    /// Permanent governance policy: never decays, never consolidated.
+    Constitution,
     Critical,
     High,
     Medium,
@@ -366,6 +368,7 @@ pub enum Importance {
 impl fmt::Display for Importance {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Constitution => write!(f, "constitution"),
             Self::Critical => write!(f, "critical"),
             Self::High => write!(f, "high"),
             Self::Medium => write!(f, "medium"),
@@ -380,6 +383,7 @@ impl std::str::FromStr for Importance {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
+            "constitution" => Ok(Self::Constitution),
             "critical" => Ok(Self::Critical),
             "high" => Ok(Self::High),
             "medium" => Ok(Self::Medium),
@@ -527,6 +531,7 @@ mod tests {
     #[test]
     fn test_importance_display_and_fromstr_roundtrip() {
         for variant in [
+            Importance::Constitution,
             Importance::Critical,
             Importance::High,
             Importance::Medium,

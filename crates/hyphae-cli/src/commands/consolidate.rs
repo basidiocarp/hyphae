@@ -243,6 +243,7 @@ fn build_consolidated_memory(topic: &str, memories: &[Memory]) -> Memory {
 
 fn importance_rank(importance: Importance) -> u8 {
     match importance {
+        Importance::Constitution => 6,
         Importance::Critical => 5,
         Importance::High => 4,
         Importance::Medium => 3,

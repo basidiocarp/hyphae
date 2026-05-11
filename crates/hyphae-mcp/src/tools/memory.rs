@@ -1,3 +1,4 @@
+mod constitution;
 mod evaluate;
 mod helpers;
 mod lessons;
@@ -6,6 +7,7 @@ mod recall;
 mod reflexion;
 mod store;
 
+pub(crate) use constitution::tool_constitution_store;
 pub(crate) use evaluate::tool_evaluate;
 pub(crate) use lessons::tool_extract_lessons;
 pub(crate) use maintenance::{
