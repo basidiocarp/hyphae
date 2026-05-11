@@ -888,6 +888,7 @@ fn memory_from_payload(payload: &MemoryPayload) -> Memory {
         invalidation_reason: payload.invalidation_reason.clone(),
         superseded_by: payload.superseded_by.as_ref().cloned().map(MemoryId::from),
         embedding: None,
+        entities: Vec::new(), // will be auto-extracted at store time
     }
 }
 

@@ -34,6 +34,45 @@ struct HotnessConfig {
     half_life_days: f32,
 }
 
+/// Weights for the three-signal hybrid retrieval fusion.
+/// Configurable via environment variables; defaults sum to 1.0.
+struct RetrievalWeights {
+    fts: f32,
+    cosine: f32,
+    entity: f32,
+}
+
+impl Default for RetrievalWeights {
+    fn default() -> Self {
+        Self {
+            fts: 0.25,
+            cosine: 0.55,
+            entity: 0.20,
+        }
+    }
+}
+
+impl RetrievalWeights {
+    fn from_env() -> Self {
+        let fts = std::env::var("HYPHAE_WEIGHT_FTS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.25_f32)
+            .clamp(0.0, 1.0);
+        let cosine = std::env::var("HYPHAE_WEIGHT_COSINE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.55_f32)
+            .clamp(0.0, 1.0);
+        let entity = std::env::var("HYPHAE_WEIGHT_ENTITY")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.20_f32)
+            .clamp(0.0, 1.0);
+        Self { fts, cosine, entity }
+    }
+}
+
 impl Default for HotnessConfig {
     fn default() -> Self {
         Self {
@@ -314,6 +353,8 @@ impl SqliteStore {
         };
 
         let cfg = HotnessConfig::from_env();
+        let weights = RetrievalWeights::from_env();
+        let query_entities = hyphae_core::extract_entities(query);
 
         let mut scored: Vec<(String, f32)> = Vec::new();
         for id in candidate_ids {
@@ -328,8 +369,25 @@ impl SqliteStore {
                 .get(&id)
                 .map(|m| hotness_score(m.access_count, &m.last_accessed, cfg.half_life_days))
                 .unwrap_or(0.0);
-            let similarity =
-                0.3 * fts_score + 0.7 * vec_score + static_weight_bias + 0.12 * learned_score;
+            let entity_score = if query_entities.is_empty() {
+                0.0
+            } else {
+                all_memories
+                    .get(&id)
+                    .map(|m| {
+                        let shared = query_entities
+                            .iter()
+                            .filter(|e| m.entities.contains(*e))
+                            .count();
+                        shared as f32 / query_entities.len() as f32
+                    })
+                    .unwrap_or(0.0)
+            };
+            let similarity = weights.fts * fts_score
+                + weights.cosine * vec_score
+                + weights.entity * entity_score
+                + static_weight_bias
+                + 0.12 * learned_score;
             let combined = similarity * (1.0 - cfg.alpha) + hot * cfg.alpha;
             scored.push((id, combined.clamp(0.0, 1.0)));
         }
@@ -460,13 +518,20 @@ impl SqliteStore {
         let st = source_type(&memory.source);
         let sd = source_data(&memory.source);
         let emb_blob = memory.embedding.as_deref().map(embedding_to_blob);
+        let entities = if memory.entities.is_empty() {
+            let combined = format!("{} {}", memory.topic, memory.summary);
+            hyphae_core::extract_entities(&combined)
+        } else {
+            memory.entities.clone()
+        };
+        let entities_json = serde_json::to_string(&entities)?;
 
         tx.execute(
             "INSERT INTO memories (id, created_at, updated_at, last_accessed, access_count, weight,
              topic, summary, raw_excerpt, keywords,
              importance, source_type, source_data, related_ids, embedding, project, branch, worktree,
-             expires_at, invalidated_at, invalidation_reason, superseded_by, tier)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
+             expires_at, invalidated_at, invalidation_reason, superseded_by, tier, entities)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
             params![
                 memory.id.as_ref(),
                 memory.created_at.to_rfc3339(),
@@ -491,6 +556,7 @@ impl SqliteStore {
                 memory.invalidation_reason.as_deref(),
                 memory.superseded_by.as_ref().map(MemoryId::as_ref),
                 memory.tier.to_string(),
+                entities_json,
             ],
         )
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
@@ -551,8 +617,17 @@ impl MemoryStore for SqliteStore {
     fn store(&self, memory: Memory) -> HyphaeResult<MemoryId> {
         let _span = tracing::info_span!("hyphae.memory.store").entered();
 
+        // Auto-extract entities from topic + summary if the caller left them empty.
+        let entities = if memory.entities.is_empty() {
+            let combined = format!("{} {}", memory.topic, memory.summary);
+            hyphae_core::extract_entities(&combined)
+        } else {
+            memory.entities.clone()
+        };
+
         let keywords_json = serde_json::to_string(&memory.keywords)?;
         let related_json = serde_json::to_string(&memory.related_ids)?;
+        let entities_json = serde_json::to_string(&entities)?;
         let st = source_type(&memory.source);
         let sd = source_data(&memory.source);
         let emb_blob = memory.embedding.as_deref().map(embedding_to_blob);
@@ -568,8 +643,8 @@ impl MemoryStore for SqliteStore {
                 "INSERT INTO memories (id, created_at, updated_at, last_accessed, access_count, weight,
                  topic, summary, raw_excerpt, keywords,
                  importance, source_type, source_data, related_ids, embedding, project, branch, worktree, agent_id,
-                 expires_at, invalidated_at, invalidation_reason, superseded_by, tier)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+                 expires_at, invalidated_at, invalidation_reason, superseded_by, tier, entities)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
                 params![
                     memory.id.as_ref(),
                     memory.created_at.to_rfc3339(),
@@ -595,6 +670,7 @@ impl MemoryStore for SqliteStore {
                     memory.invalidation_reason.as_deref(),
                     memory.superseded_by.as_ref().map(MemoryId::as_ref),
                     memory.tier.to_string(),
+                    entities_json,
                 ],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
@@ -690,6 +766,13 @@ impl MemoryStore for SqliteStore {
         let st = source_type(&memory.source);
         let sd = source_data(&memory.source);
         let emb_blob = memory.embedding.as_deref().map(embedding_to_blob);
+        let entities = if memory.entities.is_empty() {
+            let combined = format!("{} {}", memory.topic, memory.summary);
+            hyphae_core::extract_entities(&combined)
+        } else {
+            memory.entities.clone()
+        };
+        let entities_json = serde_json::to_string(&entities)?;
 
         // SAFETY: No nested transactions — this method does not call other &self methods
         // that open transactions. The &self receiver is required by the MemoryStore trait.
@@ -705,7 +788,7 @@ impl MemoryStore for SqliteStore {
                  topic = ?6, summary = ?7, raw_excerpt = ?8, keywords = ?9,
                  importance = ?10, source_type = ?11, source_data = ?12, related_ids = ?13,
                  embedding = ?14, project = ?15, branch = ?16, worktree = ?17, agent_id = ?18, expires_at = ?19,
-                 invalidated_at = ?20, invalidation_reason = ?21, superseded_by = ?22
+                 invalidated_at = ?20, invalidation_reason = ?21, superseded_by = ?22, entities = ?23
                  WHERE id = ?1",
                 params![
                     memory.id.as_ref(),
@@ -730,6 +813,7 @@ impl MemoryStore for SqliteStore {
                     memory.invalidated_at.map(|dt| dt.to_rfc3339()),
                     memory.invalidation_reason.as_deref(),
                     memory.superseded_by.as_ref().map(MemoryId::as_ref),
+                    entities_json,
                 ],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
@@ -1183,6 +1267,8 @@ impl MemoryStore for SqliteStore {
         };
 
         let cfg = HotnessConfig::from_env();
+        let weights = RetrievalWeights::from_env();
+        let query_entities = hyphae_core::extract_entities(query);
 
         let mut scored: Vec<(String, f32)> = Vec::new();
         for id in candidate_ids {
@@ -1197,8 +1283,25 @@ impl MemoryStore for SqliteStore {
                 .get(&id)
                 .map(|m| hotness_score(m.access_count, &m.last_accessed, cfg.half_life_days))
                 .unwrap_or(0.0);
-            let similarity =
-                0.3 * fts_score + 0.7 * vec_score + static_weight_bias + 0.12 * learned_score;
+            let entity_score = if query_entities.is_empty() {
+                0.0
+            } else {
+                all_memories
+                    .get(&id)
+                    .map(|m| {
+                        let shared = query_entities
+                            .iter()
+                            .filter(|e| m.entities.contains(*e))
+                            .count();
+                        shared as f32 / query_entities.len() as f32
+                    })
+                    .unwrap_or(0.0)
+            };
+            let similarity = weights.fts * fts_score
+                + weights.cosine * vec_score
+                + weights.entity * entity_score
+                + static_weight_bias
+                + 0.12 * learned_score;
             let combined = similarity * (1.0 - cfg.alpha) + hot * cfg.alpha;
             scored.push((id, combined.clamp(0.0, 1.0)));
         }
@@ -1717,13 +1820,20 @@ impl MemoryStore for SqliteStore {
         let st = source_type(&consolidated.source);
         let sd = source_data(&consolidated.source);
         let emb_blob = consolidated.embedding.as_deref().map(embedding_to_blob);
+        let entities = if consolidated.entities.is_empty() {
+            let combined = format!("{} {}", consolidated.topic, consolidated.summary);
+            hyphae_core::extract_entities(&combined)
+        } else {
+            consolidated.entities.clone()
+        };
+        let entities_json = serde_json::to_string(&entities)?;
 
         tx.execute(
             "INSERT INTO memories (id, created_at, updated_at, last_accessed, access_count, weight,
              topic, summary, raw_excerpt, keywords,
              importance, source_type, source_data, related_ids, embedding, project, branch, worktree,
-             expires_at, invalidated_at, invalidation_reason, superseded_by)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
+             expires_at, invalidated_at, invalidation_reason, superseded_by, tier, entities)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
             params![
                 consolidated.id.as_ref(),
                 consolidated.created_at.to_rfc3339(),
@@ -1747,6 +1857,8 @@ impl MemoryStore for SqliteStore {
                 consolidated.invalidated_at.map(|dt| dt.to_rfc3339()),
                 consolidated.invalidation_reason.as_deref(),
                 consolidated.superseded_by.as_ref().map(MemoryId::as_ref),
+                consolidated.tier.to_string(),
+                entities_json,
             ],
         )
         .map_err(|e| HyphaeError::Database(e.to_string()))?;

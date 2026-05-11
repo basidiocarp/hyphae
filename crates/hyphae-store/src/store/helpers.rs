@@ -76,7 +76,8 @@ pub(crate) fn row_to_memory(row: &rusqlite::Row) -> rusqlite::Result<Memory> {
     //   access_count(4), weight(5), topic(6), summary(7), raw_excerpt(8),
     //   keywords(9), importance(10), source_type(11), source_data(12),
     //   related_ids(13), embedding(14), project(15), branch(16), worktree(17), agent_id(18),
-    //   expires_at(19), invalidated_at(20), invalidation_reason(21), superseded_by(22), tier(23)
+    //   expires_at(19), invalidated_at(20), invalidation_reason(21), superseded_by(22), tier(23),
+    //   entities(24)
     let id: MemoryId = row.get::<_, String>(0)?.into();
 
     let keywords_json: String = row.get::<_, Option<String>>(9)?.unwrap_or_default();
@@ -98,6 +99,12 @@ pub(crate) fn row_to_memory(row: &rusqlite::Row) -> rusqlite::Result<Memory> {
     let related_json: String = row.get::<_, Option<String>>(13)?.unwrap_or_default();
     let related_ids: Vec<MemoryId> = serde_json::from_str(&related_json).unwrap_or_else(|e| {
         tracing::warn!("failed to parse related_ids JSON for memory {id}: {related_json}: {e}");
+        Default::default()
+    });
+
+    let entities_json: String = row.get::<_, Option<String>>(24)?.unwrap_or_default();
+    let entities: Vec<String> = serde_json::from_str(&entities_json).unwrap_or_else(|e| {
+        tracing::warn!("failed to parse entities JSON for memory {id}: {entities_json}: {e}");
         Default::default()
     });
 
@@ -126,6 +133,7 @@ pub(crate) fn row_to_memory(row: &rusqlite::Row) -> rusqlite::Result<Memory> {
         summary: row.get(7)?,
         raw_excerpt: row.get(8)?,
         keywords,
+        entities,
         importance,
         tier,
         source,
@@ -157,7 +165,7 @@ pub(crate) fn row_to_memory(row: &rusqlite::Row) -> rusqlite::Result<Memory> {
 pub(crate) const SELECT_COLS: &str = "id, created_at, updated_at, last_accessed, access_count, weight, \
      topic, summary, raw_excerpt, keywords, \
      importance, source_type, source_data, related_ids, embedding, project, branch, worktree, agent_id, \
-     expires_at, invalidated_at, invalidation_reason, superseded_by, tier";
+     expires_at, invalidated_at, invalidation_reason, superseded_by, tier, entities";
 
 pub(crate) const ACTIVE_MEMORY_CLAUSE: &str = "invalidated_at IS NULL";
 

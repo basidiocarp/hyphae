@@ -360,6 +360,16 @@ fn migrations() -> Migrations<'static> {
             );
             Ok(())
         }),
+        // M3: add entities column to memories for entity-linking retrieval signal.
+        // Default '[]' means existing rows have an empty entity list and will be
+        // scored 0 on the entity axis until they are re-stored or updated.
+        M::up_with_hook("", |conn| {
+            let _ = conn.execute(
+                "ALTER TABLE memories ADD COLUMN entities TEXT NOT NULL DEFAULT '[]'",
+                [],
+            );
+            Ok(())
+        }),
     ])
 }
 

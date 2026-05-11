@@ -1,5 +1,6 @@
 pub mod artifact;
 pub mod chunk;
+pub mod entity;
 pub mod chunk_store;
 pub mod embedder;
 pub mod error;
@@ -25,6 +26,7 @@ pub use artifact::{Artifact, ArtifactType, UnknownArtifactType};
 pub use chunk::{Chunk, ChunkMetadata, ChunkSearchResult, Document, SourceType};
 pub use chunk_store::ChunkStore;
 pub use embedder::Embedder;
+pub use entity::extract_entities;
 pub use error::{HyphaeError, HyphaeResult};
 pub use eviction::{DefaultEvictionPolicy, EvictionPolicy};
 #[cfg(feature = "embeddings")]

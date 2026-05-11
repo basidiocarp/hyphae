@@ -55,6 +55,10 @@ pub struct Memory {
     pub summary: String,
     pub raw_excerpt: Option<String>,
     pub keywords: Vec<String>,
+    /// Extracted ecosystem entity names (e.g. "hyphae", "canopy"). Populated
+    /// automatically at store time from topic + summary if not set by the caller.
+    #[serde(default)]
+    pub entities: Vec<String>,
 
     pub importance: Importance,
     pub tier: MemoryTier,
@@ -109,6 +113,7 @@ pub struct MemoryBuilder {
     importance: Importance,
     tier: MemoryTier,
     keywords: Vec<String>,
+    entities: Vec<String>,
     raw_excerpt: Option<String>,
     embedding: Option<Vec<f32>>,
     source: MemorySource,
@@ -227,6 +232,7 @@ impl MemoryBuilder {
             importance,
             tier: MemoryTier::default(),
             keywords: Vec::new(),
+            entities: Vec::new(),
             raw_excerpt: None,
             embedding: None,
             source: MemorySource::Manual,
@@ -245,6 +251,11 @@ impl MemoryBuilder {
 
     pub fn keywords(mut self, keywords: Vec<String>) -> Self {
         self.keywords = keywords;
+        self
+    }
+
+    pub fn entities(mut self, entities: Vec<String>) -> Self {
+        self.entities = entities;
         self
     }
 
@@ -336,6 +347,7 @@ impl MemoryBuilder {
             summary: self.summary,
             raw_excerpt: self.raw_excerpt,
             keywords: self.keywords,
+            entities: self.entities,
             importance: self.importance,
             tier: self.tier,
             source: self.source,
