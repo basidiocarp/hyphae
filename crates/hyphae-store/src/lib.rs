@@ -1,5 +1,5 @@
 pub mod memoir_community;
-mod schema;
+pub mod schema;
 mod store;
 
 pub use hyphae_core::ChunkStore;

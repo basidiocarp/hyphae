@@ -349,6 +349,17 @@ fn migrations() -> Migrations<'static> {
             );
             Ok(())
         }),
+        // M2: add block_type to concepts.
+        // up_with_hook discards duplicate-column errors so this is safe on both
+        // fresh installs (BASELINE_SQL already has the column) and existing
+        // databases at user_version=1 that pre-date this column.
+        M::up_with_hook("", |conn| {
+            let _ = conn.execute(
+                "ALTER TABLE concepts ADD COLUMN block_type TEXT NULL DEFAULT NULL",
+                [],
+            );
+            Ok(())
+        }),
     ])
 }
 

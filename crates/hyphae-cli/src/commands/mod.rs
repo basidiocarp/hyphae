@@ -1,5 +1,6 @@
 pub mod activity;
 pub mod analytics;
+pub mod migrate;
 pub mod audit;
 pub mod audit_secrets;
 pub mod auto_recall;

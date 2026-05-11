@@ -64,6 +64,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::BenchRetrieval { .. } => "bench_retrieval",
         Commands::SelfUpdate { .. } => "self_update",
         Commands::Doctor { .. } => "doctor",
+        Commands::Migrate => "migrate",
         Commands::ExportTraining { .. } => "export_training",
         Commands::Evaluate { .. } => "evaluate",
         Commands::Export { .. } => "export",
@@ -145,7 +146,8 @@ fn all_projects_allowed(command: &Commands) -> bool {
         | Commands::CodexNotify { .. }
         | Commands::IngestSessions { .. }
         | Commands::Import { .. }
-        | Commands::Purge { .. } => false,
+        | Commands::Purge { .. }
+        | Commands::Migrate => false,
     }
 }
 
@@ -215,6 +217,10 @@ fn main() -> Result<()> {
     match &cli.command {
         Commands::Doctor { fix } => {
             commands::doctor::run(*fix, cli.db.clone())?;
+            return Ok(());
+        }
+        Commands::Migrate => {
+            commands::migrate::run(cli.db.clone())?;
             return Ok(());
         }
         Commands::Completions { shell } => {
@@ -404,6 +410,7 @@ fn main() -> Result<()> {
         Commands::Init { .. } => unreachable!("handled in early-return block"),
         Commands::SelfUpdate { .. } => unreachable!("handled in early-return block"),
         Commands::Doctor { .. } => unreachable!("handled in early-return block"),
+        Commands::Migrate => unreachable!("handled in early-return block"),
 
         Commands::Watch { path, recursive } => {
             watch::run_watch(

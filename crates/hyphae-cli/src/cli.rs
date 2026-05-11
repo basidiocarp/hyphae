@@ -356,6 +356,9 @@ pub(crate) enum Commands {
         fix: bool,
     },
 
+    /// Apply any pending database schema migrations
+    Migrate,
+
     /// Handle Codex notify events from the Codex CLI integration
     CodexNotify {
         /// JSON notification payload passed by Codex
