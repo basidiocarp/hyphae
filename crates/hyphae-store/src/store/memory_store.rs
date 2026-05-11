@@ -295,14 +295,14 @@ impl SqliteStore {
         let fts_sql = "SELECT m.id, m.created_at, m.updated_at, m.last_accessed, m.access_count, m.weight, \
                     m.topic, m.summary, m.raw_excerpt, m.keywords, \
                     m.importance, m.source_type, m.source_data, m.related_ids, m.embedding, \
-                    m.project, m.branch, m.worktree, m.expires_at, m.invalidated_at, \
-                    m.invalidation_reason, m.superseded_by, fts.rank \
+                    m.project, m.branch, m.worktree, m.agent_id, m.expires_at, m.invalidated_at, \
+                    m.invalidation_reason, m.superseded_by, m.tier, m.entities, fts.rank \
              FROM memories_fts fts \
              JOIN memories m ON m.id = fts.id \
              WHERE memories_fts MATCH ?1 \
              AND m.invalidated_at IS NULL \
              AND (fts.project = ?3 OR ?3 IS NULL) \
-             AND (fts.worktree = ?4 OR ?4 IS NULL) \
+             AND (m.worktree = ?4 OR ?4 IS NULL) \
              ORDER BY fts.rank \
              LIMIT ?2";
 
@@ -316,7 +316,7 @@ impl SqliteStore {
                         params![sanitized, pool_size as i64, project, worktree],
                         |row| {
                             let memory = row_to_memory(row)?;
-                            let rank: f32 = row.get(22)?;
+                            let rank: f32 = row.get(25)?;
                             Ok((memory, rank))
                         },
                     ) {
@@ -1214,8 +1214,8 @@ impl MemoryStore for SqliteStore {
         let fts_sql = "SELECT m.id, m.created_at, m.updated_at, m.last_accessed, m.access_count, m.weight, \
                     m.topic, m.summary, m.raw_excerpt, m.keywords, \
                     m.importance, m.source_type, m.source_data, m.related_ids, m.embedding, \
-                    m.project, m.branch, m.worktree, m.expires_at, m.invalidated_at, \
-                    m.invalidation_reason, m.superseded_by, fts.rank \
+                    m.project, m.branch, m.worktree, m.agent_id, m.expires_at, m.invalidated_at, \
+                    m.invalidation_reason, m.superseded_by, m.tier, m.entities, fts.rank \
              FROM memories_fts fts \
              JOIN memories m ON m.id = fts.id \
              WHERE memories_fts MATCH ?1 \
@@ -1232,7 +1232,7 @@ impl MemoryStore for SqliteStore {
                 Ok(mut stmt) => {
                     match stmt.query_map(params![sanitized, pool_size as i64, project], |row| {
                         let memory = row_to_memory(row)?;
-                        let rank: f32 = row.get(22)?;
+                        let rank: f32 = row.get(25)?;
                         Ok((memory, rank))
                     }) {
                         Ok(rows) => {
@@ -2105,5 +2105,98 @@ mod hotness_tests {
         let cfg = HotnessConfig::default();
         assert_eq!(cfg.alpha, 0.15);
         assert_eq!(cfg.half_life_days, 7.0);
+    }
+}
+
+#[cfg(test)]
+mod hybrid_search_fts_tests {
+    use super::*;
+    use hyphae_core::{Importance, Memory, MemoryId, MemorySource, Weight};
+
+    fn make_store() -> SqliteStore {
+        SqliteStore::in_memory().unwrap()
+    }
+
+    fn make_memory(topic: &str, summary: &str) -> Memory {
+        Memory {
+            id: MemoryId::new(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            last_accessed: chrono::Utc::now(),
+            access_count: 0,
+            weight: Weight::new(1.0).unwrap(),
+            topic: topic.to_string(),
+            summary: summary.to_string(),
+            raw_excerpt: None,
+            keywords: vec![],
+            importance: Importance::Medium,
+            source: MemorySource::Manual,
+            related_ids: vec![],
+            embedding: None,
+            project: None,
+            branch: None,
+            worktree: None,
+            agent_id: None,
+            expires_at: None,
+            invalidated_at: None,
+            invalidation_reason: None,
+            superseded_by: None,
+            tier: Default::default(),
+            entities: vec![],
+        }
+    }
+
+    #[test]
+    fn fts_candidates_surface_in_hybrid_search_without_embedding() {
+        let store = make_store();
+        let mem = make_memory(
+            "decisions/hyphae",
+            "hyphae session initialization changed to lazy mode",
+        );
+        let stored_id = mem.id.clone();
+        store.store(mem).unwrap();
+
+        // No embedding stored — vector arm returns nothing.
+        // FTS arm must surface the memory for the query to return a result.
+        // sqlite-vec rejects zero-length embeddings even on empty tables, so
+        // use a dummy non-zero embedding that will simply produce no KNN hits.
+        let dummy_embedding = vec![0.0f32; 384];
+        let results = store
+            .search_hybrid("hyphae session initialization", &dummy_embedding, 10, 0, None)
+            .unwrap();
+
+        assert!(
+            !results.is_empty(),
+            "FTS arm should surface the stored memory when no embedding is available"
+        );
+        assert!(
+            results.iter().any(|(m, _)| m.id == stored_id),
+            "stored memory must appear in hybrid search results"
+        );
+    }
+
+    #[test]
+    fn fts_candidates_surface_in_hybrid_search_scoped() {
+        let store = make_store();
+        let mem = make_memory(
+            "errors/resolved",
+            "canopy task dispatch failed due to missing agent_id field",
+        );
+        let stored_id = mem.id.clone();
+        store.store(mem).unwrap();
+
+        let dummy_embedding = vec![0.0f32; 384];
+        let results = store
+            .search_hybrid_scoped("canopy dispatch agent_id", &dummy_embedding, 10, 0, None, None)
+            .unwrap();
+
+        assert!(
+            !results.is_empty(),
+            "FTS arm should surface the stored memory in scoped hybrid search"
+        );
+        assert!(
+            results.iter().any(|(m, _)| m.id == stored_id),
+            "stored memory must appear in scoped hybrid search results"
+        );
     }
 }
