@@ -2,6 +2,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Utc};
 use hyphae_core::{BackupExportManifest, ScopedIdentity};
 use rusqlite::{Connection, OpenFlags};
+use spore::atomic_write_bytes;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -142,24 +143,14 @@ pub(crate) fn create_backup(db_path: &Path, output: Option<PathBuf>) -> Result<P
 
 /// Atomically restore `src` over `dest`, cleaning up any stale WAL/SHM sidecars.
 ///
-/// Copies to a temp file in the same directory as `dest` so that the final
-/// `rename` is atomic on any POSIX filesystem.  Stale `-wal` and `-shm` files
-/// belonging to the old database are removed before the rename so the restored
-/// database does not inherit an inconsistent journal.
+/// Reads the backup file into memory and writes it atomically to `dest` using
+/// spore's atomic_write_bytes. Stale `-wal` and `-shm` files belonging to the
+/// old database are removed before the write so the restored database does not
+/// inherit an inconsistent journal.
 fn restore_to(src: &Path, dest: &Path) -> Result<()> {
-    let db_dir = dest
-        .parent()
-        .ok_or_else(|| anyhow!("database path has no parent directory"))?;
-
-    let temp_path = db_dir.join(format!(".hyphae-restore-{}.tmp", std::process::id()));
-
-    // Clean up any stale temp file from a previous aborted restore.
-    if temp_path.exists() {
-        let _ = fs::remove_file(&temp_path);
-    }
-
-    fs::copy(src, &temp_path)
-        .with_context(|| format!("failed to copy backup to temp file {}", temp_path.display()))?;
+    // Read the entire backup file into memory.
+    let backup_bytes = fs::read(src)
+        .with_context(|| format!("failed to read backup file {}", src.display()))?;
 
     // Remove stale WAL/SHM sidecars before replacing the main DB file.
     // These belong to the old database and would corrupt the new one if left behind.
@@ -175,9 +166,9 @@ fn restore_to(src: &Path, dest: &Path) -> Result<()> {
         }
     }
 
-    fs::rename(&temp_path, dest).with_context(|| {
-        format!(
-            "failed to atomically replace database at {}",
+    atomic_write_bytes(dest, &backup_bytes).map_err(|e| {
+        anyhow!(
+            "failed to atomically write database at {}: {e}",
             dest.display()
         )
     })?;
