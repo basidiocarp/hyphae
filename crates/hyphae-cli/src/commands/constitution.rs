@@ -18,10 +18,7 @@ pub fn cmd_list(store: &SqliteStore, project: Option<&str>) -> Result<()> {
                     println!("Constitution memories:");
                     found = true;
                 }
-                println!(
-                    "  [{}] topic={} | {}",
-                    mem.id, mem.topic, mem.summary
-                );
+                println!("  [{}] topic={} | {}", mem.id, mem.topic, mem.summary);
                 if let Some(p) = &mem.project {
                     println!("    project: {p}");
                 }
@@ -43,15 +40,16 @@ pub fn cmd_add(
     topic: Option<&str>,
     project: Option<&str>,
 ) -> Result<()> {
-    let resolved_topic = topic
-        .map(str::to_owned)
-        .unwrap_or_else(|| match project {
-            Some(p) => format!("constitution/{p}"),
-            None => "constitution".to_string(),
-        });
+    let resolved_topic = topic.map(str::to_owned).unwrap_or_else(|| match project {
+        Some(p) => format!("constitution/{p}"),
+        None => "constitution".to_string(),
+    });
 
-    let mut builder =
-        Memory::builder(resolved_topic.clone(), content.to_string(), Importance::Constitution);
+    let mut builder = Memory::builder(
+        resolved_topic.clone(),
+        content.to_string(),
+        Importance::Constitution,
+    );
 
     if let Some(p) = project {
         builder = builder.project(p.to_string());

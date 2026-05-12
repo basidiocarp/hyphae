@@ -29,9 +29,7 @@ pub fn run(db: Option<PathBuf>) -> Result<()> {
     if version_before == version_after {
         println!("Database is already up to date (schema version {version_after}).");
     } else {
-        println!(
-            "Migrated database from schema version {version_before} to {version_after}."
-        );
+        println!("Migrated database from schema version {version_before} to {version_after}.");
     }
     println!("Path: {}", path.display());
     Ok(())

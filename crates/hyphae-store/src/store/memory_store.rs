@@ -69,7 +69,11 @@ impl RetrievalWeights {
             .and_then(|v| v.parse().ok())
             .unwrap_or(0.20_f32)
             .clamp(0.0, 1.0);
-        Self { fts, cosine, entity }
+        Self {
+            fts,
+            cosine,
+            entity,
+        }
     }
 }
 
@@ -2162,7 +2166,13 @@ mod hybrid_search_fts_tests {
         // use a dummy non-zero embedding that will simply produce no KNN hits.
         let dummy_embedding = vec![0.0f32; 384];
         let results = store
-            .search_hybrid("hyphae session initialization", &dummy_embedding, 10, 0, None)
+            .search_hybrid(
+                "hyphae session initialization",
+                &dummy_embedding,
+                10,
+                0,
+                None,
+            )
             .unwrap();
 
         assert!(
@@ -2187,7 +2197,14 @@ mod hybrid_search_fts_tests {
 
         let dummy_embedding = vec![0.0f32; 384];
         let results = store
-            .search_hybrid_scoped("canopy dispatch agent_id", &dummy_embedding, 10, 0, None, None)
+            .search_hybrid_scoped(
+                "canopy dispatch agent_id",
+                &dummy_embedding,
+                10,
+                0,
+                None,
+                None,
+            )
             .unwrap();
 
         assert!(

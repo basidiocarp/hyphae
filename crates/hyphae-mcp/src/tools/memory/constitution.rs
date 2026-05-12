@@ -7,8 +7,8 @@ use hyphae_store::SqliteStore;
 use crate::protocol::ToolResult;
 
 use super::super::{
-    ToolTraceContext, get_str, validate_max_length, validate_required_string,
-    workflow_span_context, resolve_workspace_root,
+    ToolTraceContext, get_str, resolve_workspace_root, validate_max_length,
+    validate_required_string, workflow_span_context,
 };
 
 /// Store a permanent governance policy memory.
@@ -72,9 +72,12 @@ pub(crate) fn tool_constitution_store(
         })
         .unwrap_or_default();
 
-    let mut builder =
-        Memory::builder(topic.to_string(), content.to_string(), Importance::Constitution)
-            .keywords(keywords);
+    let mut builder = Memory::builder(
+        topic.to_string(),
+        content.to_string(),
+        Importance::Constitution,
+    )
+    .keywords(keywords);
 
     if let Some(p) = project {
         builder = builder.project(p.to_string());

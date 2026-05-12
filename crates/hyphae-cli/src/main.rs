@@ -693,10 +693,7 @@ fn main() -> Result<()> {
             use crate::cli::ConstitutionCommand;
             match args.command {
                 ConstitutionCommand::List => {
-                    commands::constitution::cmd_list(
-                        &store,
-                        resolved_project.as_deref(),
-                    )?;
+                    commands::constitution::cmd_list(&store, resolved_project.as_deref())?;
                 }
                 ConstitutionCommand::Add { content, topic } => {
                     commands::constitution::cmd_add(

@@ -109,7 +109,10 @@ mod tests {
         let mut expected = entities.clone();
         expected.sort_unstable();
         expected.dedup();
-        assert_eq!(entities, expected, "result should already be sorted and deduped");
+        assert_eq!(
+            entities, expected,
+            "result should already be sorted and deduped"
+        );
     }
 
     #[test]

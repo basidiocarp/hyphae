@@ -149,8 +149,8 @@ pub(crate) fn create_backup(db_path: &Path, output: Option<PathBuf>) -> Result<P
 /// inherit an inconsistent journal.
 fn restore_to(src: &Path, dest: &Path) -> Result<()> {
     // Read the entire backup file into memory.
-    let backup_bytes = fs::read(src)
-        .with_context(|| format!("failed to read backup file {}", src.display()))?;
+    let backup_bytes =
+        fs::read(src).with_context(|| format!("failed to read backup file {}", src.display()))?;
 
     // Remove stale WAL/SHM sidecars before replacing the main DB file.
     // These belong to the old database and would corrupt the new one if left behind.

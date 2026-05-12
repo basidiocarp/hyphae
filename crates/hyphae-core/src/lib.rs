@@ -1,8 +1,8 @@
 pub mod artifact;
 pub mod chunk;
-pub mod entity;
 pub mod chunk_store;
 pub mod embedder;
+pub mod entity;
 pub mod error;
 pub mod eviction;
 #[cfg(feature = "embeddings")]
