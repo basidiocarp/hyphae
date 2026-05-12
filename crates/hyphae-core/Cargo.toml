@@ -7,6 +7,9 @@ description = "Core types and traits for Hyphae persistent memory"
 license = "MIT"
 repository = "https://github.com/basidiocarp/hyphae"
 
+[lints]
+workspace = true
+
 [features]
 default = []
 embeddings = ["fastembed"]

@@ -13,6 +13,9 @@ categories = ["command-line-utilities"]
 name = "hyphae"
 path = "src/main.rs"
 
+[lints]
+workspace = true
+
 [features]
 default = ["embeddings"]
 embeddings = ["hyphae-core/embeddings", "hyphae-mcp/embeddings", "hyphae-ingest/embeddings"]

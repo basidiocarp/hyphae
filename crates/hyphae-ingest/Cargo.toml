@@ -6,6 +6,9 @@ rust-version = "1.85"
 description = "Document ingestion and chunking for Hyphae"
 license = "MIT"
 
+[lints]
+workspace = true
+
 [dependencies]
 hyphae-core = { path = "../hyphae-core" }
 walkdir = "2"
