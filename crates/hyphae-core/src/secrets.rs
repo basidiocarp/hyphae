@@ -27,9 +27,7 @@ fn compiled_secret_patterns() -> &'static [(Regex, &'static str)] {
     PATTERNS.get_or_init(|| {
         SECRET_PATTERNS
             .iter()
-            .filter_map(|(pattern, label)| {
-                Regex::new(pattern).ok().map(|r| (r, *label))
-            })
+            .filter_map(|(pattern, label)| Regex::new(pattern).ok().map(|r| (r, *label)))
             .collect()
     })
 }

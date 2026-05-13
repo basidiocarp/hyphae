@@ -134,7 +134,14 @@ pub(crate) fn tool_store(
         let text = format!("{topic} {content}");
         if let Ok(similar) = store.search_hybrid(&text, &query_emb, 1, 0, project) {
             if let Some((existing, score)) = similar.first() {
-                if score > &0.85 && existing.topic == topic && existing.project == memory.project {
+                // Require explicit project match: (Some, Some) or (None, None).
+                // Reject (Some, None) and (None, Some) pairs.
+                let project_matches = match (&existing.project, &memory.project) {
+                    (Some(a), Some(b)) => a == b,
+                    (None, None) => true,
+                    _ => false,
+                };
+                if score > &0.85 && existing.topic == topic && project_matches {
                     let mut updated = existing.clone();
                     updated.summary = content.to_string();
                     updated.updated_at = Utc::now();

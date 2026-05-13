@@ -87,7 +87,7 @@ pub(crate) fn tool_session_start(
 /// an empty store or a search error.
 fn build_session_context(store: &SqliteStore, session_id: &str, project: &str) -> Value {
     // Recent episodic memories for this project (FTS search scoped to project).
-    // Call once and reuse results to avoid duplicate queries.
+    // Call once and reuse results to avoid duplicate queries and access_count drift.
     let memories = store
         .search_fts_scoped(project, 5, 0, Some(project), None)
         .unwrap_or_default();
@@ -103,10 +103,7 @@ fn build_session_context(store: &SqliteStore, session_id: &str, project: &str) -
         .collect();
 
     // Log recall event for the memories retrieved via FTS search
-    let memory_ids: Vec<String> = memories
-        .iter()
-        .map(|m| m.id.to_string())
-        .collect();
+    let memory_ids: Vec<String> = memories.iter().map(|m| m.id.to_string()).collect();
     if !memory_ids.is_empty() {
         if let Err(e) = store.log_recall_event(
             Some(session_id),
@@ -318,7 +315,10 @@ pub(crate) fn tool_session_end(
                 }
                 Err(e) => {
                     tracing::warn!("failed to serialize working memory: {e}");
-                    (json!({"schema_version": "1", "session_id": session_id, "error": "serialization failed"}), false)
+                    (
+                        json!({"schema_version": "1", "session_id": session_id, "error": "serialization failed"}),
+                        false,
+                    )
                 }
             };
 

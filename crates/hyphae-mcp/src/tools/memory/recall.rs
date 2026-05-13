@@ -630,7 +630,10 @@ pub(crate) fn tool_recall(
                 if let Some(ref raw) = mem.raw_excerpt {
                     const RAW_EXCERPT_DISPLAY_LIMIT: usize = 1_024;
                     let displayed = if raw.len() > RAW_EXCERPT_DISPLAY_LIMIT {
-                        format!("{}… [truncated]", truncate_str(raw, RAW_EXCERPT_DISPLAY_LIMIT))
+                        format!(
+                            "{}… [truncated]",
+                            truncate_str(raw, RAW_EXCERPT_DISPLAY_LIMIT)
+                        )
                     } else {
                         raw.clone()
                     };
@@ -743,7 +746,10 @@ pub(crate) fn tool_recall(
                         if let Some(ref raw) = mem.raw_excerpt {
                             const RAW_EXCERPT_DISPLAY_LIMIT: usize = 1_024;
                             let displayed = if raw.len() > RAW_EXCERPT_DISPLAY_LIMIT {
-                                format!("{}… [truncated]", truncate_str(raw, RAW_EXCERPT_DISPLAY_LIMIT))
+                                format!(
+                                    "{}… [truncated]",
+                                    truncate_str(raw, RAW_EXCERPT_DISPLAY_LIMIT)
+                                )
                             } else {
                                 raw.clone()
                             };
@@ -849,7 +855,10 @@ pub(crate) fn tool_recall(
             if let Some(ref raw) = mem.raw_excerpt {
                 const RAW_EXCERPT_DISPLAY_LIMIT: usize = 1_024;
                 let displayed = if raw.len() > RAW_EXCERPT_DISPLAY_LIMIT {
-                    format!("{}… [truncated]", truncate_str(raw, RAW_EXCERPT_DISPLAY_LIMIT))
+                    format!(
+                        "{}… [truncated]",
+                        truncate_str(raw, RAW_EXCERPT_DISPLAY_LIMIT)
+                    )
                 } else {
                     raw.clone()
                 };

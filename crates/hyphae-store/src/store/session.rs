@@ -436,8 +436,11 @@ impl SqliteStore {
         scope: Option<&str>,
         limit: i64,
     ) -> HyphaeResult<Vec<SessionTimelineRecord>> {
+        // Pass a bounded limit to SQL instead of loading all sessions into memory.
+        // Use (limit * 3) for sort headroom, capped at 500.
+        let sql_limit = limit.saturating_mul(3).min(500);
         let sessions =
-            self.session_context_identity(project, project_root, worktree_id, scope, i64::MAX)?;
+            self.session_context_identity(project, project_root, worktree_id, scope, sql_limit)?;
         self.build_session_timeline(sessions, limit)
     }
 
@@ -520,7 +523,7 @@ impl SqliteStore {
         &self,
         project: &str,
         project_root: Option<&str>,
-        worktree_id: Option<&str>,
+        _worktree_id: Option<&str>,
         context_signals: Option<&Value>,
         embedder: Option<&dyn Embedder>,
     ) -> Vec<(Memory, f32)> {
@@ -531,7 +534,8 @@ impl SqliteStore {
             return Vec::new();
         };
 
-        let scoped_worktree = project_root.or(worktree_id);
+        // Only use project_root as the scoped worktree path; worktree_id is a label, not a path.
+        let scoped_worktree = project_root;
         if let Some(embedder) = embedder
             && let Ok(embedding) = embedder.embed(&query)
         {
@@ -849,6 +853,7 @@ impl SqliteStore {
 }
 
 fn signals_to_query(signals: &Value) -> Option<String> {
+    const MAX_SIGNAL_ELEMENT: usize = 500;
     let mut parts: Vec<String> = Vec::new();
 
     if let Some(files) = signals.get("recent_files").and_then(Value::as_array) {
@@ -864,9 +869,24 @@ fn signals_to_query(signals: &Value) -> Option<String> {
     }
 
     if let Some(errors) = signals.get("active_errors").and_then(Value::as_array) {
-        let error_text: Vec<&str> = errors.iter().filter_map(Value::as_str).take(3).collect();
-        if !error_text.is_empty() {
-            parts.push(error_text.join(" "));
+        let capped: Vec<String> = errors
+            .iter()
+            .filter_map(Value::as_str)
+            .take(3)
+            .map(|s| {
+                // Cap each error string and truncate UTF-8 safely
+                let end = MAX_SIGNAL_ELEMENT.min(s.len());
+                let mut boundary = end;
+                while boundary > 0 && !s.is_char_boundary(boundary) {
+                    boundary -= 1;
+                }
+                let truncated = &s[..boundary];
+                // Remove NUL bytes that could corrupt query strings
+                truncated.replace('\x00', "")
+            })
+            .collect();
+        if !capped.is_empty() {
+            parts.push(capped.join(" "));
         }
     }
 

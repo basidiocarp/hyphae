@@ -53,7 +53,9 @@ pub(crate) fn tool_ingest_file(
                 Ok(p) => p,
                 Err(_) => {
                     // If root can't be canonicalized, fail safely
-                    return ToolResult::error(format!("Cannot resolve project root: {project_root_str}"));
+                    return ToolResult::error(format!(
+                        "Cannot resolve project root: {project_root_str}"
+                    ));
                 }
             };
             if !canonical_path.starts_with(&canonical_root) {
@@ -94,13 +96,30 @@ pub(crate) fn tool_ingest_file(
                     skipped_count += 1;
                     continue;
                 }
-                // Content changed, delete old document
-                if let Err(e) = store.delete_document(&existing.id) {
+                // Content changed, delete old document and store new one.
+                // NOTE: delete and store are separate transactions — not atomic. See residual work
+                // in handoff core-loop-audit-fixes-r3 for a follow-up to implement real atomicity.
+                let existing_id = existing.id.clone();
+                let doc_copy = doc.clone();
+                let chunks_copy = chunks.clone();
+
+                if let Err(e) = store.delete_document(&existing_id) {
                     return ToolResult::error(format!(
                         "failed to delete existing document {}: {e}",
                         doc.source_path
                     ));
                 }
+
+                if let Err(e) = store.store_document(doc_copy) {
+                    return ToolResult::error(format!("store error: {e}"));
+                }
+                let n = chunks_copy.len();
+                if let Err(e) = store.store_chunks(chunks_copy) {
+                    return ToolResult::error(format!("store error: {e}"));
+                }
+                total_chunks += n;
+                doc_count += 1;
+                continue;
             }
         } else {
             tracing::warn!(
