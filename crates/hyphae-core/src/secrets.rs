@@ -3,6 +3,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 use regex::Regex;
+use std::sync::OnceLock;
 
 const SECRET_PATTERNS: &[(&str, &str)] = &[
     (r"(?i)(api[_-]?key|apikey)\s*[:=]\s*\S{10,}", "API key"),
@@ -21,22 +22,33 @@ const SECRET_PATTERNS: &[(&str, &str)] = &[
     (r"-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----", "private key"),
 ];
 
+fn compiled_secret_patterns() -> &'static [(Regex, &'static str)] {
+    static PATTERNS: OnceLock<Vec<(Regex, &'static str)>> = OnceLock::new();
+    PATTERNS.get_or_init(|| {
+        SECRET_PATTERNS
+            .iter()
+            .filter_map(|(pattern, label)| {
+                Regex::new(pattern).ok().map(|r| (r, *label))
+            })
+            .collect()
+    })
+}
+
 /// Detect common secret patterns in content.
 ///
 /// Returns a vector of detected secret types. If secrets are found, the caller
 /// should warn or block storage depending on configuration.
 pub fn detect_secrets(content: &str) -> Vec<String> {
-    let mut detected = Vec::new();
-
-    for (pattern, secret_type) in SECRET_PATTERNS {
-        if let Ok(regex) = Regex::new(pattern) {
+    compiled_secret_patterns()
+        .iter()
+        .filter_map(|(regex, label)| {
             if regex.is_match(content) {
-                detected.push(secret_type.to_string());
+                Some((*label).to_string())
+            } else {
+                None
             }
-        }
-    }
-
-    detected
+        })
+        .collect()
 }
 
 #[cfg(test)]

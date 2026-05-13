@@ -627,7 +627,13 @@ pub(crate) fn tool_recall(
                     output.push_str(&format!("  worktree: {worktree}\n"));
                 }
                 if let Some(ref raw) = mem.raw_excerpt {
-                    output.push_str(&format!("  raw: {raw}\n"));
+                    const RAW_EXCERPT_DISPLAY_LIMIT: usize = 1_024;
+                    let displayed = if raw.len() > RAW_EXCERPT_DISPLAY_LIMIT {
+                        format!("{}… [truncated]", &raw[..RAW_EXCERPT_DISPLAY_LIMIT])
+                    } else {
+                        raw.clone()
+                    };
+                    output.push_str(&format!("  [stored excerpt]: {displayed}\n"));
                 }
                 if let Some(age) = age_indicator(mem) {
                     output.push_str(&age);
@@ -734,7 +740,13 @@ pub(crate) fn tool_recall(
                             output.push_str(&format!("  worktree: {worktree}\n"));
                         }
                         if let Some(ref raw) = mem.raw_excerpt {
-                            output.push_str(&format!("  raw: {raw}\n"));
+                            const RAW_EXCERPT_DISPLAY_LIMIT: usize = 1_024;
+                            let displayed = if raw.len() > RAW_EXCERPT_DISPLAY_LIMIT {
+                                format!("{}… [truncated]", &raw[..RAW_EXCERPT_DISPLAY_LIMIT])
+                            } else {
+                                raw.clone()
+                            };
+                            output.push_str(&format!("  [stored excerpt]: {displayed}\n"));
                         }
                         if let Some(age) = age_indicator(mem) {
                             output.push_str(&age);
@@ -834,7 +846,13 @@ pub(crate) fn tool_recall(
                 output.push_str(&format!("  worktree: {worktree}\n"));
             }
             if let Some(ref raw) = mem.raw_excerpt {
-                output.push_str(&format!("  raw: {raw}\n"));
+                const RAW_EXCERPT_DISPLAY_LIMIT: usize = 1_024;
+                let displayed = if raw.len() > RAW_EXCERPT_DISPLAY_LIMIT {
+                    format!("{}… [truncated]", &raw[..RAW_EXCERPT_DISPLAY_LIMIT])
+                } else {
+                    raw.clone()
+                };
+                output.push_str(&format!("  [stored excerpt]: {displayed}\n"));
             }
             if let Some(age) = age_indicator(mem) {
                 output.push_str(&age);
