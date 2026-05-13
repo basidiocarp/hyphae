@@ -70,7 +70,7 @@ pub fn call_tool_with_consolidation(
             memory::tool_list_invalidated(store, args, project, trace)
         }
         "hyphae_memory_update" => memory::tool_update(store, embedder, args, trace),
-        "hyphae_memory_consolidate" => memory::tool_consolidate(store, args, trace),
+        "hyphae_memory_consolidate" => memory::tool_consolidate(store, args, project, trace),
         "hyphae_memory_list_topics" => memory::tool_list_topics(store, project, trace),
         "hyphae_memory_stats" => memory::tool_stats(store, project, trace),
         "hyphae_memory_health" => {

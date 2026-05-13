@@ -9,6 +9,7 @@ use hyphae_core::{
 use hyphae_store::{SqliteStore, context, dispatch_search};
 
 use crate::protocol::ToolResult;
+use crate::text::truncate_str;
 
 use super::super::{
     ToolTraceContext, get_bounded_i64, get_str, normalize_identity, resolve_workspace_root,
@@ -629,7 +630,7 @@ pub(crate) fn tool_recall(
                 if let Some(ref raw) = mem.raw_excerpt {
                     const RAW_EXCERPT_DISPLAY_LIMIT: usize = 1_024;
                     let displayed = if raw.len() > RAW_EXCERPT_DISPLAY_LIMIT {
-                        format!("{}… [truncated]", &raw[..RAW_EXCERPT_DISPLAY_LIMIT])
+                        format!("{}… [truncated]", truncate_str(raw, RAW_EXCERPT_DISPLAY_LIMIT))
                     } else {
                         raw.clone()
                     };
@@ -742,7 +743,7 @@ pub(crate) fn tool_recall(
                         if let Some(ref raw) = mem.raw_excerpt {
                             const RAW_EXCERPT_DISPLAY_LIMIT: usize = 1_024;
                             let displayed = if raw.len() > RAW_EXCERPT_DISPLAY_LIMIT {
-                                format!("{}… [truncated]", &raw[..RAW_EXCERPT_DISPLAY_LIMIT])
+                                format!("{}… [truncated]", truncate_str(raw, RAW_EXCERPT_DISPLAY_LIMIT))
                             } else {
                                 raw.clone()
                             };
@@ -848,7 +849,7 @@ pub(crate) fn tool_recall(
             if let Some(ref raw) = mem.raw_excerpt {
                 const RAW_EXCERPT_DISPLAY_LIMIT: usize = 1_024;
                 let displayed = if raw.len() > RAW_EXCERPT_DISPLAY_LIMIT {
-                    format!("{}… [truncated]", &raw[..RAW_EXCERPT_DISPLAY_LIMIT])
+                    format!("{}… [truncated]", truncate_str(raw, RAW_EXCERPT_DISPLAY_LIMIT))
                 } else {
                     raw.clone()
                 };
@@ -873,7 +874,8 @@ pub(crate) fn is_session_query(query: &str) -> bool {
     const SESSION_KEYWORDS: &[&str] = &[
         "session",
         "last time",
-        "previous",
+        "previous session",
+        "previous run",
         "yesterday",
         "earlier today",
     ];

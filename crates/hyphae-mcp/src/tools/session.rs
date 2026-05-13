@@ -87,10 +87,13 @@ pub(crate) fn tool_session_start(
 /// an empty store or a search error.
 fn build_session_context(store: &SqliteStore, session_id: &str, project: &str) -> Value {
     // Recent episodic memories for this project (FTS search scoped to project).
-    let recent_work: Vec<Value> = store
+    // Call once and reuse results to avoid duplicate queries.
+    let memories = store
         .search_fts_scoped(project, 5, 0, Some(project), None)
-        .unwrap_or_default()
-        .into_iter()
+        .unwrap_or_default();
+
+    let recent_work: Vec<Value> = memories
+        .iter()
         .map(|m| {
             json!({
                 "topic": m.topic,
@@ -100,10 +103,8 @@ fn build_session_context(store: &SqliteStore, session_id: &str, project: &str) -
         .collect();
 
     // Log recall event for the memories retrieved via FTS search
-    let memory_ids: Vec<String> = store
-        .search_fts_scoped(project, 5, 0, Some(project), None)
-        .unwrap_or_default()
-        .into_iter()
+    let memory_ids: Vec<String> = memories
+        .iter()
         .map(|m| m.id.to_string())
         .collect();
     if !memory_ids.is_empty() {
@@ -285,7 +286,7 @@ pub(crate) fn tool_session_end(
         errors_encountered.as_deref(),
     ) {
         Ok((project, _started_at, task, _ended_at, duration_minutes)) => {
-            // Build working memory document (best-effort, errors silently ignored)
+            // Build working memory document
             let wm = build_working_memory(
                 store,
                 session_id,
@@ -294,7 +295,7 @@ pub(crate) fn tool_session_end(
                 summary,
                 files_modified.as_deref(),
             );
-            let working_memory_json = match serde_json::to_value(&wm) {
+            let (working_memory_json, working_memory_persisted) = match serde_json::to_value(&wm) {
                 Ok(v) => {
                     if let Ok(json_str) = serde_json::to_string(&wm) {
                         let memory = Memory::builder(
@@ -304,15 +305,20 @@ pub(crate) fn tool_session_end(
                         )
                         .project(project.clone())
                         .build();
-                        if let Err(e) = store.store(memory) {
-                            tracing::warn!("failed to store working memory: {e}");
+                        match store.store(memory) {
+                            Ok(_) => (v, true),
+                            Err(e) => {
+                                tracing::error!("failed to store working memory: {e}");
+                                (v, false)
+                            }
                         }
+                    } else {
+                        (v, false)
                     }
-                    v
                 }
                 Err(e) => {
                     tracing::warn!("failed to serialize working memory: {e}");
-                    json!({"schema_version": "1", "session_id": session_id, "error": "serialization failed"})
+                    (json!({"schema_version": "1", "session_id": session_id, "error": "serialization failed"}), false)
                 }
             };
 
@@ -320,6 +326,7 @@ pub(crate) fn tool_session_end(
                 json!({
                     "schema_version": SCOPED_IDENTITY_SCHEMA_VERSION,
                     "stored": true,
+                    "working_memory_persisted": working_memory_persisted,
                     "project": project,
                     "scoped_identity": scoped_identity,
                     "task": task,

@@ -136,13 +136,25 @@ fn handle_connection(
             JsonRpcResponse::ok(id, json!({}))
         } else if method.starts_with("cap_") {
             let args = msg.params.unwrap_or_else(|| json!({}));
-            let store_guard = store.lock().expect("store mutex poisoned");
+            let store_guard = match store.lock() {
+                Ok(g) => g,
+                Err(poisoned) => {
+                    tracing::error!("store mutex was poisoned — recovering");
+                    poisoned.into_inner()
+                }
+            };
             let result = cap_methods::dispatch_cap_method(&store_guard, method, &args);
             drop(store_guard);
             JsonRpcResponse::ok(id, result)
         } else {
             let args = msg.params.unwrap_or_else(|| json!({}));
-            let store_guard = store.lock().expect("store mutex poisoned");
+            let store_guard = match store.lock() {
+                Ok(g) => g,
+                Err(poisoned) => {
+                    tracing::error!("store mutex was poisoned — recovering");
+                    poisoned.into_inner()
+                }
+            };
             let result = tools::call_tool_with_consolidation(
                 &store_guard,
                 None, // no embedder in socket mode; store works without it

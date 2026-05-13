@@ -289,16 +289,7 @@ pub(crate) fn tool_memoir_refine(
         Err(e) => return ToolResult::error(format!("db error: {e}")),
     };
 
-    if let Err(e) = store.refine_concept(&concept.id, definition, &[]) {
-        return ToolResult::error(format!("failed to refine: {e}"));
-    }
-
-    let mut updated = match store.get_concept(&concept.id) {
-        Ok(Some(c)) => c,
-        _ => return ToolResult::text(format!("Refined concept '{name}'")),
-    };
-
-    // Parse optional tiered-content fields and update if provided
+    // Parse optional tiered-content fields and VALIDATE BEFORE any store writes
     let abstract_text: Option<String> = args
         .get("abstract_text")
         .and_then(|v| v.as_str())
@@ -318,6 +309,16 @@ pub(crate) fn tool_memoir_refine(
             return e;
         }
     }
+
+    // NOW perform all store writes after validation
+    if let Err(e) = store.refine_concept(&concept.id, definition, &[]) {
+        return ToolResult::error(format!("failed to refine: {e}"));
+    }
+
+    let mut updated = match store.get_concept(&concept.id) {
+        Ok(Some(c)) => c,
+        _ => return ToolResult::text(format!("Refined concept '{name}'")),
+    };
 
     if abstract_text.is_some() || overview_text.is_some() {
         if let Some(text) = abstract_text {
@@ -344,9 +345,15 @@ pub(crate) fn tool_memoir_refine(
         .unwrap_or(12);
 
     let consolidated_definition = if updated.revision > threshold {
-        match consolidate_via_llm(name, &updated.definition) {
+        // Clone the fields we need before the async LLM call so we don't hold
+        // a borrow of `updated` across an await point.
+        let concept_name = name.to_string();
+        let concept_def = updated.definition.clone();
+        let concept_id = updated.id.clone();
+
+        match consolidate_via_llm(&concept_name, &concept_def) {
             Some(summary) => {
-                if let Err(e) = store.consolidate_concept_definition(&updated.id, &summary) {
+                if let Err(e) = store.consolidate_concept_definition(&concept_id, &summary) {
                     tracing::warn!("failed to persist consolidated definition for '{name}': {e}");
                     None
                 } else {

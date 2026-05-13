@@ -2245,7 +2245,8 @@ mod tests {
         assert!(memory::is_session_query("last time I worked on auth"));
         assert!(memory::is_session_query("what happened yesterday"));
         assert!(memory::is_session_query("earlier today I fixed a bug"));
-        assert!(memory::is_session_query("show me previous changes"));
+        assert!(memory::is_session_query("show me previous session"));
+        assert!(memory::is_session_query("previous run results"));
         assert!(memory::is_session_query("SESSION summary"));
     }
 
@@ -2254,5 +2255,6 @@ mod tests {
         assert!(!memory::is_session_query("how to parse JSON"));
         assert!(!memory::is_session_query("authentication flow"));
         assert!(!memory::is_session_query("database schema design"));
+        assert!(!memory::is_session_query("show me previous changes"));
     }
 }

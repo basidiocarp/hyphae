@@ -12,6 +12,7 @@ use hyphae_store::SqliteStore;
 use spore::logging::workflow_span;
 
 use crate::protocol::ToolResult;
+use crate::text::truncate_str;
 
 use super::{
     ToolTraceContext, get_bounded_i64, get_str, normalize_identity, resolve_workspace_root,
@@ -38,6 +39,28 @@ pub(crate) fn tool_ingest_file(
         .get("recursive")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+
+    // Step 4: Path confinement check — only when project_root is provided.
+    // Canonicalization already resolves `..` segments, so no separate `..` string
+    // check is needed outside this block (and such a check would reject valid absolute
+    // paths that happen to contain `..`).
+    if let Some(project_root_str) = get_str(args, "project_root") {
+        // Only enforce confinement when the path already exists on disk.
+        // Non-existent paths are passed through to the ingestion layer, which
+        // produces a clearer error if the file is truly missing.
+        if let Ok(canonical_path) = std::fs::canonicalize(path_str) {
+            let canonical_root = match std::fs::canonicalize(project_root_str) {
+                Ok(p) => p,
+                Err(_) => {
+                    // If root can't be canonicalized, fail safely
+                    return ToolResult::error(format!("Cannot resolve project root: {project_root_str}"));
+                }
+            };
+            if !canonical_path.starts_with(&canonical_root) {
+                return ToolResult::error("Path is outside the project root".to_string());
+            }
+        }
+    }
 
     let path = Path::new(path_str);
     let workflow_context = workflow_span_context(trace, resolve_workspace_root(args), None);
@@ -160,7 +183,7 @@ pub(crate) fn tool_search_docs(
             _ => String::new(),
         };
         let snippet = if chunk.content.len() > max_content {
-            format!("{}…", &chunk.content[..max_content])
+            format!("{}…", truncate_str(&chunk.content, max_content))
         } else {
             chunk.content.clone()
         };
@@ -241,7 +264,14 @@ fn truncate_path(path: &str, max: usize) -> String {
     if path.len() <= max {
         path.to_string()
     } else {
-        format!("…{}", &path[path.len() - (max - 1)..])
+        // Safe truncation from the end: take the last (max-1) chars, respecting UTF-8 boundaries
+        let start_byte = (path.len() - (max - 1)).min(path.len());
+        // Find a valid char boundary at or before start_byte
+        let mut boundary = start_byte;
+        while boundary > 0 && !path.is_char_boundary(boundary) {
+            boundary -= 1;
+        }
+        format!("…{}", &path[boundary..])
     }
 }
 
@@ -528,7 +558,7 @@ pub(crate) fn tool_search_all(
                     _ => String::new(),
                 };
                 let snippet = if chunk.content.len() > max_content {
-                    format!("{}…", &chunk.content[..max_content])
+                    format!("{}…", truncate_str(&chunk.content, max_content))
                 } else {
                     chunk.content.clone()
                 };

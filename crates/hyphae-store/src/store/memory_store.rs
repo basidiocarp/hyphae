@@ -125,8 +125,8 @@ impl SqliteStore {
                  SELECT id FROM memories_fts
                  WHERE memories_fts MATCH ?1
                  AND (project = ?2 OR ?2 IS NULL)
-                 AND (worktree = ?3 OR ?3 IS NULL)
              )
+             AND (m.worktree = ?3 OR ?3 IS NULL)
              AND m.{ACTIVE_MEMORY_CLAUSE}
              ORDER BY m.weight DESC
              LIMIT ?4 OFFSET ?5"

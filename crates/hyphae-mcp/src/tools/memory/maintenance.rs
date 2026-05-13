@@ -56,6 +56,7 @@ pub(super) fn consolidation_hint(
 pub(crate) fn tool_consolidate(
     store: &SqliteStore,
     args: &Value,
+    project: Option<&str>,
     trace: &ToolTraceContext,
 ) -> ToolResult {
     let topic = match validate_required_string(args, "topic") {
@@ -78,7 +79,7 @@ pub(crate) fn tool_consolidate(
     //
     // Constitution memories are permanently exempt from consolidation — they
     // represent governance policy that must never be merged or discarded.
-    let importance = match store.get_by_topic(topic, None) {
+    let importance = match store.get_by_topic(topic, project) {
         Ok(ref memories) if !memories.is_empty() => {
             if memories
                 .iter()
@@ -107,7 +108,11 @@ pub(crate) fn tool_consolidate(
         _ => Importance::High,
     };
 
-    let consolidated = Memory::new(topic.into(), summary.into(), importance);
+    let mut builder = Memory::builder(topic.into(), summary.into(), importance);
+    if let Some(p) = project {
+        builder = builder.project(p.to_string());
+    }
+    let consolidated = builder.build();
 
     match store.consolidate_topic(topic, consolidated) {
         Ok(()) => ToolResult::text(format!("Consolidated topic: {topic}")),
