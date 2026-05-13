@@ -22,6 +22,7 @@ use super::{
 use hyphae_store::UnifiedSearchResult;
 
 const COMMAND_OUTPUT_SCHEMA_VERSION: &str = "1.0";
+const MAX_COMMAND_OUTPUT_BYTES: usize = 64 * 1024 * 1024; // 64 MiB
 
 pub(crate) fn tool_ingest_file(
     store: &SqliteStore,
@@ -323,6 +324,15 @@ pub(crate) fn tool_store_command_output(
         Ok(o) => o,
         Err(e) => return e,
     };
+
+    if output.len() > MAX_COMMAND_OUTPUT_BYTES {
+        return ToolResult::error(format!(
+            "output payload too large: {} bytes (max {})",
+            output.len(),
+            MAX_COMMAND_OUTPUT_BYTES
+        ));
+    }
+
     let ttl_hours = get_bounded_i64(args, "ttl_hours", 4, 1, 168);
     let project_override = get_str(args, "project");
     let effective_project = project_override.or(project);
@@ -784,6 +794,56 @@ mod tests {
             result.content[0].text,
             "unsupported command output schema_version: 2.0 (expected 1.0)"
         );
+    }
+
+    #[test]
+    fn test_store_command_output_rejects_oversized_payload() {
+        let store = test_store();
+
+        // Create payload exactly 1 byte over the limit
+        let oversized_output = "x".repeat(MAX_COMMAND_OUTPUT_BYTES + 1);
+        let result = tool_store_command_output(
+            &store,
+            &json!({
+                "schema_version": "1.0",
+                "command": "cargo test",
+                "output": oversized_output,
+                "project": "demo"
+            }),
+            false,
+            None,
+            &ToolTraceContext::default(),
+        );
+
+        assert!(result.is_error);
+        assert!(result.content[0].text.contains("output payload too large"));
+        assert!(
+            result.content[0]
+                .text
+                .contains(&MAX_COMMAND_OUTPUT_BYTES.to_string())
+        );
+    }
+
+    #[test]
+    fn test_store_command_output_accepts_output_at_size_limit() {
+        let store = test_store();
+
+        // Create payload exactly at the limit
+        let max_output = "x".repeat(MAX_COMMAND_OUTPUT_BYTES);
+        let result = tool_store_command_output(
+            &store,
+            &json!({
+                "schema_version": "1.0",
+                "command": "cargo test",
+                "output": max_output,
+                "project": "demo"
+            }),
+            false,
+            None,
+            &ToolTraceContext::default(),
+        );
+
+        assert!(!result.is_error);
     }
 
     #[test]
