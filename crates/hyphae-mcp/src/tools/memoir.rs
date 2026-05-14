@@ -84,6 +84,7 @@ pub(crate) fn tool_memoir_show(
         Ok(n) => n,
         Err(e) => return e,
     };
+    let page = get_bounded_i64(args, "page", 0, 0, 1000000) as usize;
     let workflow_context = workflow_span_context(trace, None, Some(name));
     let _workflow_span = workflow_span("memoir_show", &workflow_context).entered();
 
@@ -95,8 +96,8 @@ pub(crate) fn tool_memoir_show(
         Ok(s) => s,
         Err(e) => return ToolResult::error(format!("failed to get stats: {e}")),
     };
-    let concepts = match store.list_concepts(&memoir.id) {
-        Ok(c) => c,
+    let (concepts, has_more) = match store.list_concepts_paginated(&memoir.id, 50, page) {
+        Ok(r) => r,
         Err(e) => return ToolResult::error(format!("failed to list concepts: {e}")),
     };
 
@@ -138,6 +139,14 @@ pub(crate) fn tool_memoir_show(
                 c.definition
             ));
         }
+    }
+
+    if has_more {
+        output.push_str(&format!(
+            "\n... and {} more concepts — call memoir_show with page={} to see more\n",
+            stats.total_concepts - ((page + 1) * 50),
+            page + 1
+        ));
     }
 
     // Gap 7: staleness warning

@@ -312,16 +312,50 @@ impl MemoirStore for SqliteStore {
             .conn
             .prepare_cached(&sql)
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
-
         let rows = stmt
             .query_map(params![memoir_id.as_ref()], row_to_concept)
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        rows.map(|r| r.map_err(|e| HyphaeError::Database(e.to_string())))
+            .collect()
+    }
+
+    fn list_concepts_paginated(
+        &self,
+        memoir_id: &MemoirId,
+        page_size: usize,
+        page: usize,
+    ) -> HyphaeResult<(Vec<Concept>, bool)> {
+        let capped_page_size = page_size.min(200).max(1);
+        let offset = page * capped_page_size;
+
+        let sql = format!(
+            "SELECT {CONCEPT_COLS} FROM concepts WHERE memoir_id = ?1 ORDER BY name LIMIT ? OFFSET ?"
+        );
+        let mut stmt = self
+            .conn
+            .prepare_cached(&sql)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(
+                params![
+                    memoir_id.as_ref(),
+                    (capped_page_size + 1) as i64,
+                    offset as i64
+                ],
+                row_to_concept,
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         let mut results = Vec::new();
-        for row in rows {
+        for (idx, row) in rows.enumerate() {
+            if idx >= capped_page_size {
+                // We fetched one extra to detect if there are more pages
+                return Ok((results, true));
+            }
             results.push(row.map_err(|e| HyphaeError::Database(e.to_string()))?);
         }
-        Ok(results)
+        Ok((results, false))
     }
 
     fn search_concepts_fts(
@@ -677,6 +711,8 @@ impl MemoirStore for SqliteStore {
         concept_id: &ConceptId,
         depth: usize,
     ) -> HyphaeResult<(Vec<Concept>, Vec<ConceptLink>)> {
+        const MAX_NODES: usize = 200;
+
         let mut visited: HashSet<String> = HashSet::new();
         let mut all_links: Vec<ConceptLink> = Vec::new();
 
@@ -692,7 +728,7 @@ impl MemoirStore for SqliteStore {
         let mut frontier: Vec<String> = vec![concept_id.to_string()];
 
         for _ in 0..capped_depth {
-            if frontier.is_empty() {
+            if frontier.is_empty() || visited.len() >= MAX_NODES {
                 break;
             }
 
@@ -736,14 +772,14 @@ impl MemoirStore for SqliteStore {
             let mut next_frontier = Vec::new();
 
             for link in outgoing {
-                if visited.insert(link.target_id.to_string()) {
+                if visited.len() < MAX_NODES && visited.insert(link.target_id.to_string()) {
                     next_frontier.push(link.target_id.to_string());
                 }
                 all_links.push(link);
             }
 
             for link in incoming {
-                if visited.insert(link.source_id.to_string()) {
+                if visited.len() < MAX_NODES && visited.insert(link.source_id.to_string()) {
                     next_frontier.push(link.source_id.to_string());
                 }
                 all_links.push(link);

@@ -55,6 +55,21 @@ pub trait MemoirStore {
 
     // --- Concept Search ---
     fn list_concepts(&self, memoir_id: &MemoirId) -> HyphaeResult<Vec<Concept>>;
+
+    /// List concepts with pagination. Returns (concepts, has_more) where has_more indicates
+    /// whether there are additional pages beyond the current one.
+    /// page_size is capped at 200 (max), minimum 1.
+    ///
+    /// # Errors
+    ///
+    /// Returns `HyphaeError::Database` if the underlying SQLite query fails.
+    fn list_concepts_paginated(
+        &self,
+        memoir_id: &MemoirId,
+        page_size: usize,
+        page: usize,
+    ) -> HyphaeResult<(Vec<Concept>, bool)>;
+
     fn search_concepts_fts(
         &self,
         memoir_id: &MemoirId,
