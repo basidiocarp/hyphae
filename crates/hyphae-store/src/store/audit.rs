@@ -21,6 +21,7 @@ pub enum AuditOperation {
     Decay,
     Prune,
     PruneExpired,
+    PurgeInvalidated,
     Consolidate,
 }
 
@@ -34,6 +35,7 @@ impl AuditOperation {
             Self::Decay => "decay",
             Self::Prune => "prune",
             Self::PruneExpired => "prune_expired",
+            Self::PurgeInvalidated => "purge_invalidated",
             Self::Consolidate => "consolidate",
         }
     }
@@ -47,6 +49,7 @@ impl AuditOperation {
             "decay" => Some(Self::Decay),
             "prune" => Some(Self::Prune),
             "prune_expired" => Some(Self::PruneExpired),
+            "purge_invalidated" => Some(Self::PurgeInvalidated),
             "consolidate" => Some(Self::Consolidate),
             _ => None,
         }

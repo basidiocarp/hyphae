@@ -615,6 +615,59 @@ impl SqliteStore {
 
         Ok(())
     }
+
+    /// Hard-delete memories that were invalidated more than `cutoff_days` ago.
+    /// This is a background cleanup operation, not called during consolidation.
+    /// Returns the number of memories deleted.
+    ///
+    /// # Errors
+    ///
+    /// Returns `HyphaeError::Database` if the transaction, DELETE, or commit fails.
+    pub fn purge_old_invalidated(&self, cutoff_days: u32) -> HyphaeResult<usize> {
+        let cutoff_seconds = i64::from(cutoff_days) * 86_400;
+        let now = Utc::now();
+        let cutoff_time = (now - chrono::Duration::seconds(cutoff_seconds)).to_rfc3339();
+
+        // SAFETY: No nested transactions — this method does not call other &self methods
+        // that open transactions. The &self receiver is required by the MemoryStore trait.
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        // Delete from vec_memories first (foreign key constraint).
+        tx.execute(
+            "DELETE FROM vec_memories WHERE memory_id IN (
+                SELECT id FROM memories WHERE invalidated_at IS NOT NULL AND invalidated_at < ?1
+            )",
+            params![cutoff_time],
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        // Delete from memories.
+        let changed = tx
+            .execute(
+                "DELETE FROM memories WHERE invalidated_at IS NOT NULL AND invalidated_at < ?1",
+                params![cutoff_time],
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        // Audit inside the transaction: only records if the commit succeeds.
+        let meta = serde_json::json!({ "cutoff_days": cutoff_days });
+        if let Err(e) = self.write_audit(
+            super::audit::AuditOperation::PurgeInvalidated,
+            "*",
+            None,
+            None,
+            Some(&meta.to_string()),
+        ) {
+            tracing::warn!("audit log write failed, mutation proceeding: {e}");
+        }
+
+        tx.commit()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        Ok(changed)
+    }
 }
 
 impl MemoryStore for SqliteStore {
@@ -1800,25 +1853,11 @@ impl MemoryStore for SqliteStore {
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         let project = consolidated.project.as_deref();
-        tx.execute(
-            "DELETE FROM vec_memories WHERE memory_id IN (
-                SELECT id FROM memories WHERE topic = ?1
-                  AND (project = ?2 OR (?2 IS NULL AND project IS NULL))
-                  AND invalidated_at IS NULL
-            )",
-            params![topic, project],
-        )
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        let now = Utc::now().to_rfc3339();
+        let new_id = consolidated.id.as_ref();
 
-        tx.execute(
-            "DELETE FROM memories WHERE topic = ?1
-              AND (project = ?2 OR (?2 IS NULL AND project IS NULL))
-              AND invalidated_at IS NULL",
-            params![topic, project],
-        )
-        .map_err(|e| HyphaeError::Database(e.to_string()))?;
-
-        // Inline the INSERT (instead of self.store()) to stay within the transaction
+        // Inline the INSERT (instead of self.store()) to stay within the transaction.
+        // Insert the consolidated memory first, then invalidate the sources.
         let keywords_json = serde_json::to_string(&consolidated.keywords)?;
         let related_json = serde_json::to_string(&consolidated.related_ids)?;
         let st = source_type(&consolidated.source);
@@ -1839,7 +1878,7 @@ impl MemoryStore for SqliteStore {
              expires_at, invalidated_at, invalidation_reason, superseded_by, tier, entities)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
             params![
-                consolidated.id.as_ref(),
+                new_id,
                 consolidated.created_at.to_rfc3339(),
                 consolidated.updated_at.to_rfc3339(),
                 consolidated.last_accessed.to_rfc3339(),
@@ -1871,19 +1910,35 @@ impl MemoryStore for SqliteStore {
             let blob = embedding_to_blob(emb);
             tx.execute(
                 "INSERT INTO vec_memories (memory_id, embedding) VALUES (?1, ?2)",
-                params![consolidated.id.as_ref(), blob],
+                params![new_id, blob],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
         }
 
+        // Invalidate source memories: set invalidated_at, invalidation_reason, and superseded_by.
+        // Guard with id != ?3 to avoid self-invalidation if the new memory ID matches a source.
+        tx.execute(
+            "UPDATE memories SET
+                invalidated_at = ?1,
+                invalidation_reason = 'consolidated',
+                superseded_by = ?2,
+                updated_at = ?1
+             WHERE topic = ?3
+               AND (project = ?4 OR (?4 IS NULL AND project IS NULL))
+               AND invalidated_at IS NULL
+               AND id != ?2",
+            params![now, new_id, topic, project],
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
         // Audit inside the transaction: only records if the commit succeeds.
         let meta = serde_json::json!({
             "topic": topic,
-            "new_memory_id": consolidated.id.as_ref(),
+            "new_memory_id": new_id,
         });
         if let Err(e) = self.write_audit(
             super::audit::AuditOperation::Consolidate,
-            consolidated.id.as_ref(),
+            new_id,
             Some(topic),
             None,
             Some(&meta.to_string()),
@@ -2215,5 +2270,96 @@ mod hybrid_search_fts_tests {
             results.iter().any(|(m, _)| m.id == stored_id),
             "stored memory must appear in scoped hybrid search results"
         );
+    }
+}
+
+#[cfg(test)]
+mod consolidate_topic_tests {
+    use super::*;
+    use hyphae_core::{Importance, Memory, MemoryId, MemorySource, Weight};
+
+    fn make_store() -> SqliteStore {
+        SqliteStore::in_memory().unwrap()
+    }
+
+    fn make_memory(topic: &str, summary: &str) -> Memory {
+        Memory {
+            id: MemoryId::new(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            last_accessed: chrono::Utc::now(),
+            access_count: 0,
+            weight: Weight::new(1.0).unwrap(),
+            topic: topic.to_string(),
+            summary: summary.to_string(),
+            raw_excerpt: None,
+            keywords: vec![],
+            importance: Importance::Medium,
+            source: MemorySource::Manual,
+            related_ids: vec![],
+            embedding: None,
+            project: None,
+            branch: None,
+            worktree: None,
+            agent_id: None,
+            expires_at: None,
+            invalidated_at: None,
+            invalidation_reason: None,
+            superseded_by: None,
+            tier: Default::default(),
+            entities: vec![],
+        }
+    }
+
+    #[test]
+    fn consolidate_invalidates_source_memories() {
+        let store = make_store();
+        let topic = "test/consolidation";
+
+        // Store 3 source memories
+        let mut source_ids = Vec::new();
+        for i in 0..3 {
+            let mem = make_memory(topic, &format!("source memory {}", i));
+            let id = mem.id.clone();
+            store.store(mem).unwrap();
+            source_ids.push(id);
+        }
+
+        // Create a consolidated memory
+        let consolidated = make_memory(topic, "consolidated summary of sources");
+        let consolidated_id = consolidated.id.clone();
+
+        // Perform consolidation
+        store.consolidate_topic(topic, consolidated).unwrap();
+
+        // Verify: consolidated memory exists and is active
+        let retrieved = store.get(&consolidated_id).unwrap();
+        assert!(retrieved.is_some(), "consolidated memory should exist");
+        let consolidated_mem = retrieved.unwrap();
+        assert!(
+            consolidated_mem.invalidated_at.is_none(),
+            "consolidated memory should not be invalidated"
+        );
+
+        // Verify: source memories are invalidated with correct metadata
+        for source_id in source_ids {
+            let retrieved = store.get(&source_id).unwrap();
+            assert!(retrieved.is_some(), "source memory should still exist");
+            let source_mem = retrieved.unwrap();
+            assert!(
+                source_mem.invalidated_at.is_some(),
+                "source memory should be invalidated"
+            );
+            assert_eq!(
+                source_mem.invalidation_reason,
+                Some("consolidated".to_string()),
+                "invalidation reason should be 'consolidated'"
+            );
+            assert_eq!(
+                source_mem.superseded_by,
+                Some(consolidated_id.clone()),
+                "superseded_by should point to consolidated memory"
+            );
+        }
     }
 }
