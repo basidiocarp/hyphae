@@ -187,13 +187,24 @@ impl SqliteStore {
             .get(id)?
             .ok_or_else(|| HyphaeError::NotFound(id.to_string()))?;
 
+        // Shared copy is a clean projection: raw_excerpt, source attribution,
+        // branch/worktree, agent_id, and expires_at are intentionally dropped.
+        // Provenance is recorded via related_ids (origin id) and a keyword tag.
+        let mut keywords = original.keywords.clone();
+        keywords.push(format!(
+            "promoted_from:{}",
+            original.project.as_deref().unwrap_or("unknown")
+        ));
+
         let shared = Memory::builder(
             original.topic.clone(),
             original.summary.clone(),
             original.importance,
         )
-        .keywords(original.keywords.clone())
+        .keywords(keywords)
         .project(SHARED_PROJECT.to_string())
+        // Link back to the origin so the shared copy can be traced to its source.
+        .related_ids(vec![original.id.clone()])
         .build();
 
         let new_id = self.store(shared)?;
@@ -297,5 +308,32 @@ mod tests {
 
         assert!(from_a.contains(&"project_b".to_string()));
         assert!(from_b.contains(&"project_a".to_string()));
+    }
+
+    #[test]
+    fn promote_to_shared_records_origin_link_and_keyword() {
+        let store = make_store();
+        let mem = make_memory("topic/provenance", "original content", Some("project_alpha"));
+        let origin_id = store.store(mem).unwrap();
+
+        let shared_id = store.promote_to_shared(&origin_id).unwrap();
+
+        let shared = store.get(&shared_id).unwrap().expect("shared memory should exist");
+
+        // related_ids should point back to the origin
+        assert!(
+            shared.related_ids.contains(&origin_id),
+            "promoted shared copy should have origin id in related_ids"
+        );
+
+        // keywords should include provenance tag
+        assert!(
+            shared.keywords.iter().any(|k| k == "promoted_from:project_alpha"),
+            "promoted shared copy should have promoted_from keyword, got: {:?}",
+            shared.keywords
+        );
+
+        // project should be _shared
+        assert_eq!(shared.project.as_deref(), Some("_shared"));
     }
 }
