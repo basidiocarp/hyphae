@@ -11,6 +11,8 @@ use super::super::{
 };
 use crate::text::truncate_str;
 
+const MAX_CONSOLIDATED_BYTES: usize = 64 * 1024;
+
 fn topic_needs_consolidation(
     store: &SqliteStore,
     consolidation: &ConsolidationConfig,
@@ -70,8 +72,31 @@ pub(crate) fn tool_consolidate(
     if let Err(e) = super::super::validate_max_length(summary, "summary", 32768) {
         return e;
     }
+
     let workflow_context = workflow_span_context(trace, None, Some(topic));
     let _workflow_span = workflow_span("memory_consolidate", &workflow_context).entered();
+
+    // Read existing memories once — used for both constitution guard, importance derivation,
+    // and the consolidated-size cap check.
+    let existing_memories = match store.get_by_topic(topic, project) {
+        Ok(m) => m,
+        Err(e) => {
+            return ToolResult::error(format!(
+                "failed to load existing memories for topic '{topic}': {e}"
+            ));
+        }
+    };
+
+    // Reject if the merged content (existing + new summary) exceeds the cap. This prevents
+    // a topic from growing unboundedly through repeated consolidation cycles.
+    let existing_total: usize = existing_memories.iter().map(|m| m.summary.len()).sum();
+    if existing_total + summary.len() > MAX_CONSOLIDATED_BYTES {
+        return ToolResult::error(format!(
+            "topic '{topic}' would produce a consolidated body of {} bytes, exceeding the {} byte limit — split the topic or reduce existing memories before consolidating",
+            existing_total + summary.len(),
+            MAX_CONSOLIDATED_BYTES
+        ));
+    }
 
     // Derive importance from the highest-importance source memory so that a
     // consolidation of critical or high-importance memories does not silently
@@ -79,33 +104,32 @@ pub(crate) fn tool_consolidate(
     //
     // Constitution memories are permanently exempt from consolidation — they
     // represent governance policy that must never be merged or discarded.
-    let importance = match store.get_by_topic(topic, project) {
-        Ok(ref memories) if !memories.is_empty() => {
-            if memories
-                .iter()
-                .any(|m| m.importance == Importance::Constitution)
-            {
-                return ToolResult::error(format!(
-                    "topic '{topic}' contains constitution memories and cannot be consolidated"
-                ));
-            }
-            fn rank(i: Importance) -> u8 {
-                match i {
-                    Importance::Constitution => 5,
-                    Importance::Critical => 4,
-                    Importance::High => 3,
-                    Importance::Medium => 2,
-                    Importance::Low => 1,
-                    Importance::Ephemeral => 0,
-                }
-            }
-            memories
-                .iter()
-                .map(|m| m.importance)
-                .max_by_key(|i| rank(*i))
-                .unwrap_or(Importance::High)
+    let importance = if existing_memories.is_empty() {
+        Importance::High
+    } else {
+        if existing_memories
+            .iter()
+            .any(|m| m.importance == Importance::Constitution)
+        {
+            return ToolResult::error(format!(
+                "topic '{topic}' contains constitution memories and cannot be consolidated"
+            ));
         }
-        _ => Importance::High,
+        fn rank(i: Importance) -> u8 {
+            match i {
+                Importance::Constitution => 5,
+                Importance::Critical => 4,
+                Importance::High => 3,
+                Importance::Medium => 2,
+                Importance::Low => 1,
+                Importance::Ephemeral => 0,
+            }
+        }
+        existing_memories
+            .iter()
+            .map(|m| m.importance)
+            .max_by_key(|i| rank(*i))
+            .unwrap_or(Importance::High)
     };
 
     let mut builder = Memory::builder(topic.into(), summary.into(), importance);
@@ -535,4 +559,117 @@ pub(crate) fn tool_promote_to_memoir(
     ));
 
     ToolResult::text(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hyphae_store::SqliteStore;
+    use serde_json::json;
+
+    fn test_store() -> SqliteStore {
+        SqliteStore::in_memory().expect("in-memory store")
+    }
+
+    fn make_trace() -> ToolTraceContext {
+        ToolTraceContext {
+            request_id: Some("test-request".to_string()),
+            session_id: Some("test-session".to_string()),
+            workspace_root: None,
+        }
+    }
+
+    fn get_text_content(result: &ToolResult) -> String {
+        result
+            .content
+            .first()
+            .map(|c| c.text.clone())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn test_consolidate_within_limit_succeeds() {
+        let store = test_store();
+        let trace = make_trace();
+
+        let args = json!({
+            "topic": "test/topic",
+            "summary": "A short consolidated summary"
+        });
+
+        let result = tool_consolidate(&store, &args, None, &trace);
+        assert!(!result.is_error, "consolidation should succeed");
+        let text = get_text_content(&result);
+        assert!(text.contains("Consolidated topic"));
+    }
+
+    #[test]
+    fn test_consolidate_exceeds_limit_returns_error() {
+        use hyphae_core::memory::{Importance, Memory};
+        let store = test_store();
+        let trace = make_trace();
+
+        // Pre-populate the topic with 50KB of existing memory content.
+        // Then attempt to consolidate with a 20KB summary — total 70KB > 64KB cap.
+        let existing_body = "e".repeat(50 * 1024);
+        let mem =
+            Memory::builder("cap/test".into(), existing_body.into(), Importance::Medium).build();
+        store.store(mem).expect("store pre-existing memory");
+
+        let new_summary = "n".repeat(20 * 1024);
+        let args = json!({
+            "topic": "cap/test",
+            "summary": new_summary
+        });
+
+        let result = tool_consolidate(&store, &args, None, &trace);
+        assert!(
+            result.is_error,
+            "50KB existing + 20KB new should exceed 64KB cap"
+        );
+        let error_text = get_text_content(&result);
+        assert!(
+            error_text.contains("cap/test"),
+            "error should mention topic name, got: {error_text}"
+        );
+        assert!(
+            error_text.contains("bytes"),
+            "error should mention byte limit, got: {error_text}"
+        );
+    }
+
+    #[test]
+    fn test_consolidate_summary_at_input_limit_succeeds() {
+        let store = test_store();
+        let trace = make_trace();
+
+        let large_summary = "x".repeat(32000);
+        let args = json!({
+            "topic": "errors/resolved",
+            "summary": large_summary
+        });
+
+        let result = tool_consolidate(&store, &args, None, &trace);
+        assert!(!result.is_error, "summary under 32KB limit should succeed");
+        let text = get_text_content(&result);
+        assert!(text.contains("Consolidated topic"));
+        assert!(text.contains("errors/resolved"));
+    }
+
+    #[test]
+    fn test_consolidate_summary_exceeds_input_limit_rejected() {
+        let store = test_store();
+        let trace = make_trace();
+
+        let too_large_summary = "x".repeat(32769);
+        let args = json!({
+            "topic": "test/topic",
+            "summary": too_large_summary
+        });
+
+        let result = tool_consolidate(&store, &args, None, &trace);
+        assert!(result.is_error, "summary over 32KB limit should fail");
+        let error_text = get_text_content(&result);
+        assert!(error_text.contains("exceeds maximum length"));
+    }
 }
