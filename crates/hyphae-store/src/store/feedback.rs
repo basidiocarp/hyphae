@@ -558,6 +558,169 @@ impl SqliteStore {
         })
     }
 
+    pub(crate) fn score_recall_effectiveness_with_tx(
+        &self,
+        tx: &rusqlite::Transaction,
+        session_id: &str,
+        session_ended_at: &str,
+    ) -> HyphaeResult<usize> {
+        let session_end = parse_rfc3339_utc(session_ended_at, "ended_at")?;
+        let recalls: Vec<RecallEventRecord> = {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT id, recalled_at, memory_ids
+                     FROM recall_events
+                     WHERE session_id = ?1
+                     ORDER BY recalled_at ASC",
+                )
+                .map_err(|e| {
+                    HyphaeError::Database(format!("failed to prepare recall lookup: {e}"))
+                })?;
+
+            let rows = stmt
+                .query_map(params![session_id], |row| {
+                    let memory_ids_json: String = row.get(2)?;
+                    let memory_ids = serde_json::from_str(&memory_ids_json).map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            2,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?;
+                    Ok(RecallEventRecord {
+                        id: row.get(0)?,
+                        recalled_at: row.get(1)?,
+                        memory_ids,
+                    })
+                })
+                .map_err(|e| {
+                    HyphaeError::Database(format!("failed to query recall events: {e}"))
+                })?;
+
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| HyphaeError::Database(format!("failed to read recall events: {e}")))?
+        };
+
+        if recalls.is_empty() {
+            return Ok(0);
+        }
+
+        let computed_at = Utc::now().to_rfc3339();
+        let mut written = 0usize;
+
+        for recall in recalls {
+            if recall.memory_ids.is_empty() {
+                continue;
+            }
+
+            let recalled_at = parse_rfc3339_utc(&recall.recalled_at, "recalled_at")?;
+            let window_end = std::cmp::min(
+                session_end,
+                recalled_at + Duration::minutes(MAX_EFFECTIVENESS_WINDOW_MINUTES),
+            );
+
+            if window_end <= recalled_at {
+                continue;
+            }
+
+            let signal_values: Vec<i64> = {
+                let mut stmt = tx
+                    .prepare(
+                        "SELECT signal_type, signal_value
+                         FROM outcome_signals
+                         WHERE session_id = ?1
+                           AND (
+                                recall_event_id = ?4
+                                OR (
+                                    (
+                                        recall_event_id IS NULL
+                                        OR signal_type IN (?5, ?6)
+                                    )
+                                    AND occurred_at >= ?2
+                                    AND occurred_at <= ?3
+                                )
+                           )
+                         ORDER BY occurred_at ASC",
+                    )
+                    .map_err(|e| {
+                        HyphaeError::Database(format!("failed to prepare signal lookup: {e}"))
+                    })?;
+
+                let rows = stmt
+                    .query_map(
+                        params![
+                            session_id,
+                            &recall.recalled_at,
+                            window_end.to_rfc3339(),
+                            &recall.id,
+                            SIGNAL_SESSION_SUCCESS,
+                            SIGNAL_SESSION_FAILURE,
+                        ],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+                    )
+                    .map_err(|e| {
+                        HyphaeError::Database(format!("failed to query outcome signals: {e}"))
+                    })?;
+
+                rows.collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| {
+                        HyphaeError::Database(format!("failed to read outcome signals: {e}"))
+                    })?
+                    .into_iter()
+                    .filter_map(|(signal_type, signal_value)| {
+                        signal_contribution(&signal_type, signal_value)
+                    })
+                    .collect()
+            };
+
+            let raw_score = if signal_values.len() < MIN_SIGNALS_FOR_EFFECTIVENESS {
+                0.0
+            } else {
+                let positive_sum: i64 = signal_values
+                    .iter()
+                    .copied()
+                    .filter(|value| *value > 0)
+                    .sum();
+                let negative_sum: i64 = signal_values
+                    .iter()
+                    .copied()
+                    .filter(|value| *value < 0)
+                    .sum();
+                let total = positive_sum + negative_sum;
+                let magnitude = (positive_sum.abs() + negative_sum.abs()).max(1);
+                total as f32 / magnitude as f32
+            };
+
+            for (index, memory_id) in recall.memory_ids.iter().enumerate() {
+                let position_factor = 1.0 / (1.0 + POSITION_DISCOUNT * index as f32);
+                let effectiveness = raw_score * position_factor;
+
+                tx.execute(
+                    "INSERT INTO recall_effectiveness
+                        (memory_id, recall_event_id, effectiveness, signal_count, computed_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)
+                     ON CONFLICT(memory_id, recall_event_id) DO UPDATE SET
+                        effectiveness = excluded.effectiveness,
+                        signal_count = excluded.signal_count,
+                        computed_at = COALESCE(recall_effectiveness.computed_at, excluded.computed_at)",
+                    params![
+                        memory_id,
+                        &recall.id,
+                        effectiveness,
+                        signal_values.len() as i64,
+                        &computed_at,
+                    ],
+                )
+                .map_err(|e| {
+                    HyphaeError::Database(format!("failed to upsert recall effectiveness: {e}"))
+                })?;
+                written += 1;
+            }
+        }
+
+        Ok(written)
+    }
+
     pub(crate) fn score_recall_effectiveness(&self, session_id: &str) -> HyphaeResult<usize> {
         let session_ended_at: Option<String> = self
             .conn

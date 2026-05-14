@@ -12,6 +12,7 @@ use super::SqliteStore;
 
 /// Maximum number of timeline events (recall or outcome) per session to load.
 const MAX_TIMELINE_EVENTS_PER_SESSION: i64 = 200;
+const MAX_EFFECTIVENESS_WINDOW_MINUTES: i64 = 60;
 
 /// A session record.
 #[derive(Debug, Clone)]
@@ -286,13 +287,20 @@ impl SqliteStore {
             .map(|(end, start)| (end - start).num_minutes())
             .unwrap_or(0);
 
-        self.conn
+        // Start a transaction to wrap status update, outcome signal logging, and effectiveness scoring
+        let tx = self.conn.unchecked_transaction().map_err(|e| {
+            HyphaeError::Database(format!("failed to start session end transaction: {e}"))
+        })?;
+
+        // 1. UPDATE sessions SET status='completed'
+        tx
             .execute(
                 "UPDATE sessions SET ended_at = ?1, summary = ?2, files_modified = ?3, errors = ?4, status = 'completed' WHERE id = ?5",
                 params![ended_at, summary, files_modified, errors, session_id],
             )
             .map_err(|e| HyphaeError::Database(format!("failed to update session: {e}")))?;
 
+        // 2. Log outcome signal inline to ensure it's part of the transaction
         let error_count = errors
             .and_then(|value| value.parse::<i64>().ok())
             .unwrap_or(0);
@@ -302,18 +310,64 @@ impl SqliteStore {
             "session_success"
         };
         let signal_value = if error_count > 0 { -2 } else { 2 };
-        if let Err(e) = self.log_outcome_signal(
-            Some(session_id),
-            signal_type,
-            signal_value,
-            Some("hyphae.session_end"),
-            Some(&project),
+
+        let signal_id = format!("sig_{}", ulid::Ulid::new());
+        let signal_occurred_at = ended_at.clone();
+
+        // Query for latest recall event within transaction context
+        let window_start = chrono::DateTime::parse_from_rfc3339(&signal_occurred_at)
+            .ok()
+            .and_then(|dt| {
+                dt.checked_sub_signed(chrono::Duration::minutes(MAX_EFFECTIVENESS_WINDOW_MINUTES))
+            })
+            .map(|dt| dt.to_rfc3339())
+            .unwrap_or_else(|| signal_occurred_at.clone());
+
+        let recall_event_id: Option<String> = tx
+            .query_row(
+                "SELECT id
+                 FROM recall_events
+                 WHERE session_id = ?1
+                   AND recalled_at <= ?2
+                   AND recalled_at >= ?3
+                 ORDER BY recalled_at DESC
+                 LIMIT 1",
+                params![session_id, signal_occurred_at, window_start],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| {
+                HyphaeError::Database(format!("failed to query latest recall event: {e}"))
+            })?;
+
+        // Insert the outcome signal
+        if let Err(e) = tx.execute(
+            "INSERT INTO outcome_signals
+                (id, session_id, recall_event_id, signal_type, signal_value, occurred_at, source, project)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                signal_id,
+                session_id,
+                recall_event_id,
+                signal_type,
+                signal_value,
+                signal_occurred_at,
+                "hyphae.session_end",
+                Some(&project),
+            ],
         ) {
             tracing::warn!("failed to record session outcome signal: {e}");
         }
-        if let Err(e) = self.score_recall_effectiveness(session_id) {
+
+        // 3. Score recall effectiveness inline
+        if let Err(e) = self.score_recall_effectiveness_with_tx(&tx, session_id, &ended_at) {
             tracing::warn!("failed to score recall effectiveness: {e}");
         }
+
+        // Commit the transaction
+        tx.commit().map_err(|e| {
+            HyphaeError::Database(format!("failed to commit session end transaction: {e}"))
+        })?;
 
         Ok((project, started_at, task, ended_at, duration_minutes))
     }
