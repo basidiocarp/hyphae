@@ -278,6 +278,11 @@ impl MemoirStore for SqliteStore {
     }
 
     fn delete_concept(&self, id: &ConceptId) -> HyphaeResult<()> {
+        // Fetch the concept before deletion so we can invalidate its paired memory entry
+        let concept = self
+            .get_concept(id)?
+            .ok_or_else(|| HyphaeError::NotFound(id.to_string()))?;
+
         let changed = self
             .conn
             .execute("DELETE FROM concepts WHERE id = ?1", params![id.as_ref()])
@@ -286,6 +291,18 @@ impl MemoirStore for SqliteStore {
         if changed == 0 {
             return Err(HyphaeError::NotFound(id.to_string()));
         }
+
+        // Invalidate the dual-written memory entry using the stable ID format
+        // memoir-{memoir_id}-{concept_name}
+        let memory_id: MemoryId = format!("memoir-{}-{}", concept.memoir_id, concept.name).into();
+        let now = Utc::now().to_rfc3339();
+
+        let _ = self.conn.execute(
+            "UPDATE memories SET invalidated_at = ?1, invalidation_reason = 'concept_deleted'
+             WHERE id = ?2",
+            params![now, memory_id.as_ref()],
+        );
+
         Ok(())
     }
 
@@ -1104,7 +1121,7 @@ impl MemoirStore for SqliteStore {
 mod tests {
     use hyphae_core::{
         Concept, ConceptId, ConceptInput, ConceptLink, HyphaeError, Label, LinkInput, Memoir,
-        MemoirStore, Relation,
+        MemoirStore, MemoryId, MemoryStore, Relation,
     };
 
     use super::super::SqliteStore;
@@ -1699,5 +1716,74 @@ mod tests {
             Err(HyphaeError::NotFound(_)) => {} // Expected
             _ => panic!("expected NotFound error on double-invalidation"),
         }
+    }
+
+    #[test]
+    fn test_delete_concept_invalidates_memory() {
+        let store = test_store();
+        let memoir = Memoir::new("test_concept_orphan".into(), "".into());
+        let memoir_id = store.create_memoir(memoir).unwrap();
+
+        // Create a concept
+        let concept = Concept::new(
+            memoir_id.clone(),
+            "TestConcept".to_string(),
+            "A test concept definition".to_string(),
+        );
+        let concept_id = store.add_concept(concept).unwrap();
+
+        // Verify concept exists
+        let fetched = store.get_concept(&concept_id).unwrap();
+        assert!(fetched.is_some(), "concept should exist before deletion");
+
+        // Manually create a memory entry matching the stable ID pattern
+        // This simulates what tool_memoir_add_concept does
+        let memory_id: MemoryId = format!("memoir-{}-TestConcept", memoir_id).into();
+        let memory = hyphae_core::Memory::new(
+            format!("memoir/{}", memoir_id),
+            "TestConcept: A test concept definition".to_string(),
+            hyphae_core::Importance::High,
+        );
+        let mut memory_with_id = memory;
+        memory_with_id.id = memory_id.clone();
+
+        // Store the memory
+        store.store(memory_with_id).unwrap();
+
+        // Verify the memory exists and is not invalidated
+        let stored_memory = store.get(&memory_id).unwrap();
+        assert!(
+            stored_memory.is_some(),
+            "memory should exist before concept deletion"
+        );
+        let stored_mem = stored_memory.unwrap();
+        assert!(
+            stored_mem.invalidated_at.is_none(),
+            "memory should not be invalidated yet"
+        );
+
+        // Delete the concept
+        store.delete_concept(&concept_id).unwrap();
+
+        // Verify concept is deleted
+        let deleted = store.get_concept(&concept_id).unwrap();
+        assert!(deleted.is_none(), "concept should be deleted");
+
+        // Verify the memory is now invalidated
+        let invalidated_memory = store.get(&memory_id).unwrap();
+        assert!(
+            invalidated_memory.is_some(),
+            "memory should still exist (not hard-deleted)"
+        );
+        let inv_mem = invalidated_memory.unwrap();
+        assert!(
+            inv_mem.invalidated_at.is_some(),
+            "memory should be invalidated after concept deletion"
+        );
+        assert_eq!(
+            inv_mem.invalidation_reason.as_deref(),
+            Some("concept_deleted"),
+            "invalidation reason should be set"
+        );
     }
 }
