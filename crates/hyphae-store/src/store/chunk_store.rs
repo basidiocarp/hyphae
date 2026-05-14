@@ -430,6 +430,116 @@ impl ChunkStore for SqliteStore {
     }
 }
 
+impl SqliteStore {
+    /// Atomically delete an existing document and store a new one with its chunks in a single transaction.
+    /// Guarantees all-or-nothing semantics: if any step fails, the entire operation is rolled back.
+    pub fn ingest_atomic(
+        &self,
+        existing_id: &DocumentId,
+        doc: Document,
+        chunks: Vec<Chunk>,
+    ) -> HyphaeResult<DocumentId> {
+        self.with_transaction(|| {
+            let id_str = existing_id.to_string();
+
+            // Delete old document and all its associated data
+            self.conn
+                .execute(
+                    "DELETE FROM vec_chunks WHERE chunk_id IN \
+                 (SELECT id FROM chunks WHERE document_id = ?1)",
+                    params![id_str],
+                )
+                .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+            self.conn
+                .execute(
+                    "DELETE FROM chunks_fts WHERE id IN \
+                 (SELECT id FROM chunks WHERE document_id = ?1)",
+                    params![id_str],
+                )
+                .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+            self.conn
+                .execute("DELETE FROM documents WHERE id = ?1", params![id_str])
+                .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+            // Store new document
+            let new_id = doc.id.clone();
+            self.conn
+                .prepare_cached(&format!(
+                    "INSERT OR REPLACE INTO documents ({DOCUMENT_COLS}) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
+                ))
+                .map_err(|e| HyphaeError::Database(e.to_string()))?
+                .execute(params![
+                    doc.id.to_string(),
+                    doc.source_path,
+                    doc.source_type.to_string(),
+                    doc.chunk_count as u32,
+                    doc.created_at.to_rfc3339(),
+                    doc.updated_at.to_rfc3339(),
+                    doc.project.as_deref(),
+                    doc.runtime_session_id.as_deref(),
+                    doc.content_hash.as_deref(),
+                ])
+                .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+            // Store chunks
+            for chunk in chunks {
+                let now = chunk.created_at.to_rfc3339();
+                self.conn
+                    .prepare_cached(&format!(
+                        "INSERT OR REPLACE INTO chunks ({CHUNK_COLS}) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"
+                    ))
+                    .map_err(|e| HyphaeError::Database(e.to_string()))?
+                    .execute(params![
+                        chunk.id.to_string(),
+                        chunk.document_id.to_string(),
+                        chunk.chunk_index,
+                        chunk.content,
+                        chunk.metadata.source_path,
+                        chunk.metadata.source_type.to_string(),
+                        chunk.metadata.language,
+                        chunk.metadata.heading,
+                        chunk.metadata.line_start,
+                        chunk.metadata.line_end,
+                        now,
+                        chunk.metadata.chunk_strategy,
+                    ])
+                    .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+                self.conn
+                    .prepare_cached(
+                        "INSERT OR REPLACE INTO chunks_fts (id, content, source_path, heading) \
+                         VALUES (?1, ?2, ?3, ?4)",
+                    )
+                    .map_err(|e| HyphaeError::Database(e.to_string()))?
+                    .execute(params![
+                        chunk.id.to_string(),
+                        chunk.content,
+                        chunk.metadata.source_path,
+                        chunk.metadata.heading,
+                    ])
+                    .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+                if let Some(embedding) = &chunk.embedding {
+                    let blob = embedding_to_blob(embedding);
+                    self.conn
+                        .prepare_cached(
+                            "INSERT OR REPLACE INTO vec_chunks (chunk_id, embedding) VALUES (?1, ?2)",
+                        )
+                        .map_err(|e| HyphaeError::Database(e.to_string()))?
+                        .execute(params![chunk.id.to_string(), blob])
+                        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+                }
+            }
+
+            Ok(new_id)
+        })
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Helper to create test data
 // ---------------------------------------------------------------------------
