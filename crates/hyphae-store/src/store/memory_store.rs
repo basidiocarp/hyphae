@@ -77,6 +77,14 @@ impl RetrievalWeights {
     }
 }
 
+/// Per-importance floor constants for memory decay.
+/// Prevents high-importance memories from decaying to near-zero and becoming
+/// indistinguishable from deliberately invalidated entries.
+/// `critical` has no floor constant — the decay WHERE clause excludes it entirely.
+const DECAY_FLOOR_HIGH: f64 = 0.30;
+const DECAY_FLOOR_MEDIUM: f64 = 0.10;
+const DECAY_FLOOR_LOW: f64 = 0.02;
+
 impl Default for HotnessConfig {
     fn default() -> Self {
         Self {
@@ -1715,17 +1723,30 @@ impl MemoryStore for SqliteStore {
         let changed = self
             .conn
             .execute(
-                "UPDATE memories SET weight = MAX(0.0, weight * (
-                    1.0 - (1.0 - ?1) *
+                "UPDATE memories SET weight = MAX(
                     CASE importance
-                        WHEN 'high' THEN 0.5
-                        WHEN 'low' THEN 2.0
-                        ELSE 1.0
-                    END
-                    / (1.0 + access_count * 0.1)
-                ))
+                        WHEN 'high'   THEN ?2
+                        WHEN 'medium' THEN ?3
+                        WHEN 'low'    THEN ?4
+                        ELSE 0.0
+                    END,
+                    weight * (
+                        1.0 - (1.0 - ?1) *
+                        CASE importance
+                            WHEN 'high' THEN 0.5
+                            WHEN 'low' THEN 2.0
+                            ELSE 1.0
+                        END
+                        / (1.0 + access_count * 0.1)
+                    )
+                )
                 WHERE importance NOT IN ('critical', 'constitution') AND invalidated_at IS NULL",
-                params![decay_factor],
+                params![
+                    decay_factor,
+                    DECAY_FLOOR_HIGH,
+                    DECAY_FLOOR_MEDIUM,
+                    DECAY_FLOOR_LOW
+                ],
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
@@ -2361,5 +2382,116 @@ mod consolidate_topic_tests {
                 "superseded_by should point to consolidated memory"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod decay_floor_tests {
+    use super::*;
+    use hyphae_core::{Importance, Memory, MemoryId, MemorySource, Weight};
+
+    fn make_store() -> SqliteStore {
+        SqliteStore::in_memory().unwrap()
+    }
+
+    fn make_memory(topic: &str, summary: &str, importance: Importance) -> Memory {
+        Memory {
+            id: MemoryId::new(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            last_accessed: chrono::Utc::now(),
+            access_count: 0,
+            weight: Weight::new(1.0).unwrap(),
+            topic: topic.to_string(),
+            summary: summary.to_string(),
+            raw_excerpt: None,
+            keywords: vec![],
+            importance,
+            source: MemorySource::Manual,
+            related_ids: vec![],
+            embedding: None,
+            project: None,
+            branch: None,
+            worktree: None,
+            agent_id: None,
+            expires_at: None,
+            invalidated_at: None,
+            invalidation_reason: None,
+            superseded_by: None,
+            tier: Default::default(),
+            entities: vec![],
+        }
+    }
+
+    #[test]
+    fn test_decay_floor_low_importance() {
+        let store = make_store();
+        let mem = make_memory("test/decay", "low importance memory", Importance::Low);
+        store.store(mem).unwrap();
+
+        // Apply decay 1000 times with factor 0.95
+        for _ in 0..1000 {
+            store.apply_decay(0.95).unwrap();
+        }
+
+        // Retrieve and check that weight is >= DECAY_FLOOR_LOW (0.02)
+        let retrieved = store.get_by_topic("test/decay", None).unwrap();
+        assert!(
+            !retrieved.is_empty(),
+            "memory should still exist after decay"
+        );
+        let weight = retrieved[0].weight.value();
+        assert!(
+            weight >= 0.02,
+            "Low-importance memory weight after 1000 decay cycles should be >= 0.02, got {weight}"
+        );
+    }
+
+    #[test]
+    fn test_decay_floor_high_importance() {
+        let store = make_store();
+        let mem = make_memory("test/decay", "high importance memory", Importance::High);
+        store.store(mem).unwrap();
+
+        // Apply decay 100 times with factor 0.95
+        for _ in 0..100 {
+            store.apply_decay(0.95).unwrap();
+        }
+
+        // Retrieve and check that weight is >= DECAY_FLOOR_HIGH (0.30)
+        let retrieved = store.get_by_topic("test/decay", None).unwrap();
+        assert!(
+            !retrieved.is_empty(),
+            "memory should still exist after decay"
+        );
+        let weight = retrieved[0].weight.value();
+        assert!(
+            weight >= 0.30,
+            "High-importance memory weight after 100 decay cycles should be >= 0.30, got {weight}"
+        );
+    }
+
+    #[test]
+    fn test_decay_floor_medium_importance() {
+        let store = make_store();
+        let mem = make_memory("test/decay", "medium importance memory", Importance::Medium);
+        store.store(mem).unwrap();
+
+        // Apply decay 200 times with factor 0.95
+        for _ in 0..200 {
+            store.apply_decay(0.95).unwrap();
+        }
+
+        // Retrieve and check that weight is >= DECAY_FLOOR_MEDIUM (0.10)
+        let retrieved = store.get_by_topic("test/decay", None).unwrap();
+        assert!(
+            !retrieved.is_empty(),
+            "memory should still exist after decay"
+        );
+        let weight = retrieved[0].weight.value();
+        assert!(
+            weight >= 0.10,
+            "Medium-importance memory weight after 200 decay cycles should be >= 0.10, got {weight}"
+        );
     }
 }
