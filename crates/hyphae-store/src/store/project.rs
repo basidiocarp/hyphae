@@ -200,3 +200,102 @@ impl SqliteStore {
         Ok(new_id)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hyphae_core::{Importance, Memory, MemoryStore};
+
+    fn make_store() -> SqliteStore {
+        SqliteStore::in_memory().unwrap()
+    }
+
+    fn make_memory(topic: &str, summary: &str, project: Option<&str>) -> Memory {
+        let mut builder = Memory::builder(topic.into(), summary.into(), Importance::High);
+        if let Some(p) = project {
+            builder = builder.project(p.to_string());
+        }
+        builder.build()
+    }
+
+    #[test]
+    fn recall_global_without_links_isolates_projects() {
+        let store = make_store();
+
+        // Store a memory in project "A"
+        let mem_a = make_memory("topic_a", "memory from project A", Some("project_a"));
+        store.store(mem_a).unwrap();
+
+        // Store a memory in project "B"
+        let mem_b = make_memory("topic_b", "memory from project B", Some("project_b"));
+        store.store(mem_b).unwrap();
+
+        // When searching from project B with no links, should NOT return project A's memory
+        let results = store
+            .search_related_projects("memory", &["_shared", "project_b"], 10)
+            .unwrap();
+
+        // Should only have the B memory, not the A memory
+        let projects: Vec<&Option<String>> = results.iter().map(|m| &m.project).collect();
+        assert!(projects.contains(&&Some("project_b".to_string())));
+        assert!(!projects.contains(&&Some("project_a".to_string())));
+    }
+
+    #[test]
+    fn recall_global_respects_linked_projects() {
+        let store = make_store();
+
+        // Store memories in three projects
+        let mem_a = make_memory("topic_a", "memory from A", Some("project_a"));
+        let mem_b = make_memory("topic_b", "memory from B", Some("project_b"));
+        let mem_c = make_memory("topic_c", "memory from C", Some("project_c"));
+
+        store.store(mem_a).unwrap();
+        store.store(mem_b).unwrap();
+        store.store(mem_c).unwrap();
+
+        // Link project_b to project_c
+        store.link_projects("project_b", "project_c").unwrap();
+
+        // When searching from B, should find B and C (via link) but not A
+        let results = store
+            .search_related_projects("memory", &["_shared", "project_b", "project_c"], 10)
+            .unwrap();
+
+        let projects: Vec<&Option<String>> = results.iter().map(|m| &m.project).collect();
+        assert!(projects.contains(&&Some("project_b".to_string())));
+        assert!(projects.contains(&&Some("project_c".to_string())));
+        assert!(!projects.contains(&&Some("project_a".to_string())));
+    }
+
+    #[test]
+    fn get_linked_projects_returns_empty_when_no_links() {
+        let store = make_store();
+        let linked = store.get_linked_projects("project_a").unwrap();
+        assert!(linked.is_empty());
+    }
+
+    #[test]
+    fn get_linked_projects_returns_linked_targets() {
+        let store = make_store();
+        store.link_projects("project_a", "project_b").unwrap();
+        store.link_projects("project_a", "project_c").unwrap();
+
+        let linked = store.get_linked_projects("project_a").unwrap();
+        assert_eq!(linked.len(), 2);
+        assert!(linked.contains(&"project_b".to_string()));
+        assert!(linked.contains(&"project_c".to_string()));
+    }
+
+    #[test]
+    fn link_projects_is_bidirectional() {
+        let store = make_store();
+        store.link_projects("project_a", "project_b").unwrap();
+
+        let from_a = store.get_linked_projects("project_a").unwrap();
+        let from_b = store.get_linked_projects("project_b").unwrap();
+
+        assert!(from_a.contains(&"project_b".to_string()));
+        assert!(from_b.contains(&"project_a".to_string()));
+    }
+}

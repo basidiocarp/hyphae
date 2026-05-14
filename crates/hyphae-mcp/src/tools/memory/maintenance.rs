@@ -2,7 +2,7 @@ use serde_json::Value;
 use spore::logging::workflow_span;
 
 use hyphae_core::{ConsolidationConfig, Embedder, Importance, MemoirStore, Memory, MemoryStore};
-use hyphae_store::SqliteStore;
+use hyphae_store::{SHARED_PROJECT, SqliteStore};
 
 use crate::protocol::ToolResult;
 
@@ -351,6 +351,7 @@ pub(crate) fn tool_recall_global(
     store: &SqliteStore,
     args: &Value,
     compact: bool,
+    project: Option<&str>,
     trace: &ToolTraceContext,
 ) -> ToolResult {
     let query = match get_str(args, "query") {
@@ -358,12 +359,44 @@ pub(crate) fn tool_recall_global(
         None => return ToolResult::error("missing required field: query".into()),
     };
     let limit = get_bounded_i64(args, "limit", 10, 1, 100) as usize;
+    let unrestricted = args
+        .get("unrestricted")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let workflow_context = workflow_span_context(trace, None, None);
     let _workflow_span = workflow_span("recall_global", &workflow_context).entered();
 
-    let results = match store.search_all_projects(query, limit) {
-        Ok(r) => r,
-        Err(e) => return ToolResult::error(format!("search error: {e}")),
+    let results = if unrestricted {
+        // Restore all-projects behavior when explicitly requested
+        match store.search_all_projects(query, limit) {
+            Ok(r) => r,
+            Err(e) => return ToolResult::error(format!("search error: {e}")),
+        }
+    } else {
+        // Build allow-list: _shared + caller project + linked projects
+        let mut allow_list_strings = vec![SHARED_PROJECT.to_string()];
+        if let Some(p) = project {
+            allow_list_strings.push(p.to_string());
+
+            // Add linked projects
+            match store.get_linked_projects(p) {
+                Ok(linked) => {
+                    allow_list_strings.extend(linked);
+                }
+                Err(e) => {
+                    tracing::warn!("failed to get linked projects for {}: {}", p, e);
+                }
+            }
+        }
+
+        // Convert to string references for the search
+        let allow_list: Vec<&str> = allow_list_strings.iter().map(String::as_str).collect();
+
+        // Search only the allowed projects
+        match store.search_related_projects(query, &allow_list, limit) {
+            Ok(r) => r,
+            Err(e) => return ToolResult::error(format!("search error: {e}")),
+        }
     };
 
     if results.is_empty() {

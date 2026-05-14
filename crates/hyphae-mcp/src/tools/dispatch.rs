@@ -83,7 +83,7 @@ pub fn call_tool_with_consolidation(
         "hyphae_reflexion_record" => memory::tool_reflexion_record(store, args, trace),
         "hyphae_reflexion_search" => memory::tool_reflexion_search(store, args, trace),
         // Cross-project tools
-        "hyphae_recall_global" => memory::tool_recall_global(store, args, compact, trace),
+        "hyphae_recall_global" => memory::tool_recall_global(store, args, compact, project, trace),
         "hyphae_promote_to_memoir" => memory::tool_promote_to_memoir(store, args, project, trace),
         // Memoir tools
         "hyphae_memoir_create" => memoir::tool_memoir_create(store, args, trace),

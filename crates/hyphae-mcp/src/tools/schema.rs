@@ -370,7 +370,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         // Cross-project tools
         json!({
             "name": "hyphae_recall_global",
-            "description": "Search memories across ALL projects. Returns results grouped by project. Use when knowledge may exist in another project, or to find cross-cutting patterns. The special '_shared' project holds globally visible knowledge.",
+            "description": "Search memories across linked projects and shared knowledge. Returns results grouped by project. By default, searches the _shared project, the caller's own project, and any projects linked to it. Use when knowledge may exist in linked projects, or to find cross-cutting patterns. Set unrestricted=true to search all projects without filtering (requires explicit intent).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -383,7 +383,12 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                         "default": 10,
                         "minimum": 1,
                         "maximum": 100,
-                        "description": "Max total results across all projects"
+                        "description": "Max total results across allowed projects"
+                    },
+                    "unrestricted": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "When true, search all projects without filtering. Default false restricts to caller's project, linked projects, and _shared."
                     }
                 },
                 "required": ["query"]
