@@ -630,6 +630,17 @@ impl MemoirStore for SqliteStore {
                 "link not found or already invalidated: {id}"
             )));
         }
+        // Also invalidate the reverse-direction edge if it exists. Invalidation is
+        // symmetric because get_neighbors walks both directions, so a stale reverse
+        // edge would still surface the concept after the forward edge is invalidated.
+        let _ = self.conn.execute(
+            "UPDATE concept_links SET valid_to = ?1
+             WHERE source_id = (SELECT target_id FROM concept_links WHERE id = ?2)
+               AND target_id = (SELECT source_id FROM concept_links WHERE id = ?2)
+               AND relation  = (SELECT relation  FROM concept_links WHERE id = ?2)
+               AND (valid_to IS NULL OR valid_to = '')",
+            params![now, id.as_ref()],
+        );
         Ok(())
     }
 
@@ -659,6 +670,14 @@ impl MemoirStore for SqliteStore {
                 "no '{relation}' link from '{from_concept}' to '{to_concept}'"
             )));
         }
+        // remove_link is symmetric: also remove the reverse edge if one exists.
+        // add_link only inserts the forward direction, but edges can be manually
+        // inserted or copied in both directions. get_neighbors walks both directions,
+        // so a stale reverse edge would continue surfacing the concept after removal.
+        let _ = self.conn.execute(
+            "DELETE FROM concept_links WHERE source_id = ?1 AND target_id = ?2 AND relation = ?3",
+            params![to.id.as_ref(), from.id.as_ref(), normalized],
+        );
         Ok(())
     }
 
@@ -1584,6 +1603,106 @@ mod tests {
         // Missing concept — should return NotFound
         let result = store.remove_link(&memoir_id, "x", "nonexistent", "related_to");
         assert!(result.is_err(), "should error when concept not found");
+    }
+
+    #[test]
+    fn test_remove_link_clears_reverse_edge() {
+        let store = test_store();
+        let memoir = Memoir::new("bidir_remove".into(), "".into());
+        let memoir_id = store.create_memoir(memoir).unwrap();
+        let concepts = vec![
+            ConceptInput {
+                name: "A".into(),
+                labels: vec![],
+                description: "".into(),
+            },
+            ConceptInput {
+                name: "B".into(),
+                labels: vec![],
+                description: "".into(),
+            },
+        ];
+        store.upsert_concepts(&memoir_id, &concepts).unwrap();
+
+        let a = store.get_concept_by_name(&memoir_id, "A").unwrap().unwrap();
+        let b = store.get_concept_by_name(&memoir_id, "B").unwrap().unwrap();
+
+        // Insert both directions
+        store
+            .add_link(ConceptLink::new(
+                a.id.clone(),
+                b.id.clone(),
+                Relation::DependsOn,
+            ))
+            .unwrap();
+        store
+            .add_link(ConceptLink::new(
+                b.id.clone(),
+                a.id.clone(),
+                Relation::DependsOn,
+            ))
+            .unwrap();
+
+        // remove_link A→B should also remove B→A
+        store
+            .remove_link(&memoir_id, "A", "B", "depends_on")
+            .unwrap();
+
+        let neighbors = store.get_neighbors(&a.id, None).unwrap();
+        assert_eq!(
+            neighbors.len(),
+            0,
+            "reverse edge B→A should also be removed so A has no neighbors"
+        );
+    }
+
+    #[test]
+    fn test_invalidate_link_clears_reverse_edge() {
+        let store = test_store();
+        let memoir = Memoir::new("bidir_invalidate".into(), "".into());
+        let memoir_id = store.create_memoir(memoir).unwrap();
+        let concepts = vec![
+            ConceptInput {
+                name: "X".into(),
+                labels: vec![],
+                description: "".into(),
+            },
+            ConceptInput {
+                name: "Y".into(),
+                labels: vec![],
+                description: "".into(),
+            },
+        ];
+        store.upsert_concepts(&memoir_id, &concepts).unwrap();
+
+        let x = store.get_concept_by_name(&memoir_id, "X").unwrap().unwrap();
+        let y = store.get_concept_by_name(&memoir_id, "Y").unwrap().unwrap();
+
+        // Insert both directions
+        let link_id_xy = store
+            .add_link(ConceptLink::new(
+                x.id.clone(),
+                y.id.clone(),
+                Relation::RelatedTo,
+            ))
+            .unwrap();
+        store
+            .add_link(ConceptLink::new(
+                y.id.clone(),
+                x.id.clone(),
+                Relation::RelatedTo,
+            ))
+            .unwrap();
+
+        // Invalidate the forward edge; the reverse should be invalidated too
+        store.invalidate_link(&link_id_xy).unwrap();
+
+        let neighbors = store.get_neighbors(&x.id, None).unwrap();
+        assert_eq!(
+            neighbors.len(),
+            0,
+            "reverse edge Y→X should also be invalidated so X has no neighbors"
+        );
     }
 
     #[test]

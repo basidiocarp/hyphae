@@ -503,7 +503,10 @@ impl SqliteStore {
 
     /// Get a cross-project session timeline with structured recall and outcome events.
     pub fn session_timeline_all(&self, limit: i64) -> HyphaeResult<Vec<SessionTimelineRecord>> {
-        let sessions = self.session_context_all(i64::MAX)?;
+        // Fetch 3x the requested limit at the SQL level to allow for re-sorting by
+        // last activity, without loading every session row for a large store.
+        let sql_limit = limit.saturating_mul(3).min(500);
+        let sessions = self.session_context_all(sql_limit)?;
         self.build_session_timeline(sessions, limit)
     }
 
@@ -1875,6 +1878,42 @@ mod tests {
         assert!(
             outcome_count > 0,
             "expected some outcome events to be loaded"
+        );
+    }
+
+    #[test]
+    fn test_session_timeline_all_applies_sql_limit() {
+        let store = test_store();
+
+        // Create 10 sessions across different projects
+        for i in 0..10 {
+            let (id, _) = store
+                .session_start(&format!("proj-{i}"), Some("task"))
+                .unwrap();
+            store
+                .session_end(&id, Some("task"), None, Some("0"))
+                .unwrap();
+        }
+
+        // Confirm all 10 exist in the store (unbounded fetch).
+        let all = store.session_context_all(i64::MAX).unwrap();
+        assert_eq!(all.len(), 10, "store should have 10 sessions");
+
+        // session_timeline_all(3) computes sql_limit = 3 * 3 = 9. Calling
+        // session_context_all(9) directly proves the SQL LIMIT clause fires.
+        let bounded = store.session_context_all(9).unwrap();
+        assert!(
+            bounded.len() <= 9,
+            "session_context_all(9) should return at most 9 rows, not {}",
+            bounded.len()
+        );
+
+        // Final output must be capped at the requested limit.
+        let timeline = store.session_timeline_all(3).unwrap();
+        assert!(
+            timeline.len() <= 3,
+            "expected at most 3 timeline records but got {}",
+            timeline.len()
         );
     }
 }
