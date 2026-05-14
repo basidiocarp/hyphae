@@ -1,9 +1,11 @@
+use std::sync::OnceLock;
+
 use chrono::Utc;
 use serde_json::Value;
 use spore::logging::workflow_span;
 
 use hyphae_core::{
-    Embedder, Importance, Memory, MemoryId, MemoryStore, MemoryTier, Weight,
+    Embedder, GitContext, Importance, Memory, MemoryId, MemoryStore, MemoryTier, Weight,
     detect_git_context_from, detect_secrets,
 };
 use hyphae_store::SqliteStore;
@@ -14,6 +16,16 @@ use super::super::{
     ToolTraceContext, get_str, resolve_workspace_root, validate_max_length,
     validate_required_string, workflow_span_context,
 };
+
+// Process-lifetime cache for git context detection
+// Safe for single-project CLI use. MCP servers serving multiple projects should supply explicit identity via args.
+static GIT_CONTEXT_CACHE: OnceLock<GitContext> = OnceLock::new();
+
+fn cached_git_context() -> GitContext {
+    GIT_CONTEXT_CACHE
+        .get_or_init(|| detect_git_context_from(None))
+        .clone()
+}
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn tool_store(
@@ -100,7 +112,7 @@ pub(crate) fn tool_store(
         builder = builder.project(p.to_string());
     }
 
-    let git_context = detect_git_context_from(None);
+    let git_context = cached_git_context();
     let detected_branch = git_context.branch;
     let detected_worktree = git_context.worktree;
     if let Some(branch) = get_str(args, "branch")

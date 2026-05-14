@@ -322,8 +322,9 @@ pub(crate) fn tool_store_command_output(
     let ttl_hours = get_bounded_i64(args, "ttl_hours", 4, 1, 168);
     let project_override = get_str(args, "project");
     let effective_project = project_override.or(project);
-    let (project_root, worktree_id) =
-        normalize_identity(get_str(args, "project_root"), get_str(args, "worktree_id"));
+    let raw_project_root = get_str(args, "project_root");
+    let raw_worktree_id = get_str(args, "worktree_id");
+    let (project_root, worktree_id) = normalize_identity(raw_project_root, raw_worktree_id);
     let runtime_session_id = get_str(args, "runtime_session_id");
 
     // 1. Auto-detect output type and chunk
@@ -386,23 +387,31 @@ pub(crate) fn tool_store_command_output(
     let summary = format!("Command `{command}` output ({chunk_count} chunks):\n{first_lines}");
 
     let expires_at = Utc::now() + Duration::hours(ttl_hours);
-    if project_root.is_none() {
-        let mut builder = Memory::builder(
-            "command_output".to_string(),
-            summary.clone(),
-            Importance::Ephemeral,
-        )
+    let topic = match raw_project_root {
+        Some(root) => {
+            // Sanitize root by taking the last path component
+            // Split on both Unix and Windows separators, skip empty components
+            let sanitized = root
+                .rsplit(['/', '\\'])
+                .find(|s| !s.is_empty())
+                .unwrap_or("unknown")
+                .replace(['/', '\\'], "_");
+            format!("commands/{}", sanitized)
+        }
+        None => "commands".to_string(),
+    };
+
+    let mut builder = Memory::builder(topic, summary.clone(), Importance::Ephemeral)
         .keywords(vec![command.to_string()])
         .expires_at(expires_at);
 
-        if let Some(p) = effective_project {
-            builder = builder.project(p.to_string());
-        }
+    if let Some(p) = effective_project {
+        builder = builder.project(p.to_string());
+    }
 
-        let memory = builder.build();
-        if let Err(e) = store.store(memory) {
-            tracing::warn!("failed to store summary memory: {e}");
-        }
+    let memory = builder.build();
+    if let Err(e) = store.store(memory) {
+        tracing::warn!("failed to store summary memory: {e}");
     }
 
     // 6. Return result
@@ -712,7 +721,7 @@ mod tests {
     }
 
     #[test]
-    fn test_store_command_output_identity_v1_skips_project_scoped_summary_memory() {
+    fn test_store_command_output_identity_v1_creates_project_scoped_summary_memory() {
         let store = test_store();
 
         let result = tool_store_command_output(
@@ -732,7 +741,7 @@ mod tests {
         assert!(!result.is_error);
 
         let memories = store.search_fts("alpha", 10, 0, Some("demo")).unwrap();
-        assert!(memories.is_empty());
+        assert!(!memories.is_empty());
     }
 
     #[test]
