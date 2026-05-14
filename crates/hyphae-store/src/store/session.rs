@@ -10,6 +10,9 @@ use hyphae_core::{Embedder, HyphaeError, HyphaeResult, Memory, MemoryStore, Scop
 
 use super::SqliteStore;
 
+/// Maximum number of timeline events (recall or outcome) per session to load.
+const MAX_TIMELINE_EVENTS_PER_SESSION: i64 = 200;
+
 /// A session record.
 #[derive(Debug, Clone)]
 pub struct Session {
@@ -733,21 +736,25 @@ impl SqliteStore {
                 "SELECT id, query, recalled_at, memory_count
                  FROM recall_events
                  WHERE session_id = ?1
-                 ORDER BY recalled_at DESC",
+                 ORDER BY recalled_at DESC
+                 LIMIT ?2",
             )
             .map_err(|e| {
                 HyphaeError::Database(format!("failed to prepare recall timeline query: {e}"))
             })?;
 
         let rows = stmt
-            .query_map(params![session_id], |row| {
-                Ok(RecallTimelineRow {
-                    id: row.get(0)?,
-                    query: row.get(1)?,
-                    recalled_at: row.get(2)?,
-                    memory_count: row.get(3)?,
-                })
-            })
+            .query_map(
+                params![session_id, MAX_TIMELINE_EVENTS_PER_SESSION],
+                |row| {
+                    Ok(RecallTimelineRow {
+                        id: row.get(0)?,
+                        query: row.get(1)?,
+                        recalled_at: row.get(2)?,
+                        memory_count: row.get(3)?,
+                    })
+                },
+            )
             .map_err(|e| {
                 HyphaeError::Database(format!("failed to query recall timeline rows: {e}"))
             })?;
@@ -767,23 +774,27 @@ impl SqliteStore {
                 "SELECT id, recall_event_id, signal_type, signal_value, occurred_at, source
                  FROM outcome_signals
                  WHERE session_id = ?1
-                 ORDER BY occurred_at DESC",
+                 ORDER BY occurred_at DESC
+                 LIMIT ?2",
             )
             .map_err(|e| {
                 HyphaeError::Database(format!("failed to prepare outcome timeline query: {e}"))
             })?;
 
         let rows = stmt
-            .query_map(params![session_id], |row| {
-                Ok(OutcomeTimelineRow {
-                    id: row.get(0)?,
-                    recall_event_id: row.get(1)?,
-                    signal_type: row.get(2)?,
-                    signal_value: row.get(3)?,
-                    occurred_at: row.get(4)?,
-                    source: row.get(5)?,
-                })
-            })
+            .query_map(
+                params![session_id, MAX_TIMELINE_EVENTS_PER_SESSION],
+                |row| {
+                    Ok(OutcomeTimelineRow {
+                        id: row.get(0)?,
+                        recall_event_id: row.get(1)?,
+                        signal_type: row.get(2)?,
+                        signal_value: row.get(3)?,
+                        occurred_at: row.get(4)?,
+                        source: row.get(5)?,
+                    })
+                },
+            )
             .map_err(|e| {
                 HyphaeError::Database(format!("failed to query outcome timeline rows: {e}"))
             })?;
@@ -1753,5 +1764,63 @@ mod tests {
         assert_eq!(timeline.len(), 2);
         assert_eq!(timeline[0].id, project_b_id);
         assert_eq!(timeline[1].id, project_a_id);
+    }
+
+    #[test]
+    fn test_timeline_queries_cap_events_at_max_limit() {
+        let store = test_store();
+        let (session_id, _) = store
+            .session_start("test-project", Some("timeline limit test"))
+            .unwrap();
+
+        // Insert 250 recall events
+        for i in 0..250 {
+            store
+                .log_recall_event(
+                    Some(&session_id),
+                    &format!("query {}", i),
+                    &[format!("mem_{}", i)],
+                    Some("test-project"),
+                )
+                .unwrap();
+        }
+
+        // Insert 300 outcome events
+        for _i in 0..300 {
+            store
+                .log_outcome_signal(
+                    Some(&session_id),
+                    "test_signal",
+                    1,
+                    Some("test.source"),
+                    Some("test-project"),
+                )
+                .unwrap();
+        }
+
+        // Load timeline and verify both recall and outcome events are capped
+        let events = store.load_session_timeline_events(&session_id).unwrap();
+
+        let recall_count = events.iter().filter(|e| e.kind == "recall").count();
+        let outcome_count = events.iter().filter(|e| e.kind == "outcome").count();
+
+        // Each query returns at most MAX_TIMELINE_EVENTS_PER_SESSION events
+        assert!(
+            recall_count <= 200,
+            "recall count {} exceeds limit of 200",
+            recall_count
+        );
+        assert!(
+            outcome_count <= 200,
+            "outcome count {} exceeds limit of 200",
+            outcome_count
+        );
+
+        // Both types contribute to the total
+        assert!(recall_count > 0, "expected some recall events to be loaded");
+        assert!(
+            outcome_count > 0,
+            "expected some outcome events to be loaded"
+        );
     }
 }
