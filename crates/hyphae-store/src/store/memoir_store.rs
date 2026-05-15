@@ -160,7 +160,7 @@ impl MemoirStore for SqliteStore {
     }
 
     fn list_memoirs(&self) -> HyphaeResult<Vec<Memoir>> {
-        let sql = format!("SELECT {MEMOIR_COLS} FROM memoirs ORDER BY name");
+        let sql = format!("SELECT {MEMOIR_COLS} FROM memoirs ORDER BY name LIMIT 1000");
         let mut stmt = self
             .conn
             .prepare_cached(&sql)
@@ -317,7 +317,9 @@ impl MemoirStore for SqliteStore {
     }
 
     fn list_concepts(&self, memoir_id: &MemoirId) -> HyphaeResult<Vec<Concept>> {
-        let sql = format!("SELECT {CONCEPT_COLS} FROM concepts WHERE memoir_id = ?1 ORDER BY name");
+        let sql = format!(
+            "SELECT {CONCEPT_COLS} FROM concepts WHERE memoir_id = ?1 ORDER BY name LIMIT 10000"
+        );
         let mut stmt = self
             .conn
             .prepare_cached(&sql)
@@ -856,8 +858,10 @@ impl MemoirStore for SqliteStore {
         memoir_id: &MemoirId,
         concepts: &[ConceptInput],
     ) -> HyphaeResult<UpsertReport> {
-        // SAFETY: No nested transactions — this method does not call other &self methods
-        // that open transactions. The &self receiver is required by the MemoirStore trait.
+        // SAFETY: No nested transactions — get_concept_by_name, update_concept, add_concept
+        // do not open transactions. If any of these methods are ever modified to call
+        // unchecked_transaction, this outer transaction will panic at runtime. Update the
+        // test `test_upsert_concepts_no_nested_transaction` if that changes.
         let tx = self
             .conn
             .unchecked_transaction()
@@ -915,8 +919,10 @@ impl MemoirStore for SqliteStore {
             .map(|c| (c.name.as_str(), &c.id))
             .collect();
 
-        // SAFETY: No nested transactions — this method does not call other &self methods
-        // that open transactions. The &self receiver is required by the MemoirStore trait.
+        // SAFETY: No nested transactions — add_link does not open transactions. Only raw
+        // conn.query_row and conn.execute are used inside the loop. If add_link is ever
+        // modified to call unchecked_transaction, this outer transaction will panic at runtime.
+        // Update the test `test_upsert_links_no_nested_transaction` if that changes.
         let tx = self
             .conn
             .unchecked_transaction()
@@ -1084,7 +1090,8 @@ impl MemoirStore for SqliteStore {
                 "SELECT cl.id, cl.source_id, cl.target_id, cl.relation, cl.weight, cl.link_count, cl.created_at, cl.valid_from, cl.valid_to \
                  FROM concept_links cl \
                  JOIN concepts c ON cl.source_id = c.id \
-                 WHERE c.memoir_id = ?1 AND (cl.valid_to IS NULL OR cl.valid_to = '')",
+                 WHERE c.memoir_id = ?1 AND (cl.valid_to IS NULL OR cl.valid_to = '') \
+                 LIMIT 50000",
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
         let rows = stmt
@@ -1982,5 +1989,162 @@ mod tests {
             Some("concept_deleted"),
             "invalidation reason should be set"
         );
+    }
+
+    #[test]
+    fn test_upsert_concepts_no_nested_transaction() {
+        // Test that exercises the full upsert_concepts path with nested method calls
+        // to ensure no nested transactions occur. This test will panic under rusqlite's
+        // transaction model if get_concept_by_name, update_concept, or add_concept
+        // ever call unchecked_transaction.
+        let store = test_store();
+        let memoir = Memoir::new("nested_tx_test".into(), "".into());
+        let memoir_id = store.create_memoir(memoir).unwrap();
+
+        // Create initial set of concepts
+        let initial_inputs = vec![
+            ConceptInput {
+                name: "alpha".into(),
+                labels: vec![],
+                description: "initial alpha".into(),
+            },
+            ConceptInput {
+                name: "beta".into(),
+                labels: vec![],
+                description: "initial beta".into(),
+            },
+        ];
+        let report1 = store.upsert_concepts(&memoir_id, &initial_inputs).unwrap();
+        assert_eq!(report1.created, 2);
+
+        // Second upsert: update one, keep one unchanged, add one new
+        // This exercises get_concept_by_name (twice), update_concept (once), and add_concept (once)
+        // all within the outer transaction.
+        let second_inputs = vec![
+            ConceptInput {
+                name: "alpha".into(),
+                labels: vec![Label::new("code", "updated").unwrap()],
+                description: "updated alpha".into(),
+            },
+            ConceptInput {
+                name: "beta".into(),
+                labels: vec![],
+                description: "initial beta".into(),
+            },
+            ConceptInput {
+                name: "gamma".into(),
+                labels: vec![],
+                description: "brand new gamma".into(),
+            },
+        ];
+        let report2 = store.upsert_concepts(&memoir_id, &second_inputs).unwrap();
+
+        // Verify the upsert succeeded (no panic from nested transactions)
+        assert_eq!(report2.created, 1, "gamma should be created");
+        assert_eq!(report2.updated, 1, "alpha should be updated");
+        assert_eq!(report2.unchanged, 1, "beta should be unchanged");
+
+        // Verify all three concepts exist with correct state
+        let all_concepts = store.list_concepts(&memoir_id).unwrap();
+        assert_eq!(all_concepts.len(), 3);
+
+        let alpha = store
+            .get_concept_by_name(&memoir_id, "alpha")
+            .unwrap()
+            .unwrap();
+        assert_eq!(alpha.definition, "updated alpha");
+        assert_eq!(alpha.labels.len(), 1);
+
+        let gamma = store
+            .get_concept_by_name(&memoir_id, "gamma")
+            .unwrap()
+            .unwrap();
+        assert_eq!(gamma.definition, "brand new gamma");
+    }
+
+    #[test]
+    fn test_upsert_links_no_nested_transaction() {
+        // Test that exercises the full upsert_links path with add_link calls
+        // to ensure no nested transactions occur. This test will panic under rusqlite's
+        // transaction model if add_link ever calls unchecked_transaction.
+        let store = test_store();
+        let memoir = Memoir::new("links_nested_tx_test".into(), "".into());
+        let memoir_id = store.create_memoir(memoir).unwrap();
+
+        // Create concepts
+        let concept_inputs = vec![
+            ConceptInput {
+                name: "x".into(),
+                labels: vec![],
+                description: "x".into(),
+            },
+            ConceptInput {
+                name: "y".into(),
+                labels: vec![],
+                description: "y".into(),
+            },
+            ConceptInput {
+                name: "z".into(),
+                labels: vec![],
+                description: "z".into(),
+            },
+        ];
+        store.upsert_concepts(&memoir_id, &concept_inputs).unwrap();
+
+        // First upsert: create two links
+        let first_links = vec![
+            LinkInput {
+                source_name: "x".into(),
+                target_name: "y".into(),
+                relation: "depends_on".into(),
+                weight: 0.5,
+            },
+            LinkInput {
+                source_name: "y".into(),
+                target_name: "z".into(),
+                relation: "part_of".into(),
+                weight: 0.7,
+            },
+        ];
+        let report1 = store.upsert_links(&memoir_id, &first_links).unwrap();
+        assert_eq!(report1.created, 2);
+
+        // Second upsert: update one, keep one unchanged, add one new
+        // This exercises add_link (once) and existing link lookup (twice)
+        // all within the outer transaction.
+        let second_links = vec![
+            LinkInput {
+                source_name: "x".into(),
+                target_name: "y".into(),
+                relation: "depends_on".into(),
+                weight: 0.9, // Changed weight
+            },
+            LinkInput {
+                source_name: "y".into(),
+                target_name: "z".into(),
+                relation: "part_of".into(),
+                weight: 0.7, // Unchanged
+            },
+            LinkInput {
+                source_name: "x".into(),
+                target_name: "z".into(),
+                relation: "related_to".into(),
+                weight: 0.3, // New link
+            },
+        ];
+        let report2 = store.upsert_links(&memoir_id, &second_links).unwrap();
+
+        // Verify the upsert succeeded (no panic from nested transactions)
+        assert_eq!(report2.created, 1, "x->z related_to should be created");
+        assert_eq!(
+            report2.updated, 1,
+            "x->y depends_on weight should be updated"
+        );
+        assert_eq!(report2.unchanged, 1, "y->z part_of should be unchanged");
+
+        // Verify all three links exist with correct state
+        let x = store.get_concept_by_name(&memoir_id, "x").unwrap().unwrap();
+        let links_from_x = store.get_links_from(&x.id).unwrap();
+        assert_eq!(links_from_x.len(), 2, "x should have 2 outgoing links");
     }
 }

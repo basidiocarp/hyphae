@@ -8,6 +8,8 @@ use hyphae_store::SqliteStore;
 use sha2::{Digest, Sha256};
 use spore::editors;
 
+const MAX_INGEST_FILE_BYTES: u64 = 100 * 1024 * 1024; // 100 MiB
+
 struct ParsedMemory {
     name: String,
     description: String,
@@ -15,6 +17,19 @@ struct ParsedMemory {
     body: String,
     source_path: String,
     hash_prefix: String,
+}
+
+impl Default for ParsedMemory {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            description: String::new(),
+            memory_type: String::new(),
+            body: String::new(),
+            source_path: String::new(),
+            hash_prefix: String::new(),
+        }
+    }
 }
 
 fn default_claude_projects_dir() -> Option<PathBuf> {
@@ -147,6 +162,14 @@ fn map_importance(memory_type: &str) -> Importance {
 }
 
 fn parse_memory_file(path: &Path) -> Result<ParsedMemory> {
+    // Check file size before reading
+    let meta =
+        std::fs::metadata(path).with_context(|| format!("failed to stat {}", path.display()))?;
+    if meta.len() > MAX_INGEST_FILE_BYTES {
+        tracing::warn!(path = %path.display(), size = meta.len(), "file too large for ingest, skipping");
+        return Ok(Default::default());
+    }
+
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read {}", path.display()))?;
 

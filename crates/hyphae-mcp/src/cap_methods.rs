@@ -13,6 +13,9 @@ use hyphae_core::{ConsolidationConfig, MemoirStore, MemoryStore, SearchOrder};
 use hyphae_store::SqliteStore;
 use serde_json::{Value, json};
 
+/// Server-side FTS result cap to prevent unbounded memory allocation.
+const MAX_FTS_RESULTS: usize = 500;
+
 pub fn dispatch_cap_method(store: &SqliteStore, method: &str, params: &Value) -> Value {
     match method {
         "cap_stats" => cap_stats(store, params),
@@ -418,7 +421,7 @@ fn cap_memoir_show(store: &SqliteStore, params: &Value) -> Value {
         })?;
 
         let all_concepts = if let Some(ref q) = query {
-            store.search_concepts_fts(&memoir.id, q, i64::MAX as usize)?
+            store.search_concepts_fts(&memoir.id, q, MAX_FTS_RESULTS)?
         } else {
             store.list_concepts(&memoir.id)?
         };
@@ -489,7 +492,7 @@ fn cap_memoir_search(store: &SqliteStore, params: &Value) -> Value {
             let memoir = store.get_memoir_by_name(memoir_name_str)?.ok_or_else(|| {
                 hyphae_core::HyphaeError::NotFound(format!("memoir not found: {memoir_name_str}"))
             })?;
-            let all_results = store.search_concepts_fts(&memoir.id, query, i64::MAX as usize)?;
+            let all_results = store.search_concepts_fts(&memoir.id, query, MAX_FTS_RESULTS)?;
             let total = all_results.len();
             let limited: Vec<_> = all_results.into_iter().skip(offset).take(limit).collect();
             (Some(memoir), total, limited)
@@ -552,7 +555,7 @@ fn cap_memoir_search_all(store: &SqliteStore, params: &Value) -> Value {
         let mut all_hits = Vec::new();
 
         for memoir in &memoirs {
-            let concepts = store.search_concepts_fts(&memoir.id, query, i64::MAX as usize)?;
+            let concepts = store.search_concepts_fts(&memoir.id, query, MAX_FTS_RESULTS)?;
             for concept in concepts {
                 all_hits.push((memoir.clone(), concept));
             }

@@ -612,6 +612,63 @@ fn ensure_fts_tables(conn: &Connection) -> Result<(), HyphaeError> {
     Ok(())
 }
 
+/// Repair the chunks table if it was created with a stale FK reference to `documents_old`.
+///
+/// A prior migration renamed `documents` to `documents_old`, created the new `documents` table,
+/// then dropped `documents_old` — but left the `chunks` table with REFERENCES "documents_old"(id).
+/// With PRAGMA foreign_keys=ON that FK is enforced, causing "no such table: main.documents_old"
+/// on any INSERT OR REPLACE into documents (which cascade-deletes chunks first).
+fn repair_chunks_fk_if_needed(conn: &Connection) -> Result<(), HyphaeError> {
+    let chunks_sql: Option<String> = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='chunks'",
+            [],
+            |row| row.get(0),
+        )
+        .ok();
+
+    let needs_repair = chunks_sql
+        .as_deref()
+        .map(|sql| sql.contains("documents_old"))
+        .unwrap_or(false);
+
+    if !needs_repair {
+        return Ok(());
+    }
+
+    conn.execute_batch(
+        "PRAGMA foreign_keys=OFF;
+         BEGIN;
+         CREATE TABLE chunks_repaired (
+             id TEXT PRIMARY KEY,
+             document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+             chunk_index INTEGER NOT NULL,
+             content TEXT NOT NULL,
+             source_path TEXT NOT NULL,
+             source_type TEXT NOT NULL,
+             language TEXT,
+             heading TEXT,
+             line_start INTEGER,
+             line_end INTEGER,
+             created_at TEXT NOT NULL,
+             chunk_strategy TEXT
+         );
+         INSERT INTO chunks_repaired
+             SELECT id, document_id, chunk_index, content, source_path, source_type,
+                    language, heading, line_start, line_end, created_at, chunk_strategy
+             FROM chunks;
+         DROP TABLE chunks;
+         ALTER TABLE chunks_repaired RENAME TO chunks;
+         CREATE INDEX IF NOT EXISTS idx_chunks_document_id ON chunks(document_id);
+         CREATE INDEX IF NOT EXISTS idx_chunks_source_path ON chunks(source_path);
+         COMMIT;
+         PRAGMA foreign_keys=ON;",
+    )
+    .map_err(|e| HyphaeError::Database(format!("chunks FK repair failed: {e}")))?;
+
+    Ok(())
+}
+
 /// Ensure all newer indexes exist
 fn ensure_newer_indexes(conn: &Connection) -> Result<(), HyphaeError> {
     conn.execute_batch(
@@ -729,6 +786,9 @@ pub fn init_db_with_dims(conn: &mut Connection, embedding_dims: usize) -> Result
     migrations()
         .to_latest(conn)
         .map_err(|e| HyphaeError::Database(format!("schema migration failed: {e}")))?;
+
+    // Repair chunks table if it was created with a stale FK to documents_old
+    repair_chunks_fk_if_needed(conn)?;
 
     // Ensure FTS5 tables and triggers exist
     ensure_fts_tables(conn)?;

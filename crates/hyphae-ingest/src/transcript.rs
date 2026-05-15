@@ -2,11 +2,14 @@
 
 use anyhow::{Context, Result};
 use std::fmt;
+use std::io::BufRead;
 use std::path::Path;
 
 use crate::session::{
     CodexLifecycleState, NormalizedSession, summarize_codex_lifecycle_state, truncate_snippet,
 };
+
+const MAX_INGEST_FILE_BYTES: u64 = 100 * 1024 * 1024; // 100 MiB
 
 /// Runtime that produced a session transcript.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,15 +42,43 @@ pub struct TranscriptSummary {
     pub lifecycle_state: Option<CodexLifecycleState>,
 }
 
+impl Default for TranscriptSummary {
+    fn default() -> Self {
+        Self {
+            runtime: SessionRuntime::ClaudeCode,
+            session_id: String::new(),
+            project: String::new(),
+            message_count: 0,
+            files_modified: Vec::new(),
+            commands_run: Vec::new(),
+            errors: Vec::new(),
+            highlights: Vec::new(),
+            lifecycle_events: Vec::new(),
+            lifecycle_state: None,
+        }
+    }
+}
+
 /// Parse a Claude Code or Codex JSONL transcript file into a summary.
 pub fn parse_transcript(path: &Path) -> Result<TranscriptSummary> {
-    let content = std::fs::read_to_string(path)
-        .with_context(|| format!("Failed to read {}", path.display()))?;
+    // Check file size before reading
+    let meta =
+        std::fs::metadata(path).with_context(|| format!("Failed to stat {}", path.display()))?;
+    if meta.len() > MAX_INGEST_FILE_BYTES {
+        tracing::warn!(path = %path.display(), size = meta.len(), "file too large for ingest, skipping");
+        return Ok(Default::default());
+    }
+
+    let file =
+        std::fs::File::open(path).with_context(|| format!("Failed to open {}", path.display()))?;
+    let reader = std::io::BufReader::new(file);
 
     let mut normalized = NormalizedSession::new(SessionRuntime::ClaudeCode);
     let mut runtime = None;
 
-    for line in content.lines() {
+    for line_result in reader.lines() {
+        let line =
+            line_result.with_context(|| format!("Failed to read line from {}", path.display()))?;
         let line = line.trim();
         if line.is_empty() {
             continue;

@@ -1,7 +1,12 @@
 use std::path::PathBuf;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
 use hyphae_core::{GitContext, detect_git_context_from};
 use spore::logging::{SpanContext, subprocess_span};
+
+const PROJECT_GIT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Detect a project name from the current environment.
 /// Resolution order: git repo basename → cwd basename → None
@@ -13,23 +18,47 @@ pub fn detect_project() -> Option<String> {
     let _subprocess_span =
         subprocess_span("git rev-parse --show-toplevel", &span_context).entered();
 
-    if let Ok(output) = std::process::Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
-    {
-        if output.status.success() {
-            if let Ok(path_str) = std::str::from_utf8(&output.stdout) {
-                let path = PathBuf::from(path_str.trim());
-                if let Some(name) = path.file_name() {
-                    return Some(name.to_string_lossy().into_owned());
+    let (tx, rx) = mpsc::channel();
+
+    let _git_thread = thread::spawn(move || {
+        let result = std::process::Command::new("git")
+            .args(["rev-parse", "--show-toplevel"])
+            .output();
+        let _ = tx.send(result);
+    });
+
+    match rx.recv_timeout(PROJECT_GIT_TIMEOUT) {
+        Ok(Ok(output)) => {
+            if output.status.success() {
+                if let Ok(path_str) = std::str::from_utf8(&output.stdout) {
+                    let path = PathBuf::from(path_str.trim());
+                    if let Some(name) = path.file_name() {
+                        return Some(name.to_string_lossy().into_owned());
+                    }
                 }
             }
+            // Fallback: current directory basename
+            std::env::current_dir()
+                .ok()
+                .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        }
+        Ok(Err(_)) => {
+            // Fallback: current directory basename
+            std::env::current_dir()
+                .ok()
+                .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        }
+        Err(_) => {
+            // Timeout occurred
+            tracing::debug!(
+                "git rev-parse --show-toplevel timed out after {:?}",
+                PROJECT_GIT_TIMEOUT
+            );
+            std::env::current_dir()
+                .ok()
+                .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
         }
     }
-    // Fallback: current directory basename
-    std::env::current_dir()
-        .ok()
-        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
 }
 
 pub fn detect_git_context() -> GitContext {

@@ -171,14 +171,11 @@ fn handle_connection(
                 Ok(v) => v,
                 Err(e) => {
                     tracing::error!(error = %e, "failed to serialize tool result");
-                    // Return a JSON-RPC error response instead of empty success
-                    let err_response = json!({
-                        "jsonrpc": "2.0",
-                        "id": id,
-                        "error": { "code": -32603, "message": "Internal error: result serialization failed" }
-                    });
-                    let _ =
-                        writer.write_all(&serde_json::to_vec(&err_response).unwrap_or_default());
+                    // Return a JSON-RPC error response using write_response to ensure
+                    // the client receives a newline and flush (required for BufReader::read_line)
+                    let err_response =
+                        JsonRpcResponse::err(id, -32603, format!("Internal error: {e}"));
+                    let _ = write_response(&mut writer, &err_response);
                     return;
                 }
             };

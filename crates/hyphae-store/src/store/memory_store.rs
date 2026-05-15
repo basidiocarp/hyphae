@@ -251,7 +251,8 @@ impl SqliteStore {
                AND {ACTIVE_MEMORY_CLAUSE}
                AND (project = ?2 OR ?2 IS NULL)
                AND (worktree = ?3 OR ?3 IS NULL)
-             ORDER BY weight DESC"
+             ORDER BY weight DESC
+             LIMIT ?4"
         );
         let mut stmt = self
             .conn
@@ -259,7 +260,10 @@ impl SqliteStore {
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         let rows = stmt
-            .query_map(params![topic, project, worktree], row_to_memory)
+            .query_map(
+                params![topic, project, worktree, MAX_TOPIC_RESULTS],
+                row_to_memory,
+            )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         let mut results = Vec::new();
