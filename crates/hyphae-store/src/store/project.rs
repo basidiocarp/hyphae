@@ -313,12 +313,19 @@ mod tests {
     #[test]
     fn promote_to_shared_records_origin_link_and_keyword() {
         let store = make_store();
-        let mem = make_memory("topic/provenance", "original content", Some("project_alpha"));
+        let mem = make_memory(
+            "topic/provenance",
+            "original content",
+            Some("project_alpha"),
+        );
         let origin_id = store.store(mem).unwrap();
 
         let shared_id = store.promote_to_shared(&origin_id).unwrap();
 
-        let shared = store.get(&shared_id).unwrap().expect("shared memory should exist");
+        let shared = store
+            .get(&shared_id)
+            .unwrap()
+            .expect("shared memory should exist");
 
         // related_ids should point back to the origin
         assert!(
@@ -328,7 +335,10 @@ mod tests {
 
         // keywords should include provenance tag
         assert!(
-            shared.keywords.iter().any(|k| k == "promoted_from:project_alpha"),
+            shared
+                .keywords
+                .iter()
+                .any(|k| k == "promoted_from:project_alpha"),
             "promoted shared copy should have promoted_from keyword, got: {:?}",
             shared.keywords
         );

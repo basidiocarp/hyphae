@@ -118,7 +118,11 @@ impl SqliteStore {
         project: &str,
         task: Option<&str>,
     ) -> HyphaeResult<(String, String)> {
-        self.session_start_scoped(project, task, None)
+        let _span =
+            tracing::info_span!("hyphae.session_start", project = %project, task = ?task).entered();
+        let result = self.session_start_scoped(project, task, None)?;
+        tracing::info!("session started: {}", result.0);
+        Ok(result)
     }
 
     /// Start a new session scoped to a specific worker or runtime. Returns (session_id, started_at).
@@ -263,6 +267,8 @@ impl SqliteStore {
         files_modified: Option<&str>,
         errors: Option<&str>,
     ) -> HyphaeResult<(String, String, Option<String>, String, i64)> {
+        let _span = tracing::info_span!("hyphae.session_end", session_id = %session_id).entered();
+
         // Fetch the active session
         let row: (String, String, Option<String>) = self
             .conn
@@ -369,6 +375,11 @@ impl SqliteStore {
             HyphaeError::Database(format!("failed to commit session end transaction: {e}"))
         })?;
 
+        tracing::info!(
+            session_id = %session_id,
+            duration_minutes = duration_minutes,
+            "session ended"
+        );
         Ok((project, started_at, task, ended_at, duration_minutes))
     }
 
@@ -393,7 +404,15 @@ impl SqliteStore {
             .query_map(params![limit], load_session)
             .map_err(|e| HyphaeError::Database(format!("failed to query sessions: {e}")))?;
 
-        let sessions: Vec<Session> = rows.filter_map(Result::ok).collect();
+        let sessions: Vec<Session> = rows
+            .filter_map(|r| {
+                r.map_err(|e| {
+                    tracing::warn!(error = %e, "dropping malformed session row");
+                    e
+                })
+                .ok()
+            })
+            .collect();
         Ok(sessions)
     }
 
@@ -466,7 +485,15 @@ impl SqliteStore {
             )
             .map_err(|e| HyphaeError::Database(format!("failed to query sessions: {e}")))?;
 
-        let sessions: Vec<Session> = rows.filter_map(Result::ok).collect();
+        let sessions: Vec<Session> = rows
+            .filter_map(|r| {
+                r.map_err(|e| {
+                    tracing::warn!(error = %e, "dropping malformed session row");
+                    e
+                })
+                .ok()
+            })
+            .collect();
         Ok(sessions)
     }
 
@@ -697,7 +724,15 @@ impl SqliteStore {
             )
             .map_err(|e| HyphaeError::Database(format!("failed to query sessions: {e}")))?;
 
-        Ok(rows.filter_map(Result::ok).collect())
+        Ok(rows
+            .filter_map(|r| {
+                r.map_err(|e| {
+                    tracing::warn!(error = %e, "dropping malformed session row");
+                    e
+                })
+                .ok()
+            })
+            .collect())
     }
 
     fn session_context_legacy(
@@ -722,7 +757,15 @@ impl SqliteStore {
             .query_map(params![project, scope, limit], load_session)
             .map_err(|e| HyphaeError::Database(format!("failed to query sessions: {e}")))?;
 
-        Ok(rows.filter_map(Result::ok).collect())
+        Ok(rows
+            .filter_map(|r| {
+                r.map_err(|e| {
+                    tracing::warn!(error = %e, "dropping malformed session row");
+                    e
+                })
+                .ok()
+            })
+            .collect())
     }
 
     fn load_session_timeline_events(

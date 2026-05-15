@@ -26,6 +26,10 @@ use super::{
 const MEMOIR_STALE_DAYS: i64 = 7;
 const CODE_GRAPH_SCHEMA_VERSION: &str = "1.0";
 
+/// Maximum concepts per query to avoid response bloat and latency explosion.
+/// Balances completeness against response size and network efficiency.
+const MAX_CONCEPTS_PER_QUERY: usize = 100;
+
 pub(crate) fn tool_memoir_create(
     store: &SqliteStore,
     args: &Value,
@@ -1174,7 +1178,7 @@ fn query_symbols(store: &SqliteStore, memoir: &Memoir, args: &Value) -> Result<V
                         value: label_str.to_string(),
                     };
                     let labeled = store
-                        .search_concepts_by_label(&memoir.id, &label, 1000)
+                        .search_concepts_by_label(&memoir.id, &label, MAX_CONCEPTS_PER_QUERY)
                         .map_err(|e| format!("db error: {e}"))?;
 
                     if let Some(ref mut current) = results {

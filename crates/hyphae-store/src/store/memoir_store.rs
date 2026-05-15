@@ -283,8 +283,14 @@ impl MemoirStore for SqliteStore {
             .get_concept(id)?
             .ok_or_else(|| HyphaeError::NotFound(id.to_string()))?;
 
-        let changed = self
+        // SAFETY: No nested transactions — this method does not call other &self methods
+        // that open transactions. The &self receiver is required by the MemoirStore trait.
+        let tx = self
             .conn
+            .unchecked_transaction()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let changed = tx
             .execute("DELETE FROM concepts WHERE id = ?1", params![id.as_ref()])
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
@@ -297,12 +303,16 @@ impl MemoirStore for SqliteStore {
         let memory_id: MemoryId = format!("memoir-{}-{}", concept.memoir_id, concept.name).into();
         let now = Utc::now().to_rfc3339();
 
-        let _ = self.conn.execute(
+        if let Err(e) = tx.execute(
             "UPDATE memories SET invalidated_at = ?1, invalidation_reason = 'concept_deleted'
              WHERE id = ?2",
             params![now, memory_id.as_ref()],
-        );
+        ) {
+            tracing::warn!("failed to invalidate paired memory for deleted concept {id}: {e}");
+        }
 
+        tx.commit()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
         Ok(())
     }
 
@@ -318,7 +328,6 @@ impl MemoirStore for SqliteStore {
         rows.map(|r| r.map_err(|e| HyphaeError::Database(e.to_string())))
             .collect()
     }
-
     fn list_concepts_paginated(
         &self,
         memoir_id: &MemoirId,
@@ -451,7 +460,7 @@ impl MemoirStore for SqliteStore {
 
         let mut stmt = self
             .conn
-            .prepare(&sql)
+            .prepare_cached(&sql)
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         let rows = stmt
@@ -618,8 +627,14 @@ impl MemoirStore for SqliteStore {
 
     fn invalidate_link(&self, id: &LinkId) -> HyphaeResult<()> {
         let now = Utc::now().to_rfc3339();
-        let changed = self
+        // SAFETY: No nested transactions — this method does not call other &self methods
+        // that open transactions. The &self receiver is required by the MemoirStore trait.
+        let tx = self
             .conn
+            .unchecked_transaction()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let changed = tx
             .execute(
                 "UPDATE concept_links SET valid_to = ?1 WHERE id = ?2 AND (valid_to IS NULL OR valid_to = '')",
                 params![now, id.as_ref()],
@@ -633,14 +648,18 @@ impl MemoirStore for SqliteStore {
         // Also invalidate the reverse-direction edge if it exists. Invalidation is
         // symmetric because get_neighbors walks both directions, so a stale reverse
         // edge would still surface the concept after the forward edge is invalidated.
-        let _ = self.conn.execute(
+        tx.execute(
             "UPDATE concept_links SET valid_to = ?1
              WHERE source_id = (SELECT target_id FROM concept_links WHERE id = ?2)
                AND target_id = (SELECT source_id FROM concept_links WHERE id = ?2)
                AND relation  = (SELECT relation  FROM concept_links WHERE id = ?2)
                AND (valid_to IS NULL OR valid_to = '')",
             params![now, id.as_ref()],
-        );
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        tx.commit()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
         Ok(())
     }
 
@@ -1169,6 +1188,29 @@ impl MemoirStore for SqliteStore {
             .collect::<Vec<_>>();
 
         Ok(versions)
+    }
+}
+
+/// Additional methods on SqliteStore not part of the MemoirStore trait
+impl SqliteStore {
+    /// List concepts with an optional limit to avoid loading multi-thousand-concept memoirs.
+    pub fn list_concepts_capped(
+        &self,
+        memoir_id: &MemoirId,
+        limit: usize,
+    ) -> HyphaeResult<Vec<Concept>> {
+        let sql = format!(
+            "SELECT {CONCEPT_COLS} FROM concepts WHERE memoir_id = ?1 ORDER BY name LIMIT ?2"
+        );
+        let mut stmt = self
+            .conn
+            .prepare_cached(&sql)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![memoir_id.as_ref(), limit as i64], row_to_concept)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        rows.map(|r| r.map_err(|e| HyphaeError::Database(e.to_string())))
+            .collect()
     }
 }
 

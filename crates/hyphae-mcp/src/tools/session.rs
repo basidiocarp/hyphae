@@ -118,7 +118,7 @@ fn build_session_context(store: &SqliteStore, session_id: &str, project: &str) -
     // Lessons from past corrections and resolved errors for this project.
     let mut lesson_memories = Vec::new();
     for topic in ["corrections", "errors/resolved", "tests/resolved"] {
-        if let Ok(memories) = store.get_by_topic(topic, Some(project)) {
+        if let Ok(memories) = store.get_by_topic_limited(topic, Some(project), Some(10)) {
             lesson_memories.extend(memories);
         }
     }
@@ -174,7 +174,7 @@ fn build_working_memory(
     // Populate key facts and decisions from topic-scoped lookup.
     // Decision memories are stored under "decisions/{project}" by convention.
     let decisions_topic = format!("decisions/{project}");
-    let key_facts = match store.get_by_topic(&decisions_topic, Some(project)) {
+    let key_facts = match store.get_by_topic_limited(&decisions_topic, Some(project), Some(10)) {
         Ok(memories) if !memories.is_empty() => memories
             .iter()
             .take(10)

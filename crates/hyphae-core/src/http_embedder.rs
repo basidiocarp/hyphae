@@ -2,6 +2,7 @@
 // HTTP Embedder — calls OpenAI-compatible or Ollama embedding APIs
 // ─────────────────────────────────────────────────────────────────────────────
 
+use std::io::Read;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -98,19 +99,46 @@ impl HttpEmbedder {
     }
 
     /// Send a POST request with JSON body and parse the response.
+    /// Timeouts are enforced to prevent blocking the MCP handler thread.
     fn post_json(&self, body: &Value) -> HyphaeResult<Value> {
         let endpoint = self.endpoint();
-        let resp = ureq::post(&endpoint)
-            .header("Content-Type", "application/json")
-            .send_json(body)
-            .map_err(|e| {
-                HyphaeError::Embedding(format!("HTTP request to {endpoint} failed: {e}"))
-            })?;
+        let body_clone = body.clone();
 
-        let json: Value = serde_json::from_reader(resp.into_body().as_reader())
-            .map_err(|e| HyphaeError::Embedding(format!("failed to parse response JSON: {e}")))?;
+        let (tx, rx) = std::sync::mpsc::channel::<Result<Value, String>>();
+        let endpoint_clone = endpoint.clone();
 
-        Ok(json)
+        std::thread::spawn(move || {
+            let result = (|| -> Result<Value, String> {
+                let resp = ureq::post(&endpoint_clone)
+                    .header("Content-Type", "application/json")
+                    .send_json(&body_clone)
+                    .map_err(|e| format!("HTTP request failed: {e}"))?;
+
+                let mut buf = String::new();
+                resp.into_body()
+                    .as_reader()
+                    .read_to_string(&mut buf)
+                    .map_err(|e| format!("failed to read response: {e}"))?;
+
+                serde_json::from_str::<Value>(&buf)
+                    .map_err(|e| format!("failed to parse response JSON: {e}"))
+            })();
+            let _ = tx.send(result);
+        });
+
+        match rx.recv_timeout(std::time::Duration::from_secs(30)) {
+            Ok(Ok(response_value)) => Ok(response_value),
+            Ok(Err(e)) => {
+                tracing::warn!(error = %e, "embedding request failed");
+                Err(HyphaeError::Embedding(e))
+            }
+            Err(_) => {
+                tracing::warn!("embedding request timed out after 30 seconds");
+                Err(HyphaeError::Embedding(
+                    "HTTP request timed out after 30 seconds".into(),
+                ))
+            }
+        }
     }
 
     /// Parse a JSON array of numbers into `Vec<f32>`.

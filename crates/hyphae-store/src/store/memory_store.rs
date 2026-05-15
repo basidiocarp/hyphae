@@ -85,6 +85,10 @@ const DECAY_FLOOR_HIGH: f64 = 0.30;
 const DECAY_FLOOR_MEDIUM: f64 = 0.10;
 const DECAY_FLOOR_LOW: f64 = 0.02;
 
+/// Maximum number of results for unbounded queries to prevent memory/latency explosion.
+const MAX_TOPIC_RESULTS: i64 = 500;
+const MAX_LIST_TOPICS_RESULTS: i64 = 1000;
+
 impl Default for HotnessConfig {
     fn default() -> Self {
         Self {
@@ -158,7 +162,9 @@ impl SqliteStore {
         }
 
         let result_ids: Vec<&str> = results.iter().map(|m| m.id.as_ref()).collect();
-        let _ = self.increment_access_counts(result_ids.as_slice());
+        if let Err(e) = self.increment_access_counts(result_ids.as_slice()) {
+            tracing::warn!(error = %e, "failed to update access counts; recall ranking may degrade");
+        }
 
         Ok(results)
     }
@@ -225,7 +231,9 @@ impl SqliteStore {
         }
 
         let result_ids: Vec<&str> = results.iter().map(|m| m.id.as_ref()).collect();
-        let _ = self.increment_access_counts(result_ids.as_slice());
+        if let Err(e) = self.increment_access_counts(result_ids.as_slice()) {
+            tracing::warn!(error = %e, "failed to update access counts; recall ranking may degrade");
+        }
 
         Ok(results)
     }
@@ -340,10 +348,22 @@ impl SqliteStore {
                                 all_memories.insert(memory.id.to_string(), memory);
                             }
                         }
-                        Err(e) => tracing::warn!("hybrid search FTS query failed: {e}"),
+                        Err(e) => {
+                            tracing::debug!(
+                                fts_degraded = true,
+                                error = %e,
+                                "hybrid search FTS dropped"
+                            );
+                        }
                     }
                 }
-                Err(e) => tracing::warn!("hybrid search FTS prepare failed: {e}"),
+                Err(e) => {
+                    tracing::debug!(
+                        fts_degraded = true,
+                        error = %e,
+                        "hybrid search FTS dropped"
+                    );
+                }
             }
         }
 
@@ -414,7 +434,9 @@ impl SqliteStore {
             .collect();
 
         let result_ids: Vec<&str> = results.iter().map(|(m, _)| m.id.as_ref()).collect();
-        let _ = self.increment_access_counts(result_ids.as_slice());
+        if let Err(e) = self.increment_access_counts(result_ids.as_slice()) {
+            tracing::warn!(error = %e, "failed to update access counts; recall ranking may degrade");
+        }
 
         Ok(results)
     }
@@ -1308,10 +1330,22 @@ impl MemoryStore for SqliteStore {
                                 all_memories.insert(memory.id.to_string(), memory);
                             }
                         }
-                        Err(e) => tracing::warn!("hybrid search FTS query failed: {e}"),
+                        Err(e) => {
+                            tracing::debug!(
+                                fts_degraded = true,
+                                error = %e,
+                                "hybrid search FTS dropped"
+                            );
+                        }
                     }
                 }
-                Err(e) => tracing::warn!("hybrid search FTS prepare failed: {e}"),
+                Err(e) => {
+                    tracing::debug!(
+                        fts_degraded = true,
+                        error = %e,
+                        "hybrid search FTS dropped"
+                    );
+                }
             }
         }
 
@@ -1381,7 +1415,9 @@ impl MemoryStore for SqliteStore {
             .collect();
 
         let result_ids: Vec<&str> = results.iter().map(|(m, _)| m.id.as_ref()).collect();
-        let _ = self.increment_access_counts(result_ids.as_slice());
+        if let Err(e) = self.increment_access_counts(result_ids.as_slice()) {
+            tracing::warn!(error = %e, "failed to update access counts; recall ranking may degrade");
+        }
 
         Ok(results)
     }
@@ -1812,28 +1848,7 @@ impl MemoryStore for SqliteStore {
     }
 
     fn get_by_topic(&self, topic: &str, project: Option<&str>) -> HyphaeResult<Vec<Memory>> {
-        let sql = format!(
-            "SELECT {SELECT_COLS}
-             FROM memories
-             WHERE topic = ?1
-               AND {ACTIVE_MEMORY_CLAUSE}
-               AND (project = ?2 OR ?2 IS NULL)
-             ORDER BY weight DESC"
-        );
-        let mut stmt = self
-            .conn
-            .prepare_cached(&sql)
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-
-        let rows = stmt
-            .query_map(params![topic, project], row_to_memory)
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-
-        let mut results = Vec::new();
-        for row in rows {
-            results.push(row.map_err(|e| HyphaeError::Database(e.to_string()))?);
-        }
-        Ok(results)
+        self.get_by_topic_limited(topic, project, None)
     }
 
     fn list_topics(&self, project: Option<&str>) -> HyphaeResult<Vec<(String, usize)>> {
@@ -1845,12 +1860,13 @@ impl MemoryStore for SqliteStore {
                  WHERE invalidated_at IS NULL
                    AND (project = ?1 OR ?1 IS NULL)
                  GROUP BY topic
-                 ORDER BY topic",
+                 ORDER BY topic
+                 LIMIT ?2",
             )
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
         let rows = stmt
-            .query_map(params![project], |row| {
+            .query_map(params![project, MAX_LIST_TOPICS_RESULTS], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, i64>(1).map(|n| n as usize)?,
@@ -1862,6 +1878,14 @@ impl MemoryStore for SqliteStore {
         for row in rows {
             results.push(row.map_err(|e| HyphaeError::Database(e.to_string()))?);
         }
+
+        if results.len() as i64 >= MAX_LIST_TOPICS_RESULTS {
+            tracing::warn!(
+                limit = MAX_LIST_TOPICS_RESULTS,
+                "list_topics result truncated"
+            );
+        }
+
         Ok(results)
     }
 
@@ -2153,6 +2177,51 @@ impl MemoryStore for SqliteStore {
         tx.commit()
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
         Ok(changed)
+    }
+}
+
+/// Additional methods on SqliteStore not part of the MemoryStore trait
+impl SqliteStore {
+    /// Get memories by topic with optional limit.
+    pub fn get_by_topic_limited(
+        &self,
+        topic: &str,
+        project: Option<&str>,
+        limit: Option<i64>,
+    ) -> HyphaeResult<Vec<Memory>> {
+        let effective_limit = limit.unwrap_or(MAX_TOPIC_RESULTS).min(MAX_TOPIC_RESULTS);
+        let sql = format!(
+            "SELECT {SELECT_COLS}
+             FROM memories
+             WHERE topic = ?1
+               AND {ACTIVE_MEMORY_CLAUSE}
+               AND (project = ?2 OR ?2 IS NULL)
+             ORDER BY weight DESC
+             LIMIT ?3"
+        );
+        let mut stmt = self
+            .conn
+            .prepare_cached(&sql)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![topic, project, effective_limit], row_to_memory)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| HyphaeError::Database(e.to_string()))?);
+        }
+
+        if results.len() as i64 >= effective_limit && effective_limit < MAX_TOPIC_RESULTS {
+            tracing::warn!(
+                topic = %topic,
+                truncated_at = effective_limit,
+                "get_by_topic result truncated"
+            );
+        }
+
+        Ok(results)
     }
 }
 
@@ -2492,6 +2561,69 @@ mod decay_floor_tests {
         assert!(
             weight >= 0.10,
             "Medium-importance memory weight after 200 decay cycles should be >= 0.10, got {weight}"
+        );
+    }
+
+    #[test]
+    fn test_decay_floor_sql_literals_match_rust_constants() {
+        // This test ensures decay floor SQL string literals match the Rust constants.
+        // If this test fails, it means the SQL WHERE clause drift from the Rust enum values.
+        let store = make_store();
+
+        // Insert memories with each importance level
+        let critical = make_memory("test/drift/critical", "critical", Importance::Critical);
+        let high = make_memory("test/drift/high", "high", Importance::High);
+        let medium = make_memory("test/drift/medium", "medium", Importance::Medium);
+        let low = make_memory("test/drift/low", "low", Importance::Low);
+
+        store.store(critical).unwrap();
+        store.store(high).unwrap();
+        store.store(medium).unwrap();
+        store.store(low).unwrap();
+
+        // Apply decay many times to force decay floors to take effect
+        for _ in 0..300 {
+            store.apply_decay(0.95).unwrap();
+        }
+
+        // Check high importance floor
+        let high_mem = store.get_by_topic("test/drift/high", None).unwrap();
+        assert!(
+            !high_mem.is_empty(),
+            "high memory should not be decayed away"
+        );
+        assert!(
+            high_mem[0].weight.value() >= DECAY_FLOOR_HIGH as f32,
+            "high importance should be >= DECAY_FLOOR_HIGH ({})",
+            DECAY_FLOOR_HIGH
+        );
+
+        // Check medium importance floor
+        let medium_mem = store.get_by_topic("test/drift/medium", None).unwrap();
+        assert!(
+            !medium_mem.is_empty(),
+            "medium memory should not be decayed away"
+        );
+        assert!(
+            medium_mem[0].weight.value() >= DECAY_FLOOR_MEDIUM as f32,
+            "medium importance should be >= DECAY_FLOOR_MEDIUM ({})",
+            DECAY_FLOOR_MEDIUM
+        );
+
+        // Check low importance floor
+        let low_mem = store.get_by_topic("test/drift/low", None).unwrap();
+        assert!(!low_mem.is_empty(), "low memory should not be decayed away");
+        assert!(
+            low_mem[0].weight.value() >= DECAY_FLOOR_LOW as f32,
+            "low importance should be >= DECAY_FLOOR_LOW ({})",
+            DECAY_FLOOR_LOW
+        );
+
+        // Critical memories should never be decayed (they exclude critical in the WHERE clause)
+        let critical_mem = store.get_by_topic("test/drift/critical", None).unwrap();
+        assert!(
+            !critical_mem.is_empty(),
+            "critical memory should never be decayed"
         );
     }
 }

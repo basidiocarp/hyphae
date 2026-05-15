@@ -96,6 +96,7 @@ const MAX_CODE_TERMS: usize = 8;
 const MAX_CODE_CONTEXT_CONCEPTS: usize = 5;
 const MIN_STRUCTURAL_FRAGMENT_LEN: usize = 3;
 const WRAPPER_WORDS: &[&str] = &["service", "manager", "controller", "handler", "impl"];
+const MAX_CONCEPTS_FOR_EXPANSION: usize = 4 * MAX_CODE_CONTEXT_CONCEPTS;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 enum StructuralMatchKind {
@@ -393,7 +394,10 @@ pub fn expand_with_code_context(store: &SqliteStore, query: &str, project: &str)
     let memoir = match store.get_memoir_by_name(&memoir_name) {
         Ok(Some(m)) => m,
         Ok(None) => return Vec::new(),
-        Err(_) => return Vec::new(),
+        Err(e) => {
+            tracing::warn!("expand_with_code_context: memoir read failed: {e}");
+            return Vec::new();
+        }
     };
 
     let terms = extract_code_terms(query);
@@ -421,7 +425,10 @@ pub fn expand_with_code_context(store: &SqliteStore, query: &str, project: &str)
         }
         let matches = match store.search_concepts_fts(&memoir.id, term, MAX_CODE_CONTEXT_CONCEPTS) {
             Ok(c) => c,
-            Err(_) => break,
+            Err(e) => {
+                tracing::warn!("expand_with_code_context: search_concepts_fts failed: {e}");
+                break;
+            }
         };
         for concept in matches {
             if concepts.len() >= MAX_CODE_CONTEXT_CONCEPTS {
@@ -436,10 +443,11 @@ pub fn expand_with_code_context(store: &SqliteStore, query: &str, project: &str)
     if concepts.len() < MAX_CODE_CONTEXT_CONCEPTS {
         let fallback_fragments = structural_fallback_fragments(&terms);
         if !fallback_fragments.is_empty() {
-            let memoir_concepts = match store.list_concepts(&memoir.id) {
-                Ok(concepts) => concepts,
-                Err(_) => return concepts.into_iter().map(|c| c.name).collect(),
-            };
+            let memoir_concepts =
+                match store.list_concepts_capped(&memoir.id, MAX_CONCEPTS_FOR_EXPANSION) {
+                    Ok(concepts) => concepts,
+                    Err(_) => return concepts.into_iter().map(|c| c.name).collect(),
+                };
 
             let mut ranked_matches: Vec<(
                 StructuralMatchKind,

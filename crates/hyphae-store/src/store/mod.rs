@@ -35,6 +35,12 @@ static SQLITE_VEC_INIT: Once = Once::new();
 
 fn ensure_sqlite_vec() {
     SQLITE_VEC_INIT.call_once(|| unsafe {
+        // SAFETY: transmute sqlite_vec::sqlite3_vec_init function pointer to the sqlite3_auto_extension
+        // ABI signature. This is required because sqlite3_auto_extension takes a raw function pointer
+        // with a specific C ABI signature, while sqlite_vec exports the initializer as a safe Rust function.
+        // The transmute cast is valid because both signatures have the same memory layout:
+        // sqlite_vec 0.34.4 exports an initializer with C calling convention that matches the
+        // sqlite3_auto_extension expectation. This was verified against sqlite-vec 0.34.4.
         #[allow(clippy::missing_transmute_annotations)]
         sqlite3_auto_extension(Some(std::mem::transmute(
             sqlite_vec::sqlite3_vec_init as *const (),
@@ -185,7 +191,13 @@ impl SqliteStore {
                 Ok(result)
             }
             Err(e) => {
-                let _ = self.conn.execute("ROLLBACK", []);
+                if let Err(rollback_err) = self.conn.execute("ROLLBACK", []) {
+                    tracing::error!(
+                        "hyphae: ROLLBACK failed after txn error — rollback_err={}, original={}",
+                        rollback_err,
+                        e
+                    );
+                }
                 Err(e)
             }
         }

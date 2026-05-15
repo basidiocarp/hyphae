@@ -67,18 +67,18 @@ fn initial_context(store: &SqliteStore, project: Option<&str>) -> String {
     // Get top memories for the project context topic
     let project_topic = format!("context/{proj}");
     let recent_memories = store
-        .get_by_topic(&project_topic, project)
+        .get_by_topic_limited(&project_topic, project, Some(5))
         .unwrap_or_default();
 
     // Get decision memories
     let decisions_topic = format!("decisions/{proj}");
     let decisions = store
-        .get_by_topic(&decisions_topic, project)
+        .get_by_topic_limited(&decisions_topic, project, Some(3))
         .unwrap_or_default();
 
     // Get resolved errors
     let resolved_errors = store
-        .get_by_topic("errors/resolved", project)
+        .get_by_topic_limited("errors/resolved", project, Some(3))
         .unwrap_or_default();
 
     if session_summaries.is_empty()
@@ -534,14 +534,13 @@ fn handle_tools_call(id: Value, ctx: ToolCallCtx<'_>) -> JsonRpcResponse {
     // ─────────────────────────────────────────────────────────────────────────────
     if tool_name == "hyphae_memory_store" || tool_name == "hyphae_memory_recall" {
         if let Some(topic) = args.get("topic").and_then(|v| v.as_str()) {
-            if let Ok(memories) = <SqliteStore as MemoryStore>::get_by_topic(store, topic, project)
-            {
-                if let Some(threshold) = consolidation.threshold_for_topic(topic) {
-                    if memories.len() >= threshold {
+            if let Some(threshold) = consolidation.threshold_for_topic(topic) {
+                // Use COUNT query instead of loading all rows to check threshold
+                if let Ok(count) = store.count_by_topic(topic, project) {
+                    if count >= threshold {
                         result = result.with_hint(&format!(
-                            "\n[Hyphae: Topic \"{topic}\" has {} memories. Consider running \
-                             hyphae_memory_consolidate(topic: \"{topic}\") to merge redundant entries.]",
-                            memories.len()
+                            "\n[Hyphae: Topic \"{topic}\" has {count} memories. Consider running \
+                             hyphae_memory_consolidate(topic: \"{topic}\") to merge redundant entries.]"
                         ));
                     }
                 }

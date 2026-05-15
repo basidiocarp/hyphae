@@ -81,10 +81,17 @@ pub fn start_events_server(port: u16) -> anyhow::Result<SocketAddr> {
     let (addr_tx, addr_rx) = std::sync::mpsc::channel::<anyhow::Result<SocketAddr>>();
 
     std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_multi_thread()
+        let rt = match tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
-            .expect("failed to build tokio runtime");
+        {
+            Ok(rt) => rt,
+            Err(e) => {
+                tracing::error!("memoir_events: tokio runtime build failed: {e}");
+                let _ = addr_tx.send(Err(anyhow::anyhow!("failed to build tokio runtime: {e}")));
+                return;
+            }
+        };
 
         rt.block_on(async move {
             let result = async {

@@ -287,7 +287,8 @@ pub(crate) fn tool_health_with_rules(
                 }
                 total_stale += health.stale_count;
             }
-            Err(_) => {
+            Err(e) => {
+                tracing::warn!(topic = %topic, error = %e, "topic_health query failed");
                 output.push_str(&format!("  {topic}: (error reading)\n"));
             }
         }

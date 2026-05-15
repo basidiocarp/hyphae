@@ -30,13 +30,23 @@ fn git_output<const N: usize>(args: [&str; N], cwd: Option<&Path>) -> Option<Str
         command.current_dir(dir);
     }
 
-    let output = command.output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
+    let child = command.spawn().ok()?;
+    let deadline = std::time::Duration::from_secs(5);
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
 
-    let value = String::from_utf8(output.stdout).ok()?;
-    Some(value.trim().to_string())
+    match rx.recv_timeout(deadline) {
+        Ok(Ok(out)) if out.status.success() => {
+            let value = String::from_utf8(out.stdout).ok()?;
+            Some(value.trim().to_string())
+        }
+        _ => {
+            tracing::debug!("hyphae: git context detection timed out or failed");
+            None
+        }
+    }
 }
 
 #[cfg(test)]
