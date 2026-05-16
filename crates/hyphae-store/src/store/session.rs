@@ -961,6 +961,26 @@ impl SqliteStore {
             .map_err(|e| HyphaeError::Database(format!("failed to import session record: {e}")))?;
         Ok(())
     }
+
+    /// Mark sessions that have been active longer than `stale_after_hours` as `'abandoned'`.
+    ///
+    /// Called on store initialization to prevent sessions that were never ended (e.g., due to a
+    /// crash or `SIGKILL`) from accumulating indefinitely and being returned as the current active
+    /// session on future startups.
+    pub fn cleanup_stale_sessions(&self, stale_after_hours: i64) -> HyphaeResult<usize> {
+        let now = Utc::now();
+        let cutoff = (now - chrono::Duration::hours(stale_after_hours)).to_rfc3339();
+        let n = self
+            .conn
+            .execute(
+                "UPDATE sessions
+                 SET status = 'abandoned', ended_at = ?1
+                 WHERE status = 'active' AND started_at < ?2",
+                params![now.to_rfc3339(), cutoff],
+            )
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        Ok(n)
+    }
 }
 
 fn signals_to_query(signals: &Value) -> Option<String> {
@@ -1958,5 +1978,50 @@ mod tests {
             "expected at most 3 timeline records but got {}",
             timeline.len()
         );
+    }
+
+    #[test]
+    fn test_cleanup_stale_sessions_abandons_old_but_not_recent() {
+        let store = test_store();
+
+        // Use distinct project names so session_start doesn't deduplicate them.
+        let (old_id, _) = store.session_start("proj-old", Some("old work")).unwrap();
+        let (recent_id, _) = store.session_start("proj-new", Some("recent work")).unwrap();
+
+        // Backdate the old session so it falls before the 2-hour cutoff.
+        let old_started = (Utc::now() - chrono::Duration::hours(3)).to_rfc3339();
+        store
+            .conn
+            .execute(
+                "UPDATE sessions SET started_at = ?1 WHERE id = ?2",
+                rusqlite::params![old_started, old_id],
+            )
+            .expect("backdating old session");
+
+        // Cleanup sessions older than 2 hours.
+        let abandoned = store.cleanup_stale_sessions(2).unwrap();
+        assert_eq!(abandoned, 1, "exactly one session should be abandoned");
+
+        // Old session should now be 'abandoned'.
+        let old_status: String = store
+            .conn
+            .query_row(
+                "SELECT status FROM sessions WHERE id = ?1",
+                rusqlite::params![old_id],
+                |row| row.get(0),
+            )
+            .expect("old session status");
+        assert_eq!(old_status, "abandoned");
+
+        // Recent session should remain 'active'.
+        let recent_status: String = store
+            .conn
+            .query_row(
+                "SELECT status FROM sessions WHERE id = ?1",
+                rusqlite::params![recent_id],
+                |row| row.get(0),
+            )
+            .expect("recent session status");
+        assert_eq!(recent_status, "active");
     }
 }

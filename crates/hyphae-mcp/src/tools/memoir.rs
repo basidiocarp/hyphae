@@ -146,9 +146,11 @@ pub(crate) fn tool_memoir_show(
     }
 
     if has_more {
+        // Use saturating_sub to prevent usize underflow when stats are slightly stale
+        // relative to the paginated query (two separate queries, no enclosing transaction).
+        let remaining = stats.total_concepts.saturating_sub((page + 1) * 50);
         output.push_str(&format!(
-            "\n... and {} more concepts — call memoir_show with page={} to see more\n",
-            stats.total_concepts - ((page + 1) * 50),
+            "\n... and {remaining} more concepts — call memoir_show with page={} to see more\n",
             page + 1
         ));
     }

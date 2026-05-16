@@ -25,7 +25,7 @@ use std::path::Path;
 use std::sync::Once;
 
 use chrono::{DateTime, Utc};
-use rusqlite::{Connection, OptionalExtension, ffi::sqlite3_auto_extension, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, ffi::sqlite3_auto_extension, params};
 
 use hyphae_core::{HyphaeError, HyphaeResult, MemoryStore};
 
@@ -71,46 +71,58 @@ impl SqliteStore {
         )
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
         init_db_with_dims(&mut conn, embedding_dims)?;
-        Ok(Self { conn })
+        let store = Self { conn };
+        // Expire sessions that were never ended (crash recovery). Ignoring the error here
+        // is intentional: startup cleanup is best-effort and should not block store init.
+        if let Err(e) = store.cleanup_stale_sessions(24) {
+            tracing::warn!("hyphae: stale session cleanup failed at startup: {e}");
+        }
+        Ok(store)
     }
 
     /// Apply decay if more than 24 hours since last decay.
     /// Called automatically on recall to avoid manual `hyphae decay` cron.
+    ///
+    /// The check-read-decide-update sequence is wrapped in a single `BEGIN IMMEDIATE`
+    /// transaction so that concurrent callers cannot both observe `should_decay = true`
+    /// and both apply decay in the same 24-hour window.
     pub fn maybe_auto_decay(&self) -> HyphaeResult<()> {
-        let now = Utc::now();
+        self.with_transaction(|| {
+            let now = Utc::now();
 
-        let last: Option<String> = self
-            .conn
-            .query_row(
-                "SELECT value FROM hyphae_metadata WHERE key = 'last_decay_at'",
-                [],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-
-        let should_decay = match last {
-            Some(ts) => {
-                let last_dt = DateTime::parse_from_rfc3339(&ts)
-                    .map(|d| d.with_timezone(&Utc))
-                    .unwrap_or_else(|_| now - chrono::Duration::hours(25));
-                (now - last_dt).num_hours() >= 24
-            }
-            None => true,
-        };
-
-        if should_decay {
-            self.apply_decay(0.95)?;
-            self.conn
-                .execute(
-                    "INSERT INTO hyphae_metadata (key, value) VALUES ('last_decay_at', ?1)
-                     ON CONFLICT(key) DO UPDATE SET value = ?1",
-                    params![now.to_rfc3339()],
+            let last: Option<String> = self
+                .conn
+                .query_row(
+                    "SELECT value FROM hyphae_metadata WHERE key = 'last_decay_at'",
+                    [],
+                    |row| row.get(0),
                 )
+                .optional()
                 .map_err(|e| HyphaeError::Database(e.to_string()))?;
-        }
 
-        Ok(())
+            let should_decay = match last {
+                Some(ts) => {
+                    let last_dt = DateTime::parse_from_rfc3339(&ts)
+                        .map(|d| d.with_timezone(&Utc))
+                        .unwrap_or_else(|_| now - chrono::Duration::hours(25));
+                    (now - last_dt).num_hours() >= 24
+                }
+                None => true,
+            };
+
+            if should_decay {
+                self.apply_decay(0.95)?;
+                self.conn
+                    .execute(
+                        "INSERT INTO hyphae_metadata (key, value) VALUES ('last_decay_at', ?1)
+                         ON CONFLICT(key) DO UPDATE SET value = ?1",
+                        params![now.to_rfc3339()],
+                    )
+                    .map_err(|e| HyphaeError::Database(e.to_string()))?;
+            }
+
+            Ok(())
+        })
     }
 
     /// Count expired ephemeral memories without deleting them.
@@ -175,29 +187,30 @@ impl SqliteStore {
 
     /// Begin a transaction for import or bulk operations. Call with a closure that performs the work.
     /// On error, automatically rolls back. On success, commits. Returns the result of the closure.
+    ///
+    /// Uses rusqlite's `Transaction` type. On unwind panics (tests), Drop issues ROLLBACK. In
+    /// release builds (`panic = "abort"`) the process terminates before Drop runs; WAL-mode SQLite
+    /// automatically rolls back the uncommitted transaction when the database is next opened.
     pub fn with_transaction<F, T>(&self, f: F) -> HyphaeResult<T>
     where
         F: FnOnce() -> HyphaeResult<T>,
     {
-        self.conn
-            .execute("BEGIN IMMEDIATE", [])
-            .map_err(|e| HyphaeError::Database(format!("failed to begin transaction: {e}")))?;
+        debug_assert!(
+            self.conn.is_autocommit(),
+            "with_transaction called while already inside a transaction — nesting is not supported"
+        );
+
+        let tx = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)
+            .map_err(|e| HyphaeError::Database(format!("begin transaction: {e}")))?;
 
         match f() {
             Ok(result) => {
-                self.conn.execute("COMMIT", []).map_err(|e| {
-                    HyphaeError::Database(format!("failed to commit transaction: {e}"))
-                })?;
+                tx.commit()
+                    .map_err(|e| HyphaeError::Database(format!("commit transaction: {e}")))?;
                 Ok(result)
             }
             Err(e) => {
-                if let Err(rollback_err) = self.conn.execute("ROLLBACK", []) {
-                    tracing::error!(
-                        "hyphae: ROLLBACK failed after txn error — rollback_err={}, original={}",
-                        rollback_err,
-                        e
-                    );
-                }
+                // Drop issues ROLLBACK in unwind mode; WAL recovery handles abort mode.
                 Err(e)
             }
         }

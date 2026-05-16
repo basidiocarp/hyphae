@@ -849,6 +849,27 @@ pub fn init_db_with_dims(conn: &mut Connection, embedding_dims: usize) -> Result
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
     }
 
+    // Startup recovery guard: if vec_memories was lost (e.g. a kill between DROP and CREATE
+    // during a dimension-change migration), recreate it using the stored embedding_dims so
+    // that vector search is not permanently broken after an interrupted migration.
+    let vec_memories_exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='vec_memories'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+    if !vec_memories_exists {
+        conn.execute_batch(&format!(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS vec_memories USING vec0(
+                memory_id TEXT PRIMARY KEY,
+                embedding float[{embedding_dims}] distance_metric=cosine
+            )"
+        ))
+        .map_err(|e| HyphaeError::Database(e.to_string()))?;
+    }
+
     let vec_chunks_exists: bool = conn
         .query_row(
             "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='vec_chunks'",

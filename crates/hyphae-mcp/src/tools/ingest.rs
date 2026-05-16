@@ -115,11 +115,19 @@ pub(crate) fn tool_ingest_file(
             );
         }
 
+        // NOTE: store_document and store_chunks cannot be wrapped in a single outer
+        // with_transaction because store_chunks opens its own internal transaction.
+        // True atomicity for the new-document path requires an ingest_new method on
+        // SqliteStore (mirroring ingest_atomic) — tracked as follow-up work.
+        let doc_id = doc.id.clone();
         if let Err(e) = store.store_document(doc) {
             return ToolResult::error(format!("store error: {e}"));
         }
         let n = chunks.len();
         if let Err(e) = store.store_chunks(chunks) {
+            // Best-effort cleanup: remove the just-stored document to avoid leaving
+            // an orphaned row that would suppress future re-ingestion via content-hash.
+            let _ = store.delete_document(&doc_id);
             return ToolResult::error(format!("store error: {e}"));
         }
         total_chunks += n;
@@ -362,16 +370,19 @@ pub(crate) fn tool_store_command_output(
         content_hash: None,
     };
 
-    // Replace existing document at the same source path
+    // 3. Fix chunk document_ids to point to our new document
+    for chunk in &mut chunks {
+        chunk.document_id = doc_id.clone();
+    }
+
+    // Replace existing document at the same source path.
+    // NOTE: This delete + store sequence cannot be wrapped in a single with_transaction
+    // because store_chunks opens its own internal transaction. True atomicity requires
+    // an ingest_atomic-style method — tracked as follow-up work.
     if let Ok(Some(existing)) = store.get_document_by_path(&doc.source_path, effective_project) {
         if let Err(e) = store.delete_document(&existing.id) {
             return ToolResult::error(format!("failed to delete existing document: {e}"));
         }
-    }
-
-    // 3. Fix chunk document_ids to point to our new document
-    for chunk in &mut chunks {
-        chunk.document_id = doc_id.clone();
     }
 
     // 4. Store document + chunks

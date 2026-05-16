@@ -850,6 +850,12 @@ impl MemoirStore for SqliteStore {
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
+        // Deduplicate links by ID — each link can be discovered from both directions
+        // (as an outgoing link from its source and as an incoming link to its target),
+        // producing duplicate entries in all_links when BFS visits both endpoints.
+        let mut seen_link_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+        all_links.retain(|l| seen_link_ids.insert(l.id.to_string()));
+
         Ok((concepts, all_links))
     }
 
@@ -994,29 +1000,39 @@ impl MemoirStore for SqliteStore {
             return Ok(deleted);
         }
 
-        // Build a parameterized NOT IN clause
-        let placeholders: String = (1..=keep_names.len())
-            .map(|i| format!("?{}", i + 1))
-            .collect::<Vec<_>>()
-            .join(", ");
+        // Use a temporary table instead of a NOT IN clause with one parameter per name.
+        // A NOT IN clause with 1,000+ parameters exceeds SQLite's SQLITE_LIMIT_VARIABLE_NUMBER
+        // (default 999), causing every large codebase import to fail at the prune step.
+        self.with_transaction(|| {
+            self.conn
+                .execute_batch(
+                    "CREATE TEMP TABLE IF NOT EXISTS _prune_keep (name TEXT PRIMARY KEY)",
+                )
+                .map_err(|e| HyphaeError::Database(e.to_string()))?;
+            self.conn
+                .execute_batch("DELETE FROM _prune_keep")
+                .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
-        let sql =
-            format!("DELETE FROM concepts WHERE memoir_id = ?1 AND name NOT IN ({placeholders})");
+            let mut stmt = self
+                .conn
+                .prepare_cached("INSERT OR IGNORE INTO _prune_keep (name) VALUES (?1)")
+                .map_err(|e| HyphaeError::Database(e.to_string()))?;
+            for name in keep_names {
+                stmt.execute(params![name])
+                    .map_err(|e| HyphaeError::Database(e.to_string()))?;
+            }
 
-        let mut param_values: Vec<&dyn rusqlite::types::ToSql> =
-            Vec::with_capacity(keep_names.len() + 1);
-        let memoir_id_str = memoir_id.to_string();
-        param_values.push(&memoir_id_str);
-        for name in keep_names {
-            param_values.push(name);
-        }
+            let deleted = self
+                .conn
+                .execute(
+                    "DELETE FROM concepts WHERE memoir_id = ?1
+                     AND name NOT IN (SELECT name FROM _prune_keep)",
+                    params![memoir_id.to_string()],
+                )
+                .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
-        let deleted = self
-            .conn
-            .execute(&sql, param_values.as_slice())
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
-
-        Ok(deleted)
+            Ok(deleted)
+        })
     }
 
     fn memoir_stats(&self, memoir_id: &MemoirId) -> HyphaeResult<MemoirStats> {

@@ -144,8 +144,15 @@ pub(crate) fn tool_store(
 
     if let Some(query_emb) = embedding {
         let text = format!("{topic} {content}");
-        if let Ok(similar) = store.search_hybrid(&text, &query_emb, 1, 0, project) {
-            if let Some((existing, score)) = similar.first() {
+        let similar_result = store.search_hybrid(&text, &query_emb, 1, 0, project);
+        let similar = match similar_result {
+            Ok(results) => results,
+            Err(e) => {
+                tracing::warn!("similarity check failed, storing without dedup: {e}");
+                Vec::new()
+            }
+        };
+        if let Some((existing, score)) = similar.first() {
                 // Require explicit project match: (Some, Some) or (None, None).
                 // Reject (Some, None) and (None, Some) pairs.
                 let project_matches = match (&existing.project, &memory.project) {
@@ -199,7 +206,6 @@ pub(crate) fn tool_store(
                         ToolResult::text(msg)
                     };
                 }
-            }
         }
     }
 

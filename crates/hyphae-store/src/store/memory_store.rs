@@ -69,10 +69,17 @@ impl RetrievalWeights {
             .and_then(|v| v.parse().ok())
             .unwrap_or(0.20_f32)
             .clamp(0.0, 1.0);
-        Self {
-            fts,
-            cosine,
-            entity,
+        // Normalize so weights always sum to 1.0, preserving relative contributions.
+        // Fall back to defaults if all weights are zero to avoid degenerate scoring.
+        let total = fts + cosine + entity;
+        if total > 0.0 {
+            Self {
+                fts: fts / total,
+                cosine: cosine / total,
+                entity: entity / total,
+            }
+        } else {
+            Self::default()
         }
     }
 }
@@ -180,6 +187,11 @@ impl SqliteStore {
         if keywords.is_empty() {
             return Ok(Vec::new());
         }
+
+        // Scoped variant uses 4 extra bind params (limit, offset, project, worktree).
+        // Cap keyword count to stay below SQLite's SQLITE_LIMIT_VARIABLE_NUMBER (default 999).
+        const MAX_KEYWORD_PARAMS: usize = 989;
+        let keywords = &keywords[..keywords.len().min(MAX_KEYWORD_PARAMS)];
 
         let where_parts: Vec<String> = (0..keywords.len())
             .map(|i| {
@@ -453,8 +465,11 @@ impl SqliteStore {
         project: Option<&str>,
         worktree: Option<&str>,
     ) -> HyphaeResult<Vec<(Memory, f32)>> {
+        // Cap knn_limit to prevent the follow-up IN clause from exceeding SQLite's
+        // SQLITE_MAX_VARIABLE_NUMBER (default 999). 900 gives comfortable headroom.
+        const KNN_LIMIT_CAP: usize = 900;
         let query_blob = embedding_to_blob(embedding);
-        let knn_limit = limit + offset;
+        let knn_limit = (limit + offset).min(KNN_LIMIT_CAP);
 
         let mut knn_stmt = self
             .conn
@@ -1064,6 +1079,11 @@ impl MemoryStore for SqliteStore {
         if keywords.is_empty() {
             return Ok(Vec::new());
         }
+
+        // Non-scoped variant uses 3 extra bind params (limit, offset, project).
+        // Cap keyword count to stay below SQLite's SQLITE_LIMIT_VARIABLE_NUMBER (default 999).
+        const MAX_KEYWORD_PARAMS: usize = 990;
+        let keywords = &keywords[..keywords.len().min(MAX_KEYWORD_PARAMS)];
 
         let where_parts: Vec<String> = (0..keywords.len())
             .map(|i| {
