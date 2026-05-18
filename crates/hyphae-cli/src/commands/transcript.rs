@@ -74,7 +74,7 @@ pub fn run(
             continue;
         }
 
-        let topic = format!("session/{}", project_name);
+        let topic = format!("session/{project_name}");
         use hyphae_core::memory::{Importance, Memory};
         use hyphae_core::store::MemoryStore;
         let mut builder = Memory::builder(topic, text, Importance::Medium).keywords(vec![
@@ -169,8 +169,7 @@ fn discover_sessions(path: Option<&Path>, since: Option<&str>) -> Vec<PathBuf> {
                 if let Ok(modified) = meta.modified() {
                     let file_ts = modified
                         .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs() as i64)
-                        .unwrap_or(0);
+                        .map_or(0, |d| d.as_secs() as i64);
                     return file_ts >= ts;
                 }
             }

@@ -10,6 +10,7 @@ use spore::editors;
 
 const MAX_INGEST_FILE_BYTES: u64 = 100 * 1024 * 1024; // 100 MiB
 
+#[derive(Default)]
 struct ParsedMemory {
     name: String,
     description: String,
@@ -17,19 +18,6 @@ struct ParsedMemory {
     body: String,
     source_path: String,
     hash_prefix: String,
-}
-
-impl Default for ParsedMemory {
-    fn default() -> Self {
-        Self {
-            name: String::new(),
-            description: String::new(),
-            memory_type: String::new(),
-            body: String::new(),
-            source_path: String::new(),
-            hash_prefix: String::new(),
-        }
-    }
 }
 
 fn default_claude_projects_dir() -> Option<PathBuf> {
@@ -175,9 +163,10 @@ fn parse_memory_file(path: &Path) -> Result<ParsedMemory> {
 
     let frontmatter = parse_frontmatter(&content).unwrap_or_default();
     let name = frontmatter.get("name").cloned().unwrap_or_else(|| {
-        path.file_stem()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "unknown".to_string())
+        path.file_stem().map_or_else(
+            || "unknown".to_string(),
+            |s| s.to_string_lossy().to_string(),
+        )
     });
     let description = frontmatter.get("description").cloned().unwrap_or_default();
     let memory_type = frontmatter

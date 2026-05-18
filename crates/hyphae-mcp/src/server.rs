@@ -44,8 +44,6 @@ struct ToolCallCtx<'a> {
 
 /// Build an initial context string with recent memories for the project.
 fn initial_context(store: &SqliteStore, project: Option<&str>) -> String {
-    use hyphae_core::MemoryStore;
-
     let Some(proj) = project else {
         return String::new();
     };
@@ -199,7 +197,9 @@ pub fn run_server(
             "ping" => JsonRpcResponse::ok(id, json!({})),
             "tools/list" => handle_tools_list(id, embedder.is_some()),
             "resources/list" => handle_resources_list(id, store, project.as_deref()),
-            "resources/read" => handle_resources_read(id, &msg.params, store, project.as_deref()),
+            "resources/read" => {
+                handle_resources_read(id, msg.params.as_ref(), store, project.as_deref())
+            }
             "tools/call" => handle_tools_call(
                 id,
                 ToolCallCtx {
@@ -345,7 +345,7 @@ fn handle_resources_list(id: Value, store: &SqliteStore, project: Option<&str>) 
 
 fn handle_resources_read(
     id: Value,
-    params: &Option<Value>,
+    params: Option<&Value>,
     store: &SqliteStore,
     project: Option<&str>,
 ) -> JsonRpcResponse {
@@ -712,7 +712,7 @@ mod tests {
         <SqliteStore as hyphae_core::MemoryStore>::store(&store, memory).unwrap();
 
         let params = Some(json!({ "uri": CONTEXT_RESOURCE_URI }));
-        let resp = handle_resources_read(json!(22), &params, &store, Some("demo"));
+        let resp = handle_resources_read(json!(22), params.as_ref(), &store, Some("demo"));
         let result = resp.result.unwrap();
         let text = result["contents"][0]["text"].as_str().unwrap();
         assert!(text.contains("[REDACTED]"));
@@ -723,7 +723,7 @@ mod tests {
     fn test_handle_resources_read_returns_protocol_surface() {
         let store = SqliteStore::in_memory().unwrap();
         let params = Some(json!({ "uri": PROTOCOL_RESOURCE_URI }));
-        let resp = handle_resources_read(json!(22), &params, &store, Some("demo"));
+        let resp = handle_resources_read(json!(22), params.as_ref(), &store, Some("demo"));
         let result = resp.result.unwrap();
         let text = result["contents"][0]["text"].as_str().unwrap();
         let payload: serde_json::Value = serde_json::from_str(text).unwrap();
@@ -745,7 +745,7 @@ mod tests {
         <SqliteStore as hyphae_core::MemoryStore>::store(&store, memory).unwrap();
 
         let params = Some(json!({ "uri": COUNCIL_RESOURCE_URI }));
-        let resp = handle_resources_read(json!(24), &params, &store, Some("demo"));
+        let resp = handle_resources_read(json!(24), params.as_ref(), &store, Some("demo"));
         let result = resp.result.unwrap();
         let text = result["contents"][0]["text"].as_str().unwrap();
         assert!(text.contains("council_lifecycle"));
@@ -761,7 +761,7 @@ mod tests {
             .unwrap();
 
         let params = Some(json!({ "uri": CONTEXT_RESOURCE_URI }));
-        let resp = handle_resources_read(json!(23), &params, &store, None);
+        let resp = handle_resources_read(json!(23), params.as_ref(), &store, None);
         let error = resp.error.expect("resource read should require project");
         assert_eq!(error.code, -32602);
         assert!(

@@ -18,12 +18,12 @@ struct BackupEntry {
 
 pub(crate) fn cmd_backup(output: Option<PathBuf>, db_path: PathBuf) -> Result<()> {
     let backup_path = create_backup(&db_path, output)?;
-    let size = fs::metadata(&backup_path).map(|m| m.len()).unwrap_or(0);
+    let size = fs::metadata(&backup_path).map_or(0, |m| m.len());
     let manifest_path = backup_manifest_path(&backup_path);
 
     println!("Backup created: {}", backup_path.display());
     println!("Manifest: {}", manifest_path.display());
-    println!("Size: {} bytes", size);
+    println!("Size: {size} bytes");
 
     Ok(())
 }
@@ -43,10 +43,10 @@ pub(crate) fn cmd_backup_list() -> Result<()> {
 
     println!("Backups in {}:", backup_dir.display());
     for backup in backups {
-        let modified = backup
-            .modified
-            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
-            .unwrap_or_else(|| "unknown".to_string());
+        let modified = backup.modified.map_or_else(
+            || "unknown".to_string(),
+            |dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+        );
         println!(
             "  {}  {} bytes  {}",
             backup.path.display(),
@@ -135,7 +135,7 @@ pub(crate) fn create_backup(db_path: &Path, output: Option<PathBuf>) -> Result<P
 
     validate_sqlite_backup(&backup_path)?;
 
-    let size = fs::metadata(&backup_path).map(|m| m.len()).unwrap_or(0);
+    let size = fs::metadata(&backup_path).map_or(0, |m| m.len());
     write_backup_manifest(&backup_path, size, None)?;
 
     Ok(backup_path)
@@ -144,7 +144,7 @@ pub(crate) fn create_backup(db_path: &Path, output: Option<PathBuf>) -> Result<P
 /// Atomically restore `src` over `dest`, cleaning up any stale WAL/SHM sidecars.
 ///
 /// Reads the backup file into memory and writes it atomically to `dest` using
-/// spore's atomic_write_bytes. Stale `-wal` and `-shm` files belonging to the
+/// spore's `atomic_write_bytes`. Stale `-wal` and `-shm` files belonging to the
 /// old database are removed before the write so the restored database does not
 /// inherit an inconsistent journal.
 fn restore_to(src: &Path, dest: &Path) -> Result<()> {

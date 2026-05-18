@@ -443,11 +443,11 @@ pub fn expand_with_code_context(store: &SqliteStore, query: &str, project: &str)
     if concepts.len() < MAX_CODE_CONTEXT_CONCEPTS {
         let fallback_fragments = structural_fallback_fragments(&terms);
         if !fallback_fragments.is_empty() {
-            let memoir_concepts =
-                match store.list_concepts_capped(&memoir.id, MAX_CONCEPTS_FOR_EXPANSION) {
-                    Ok(concepts) => concepts,
-                    Err(_) => return concepts.into_iter().map(|c| c.name).collect(),
-                };
+            let Ok(memoir_concepts) =
+                store.list_concepts_capped(&memoir.id, MAX_CONCEPTS_FOR_EXPANSION)
+            else {
+                return concepts.into_iter().map(|c| c.name).collect();
+            };
 
             let mut ranked_matches: Vec<(
                 StructuralMatchKind,

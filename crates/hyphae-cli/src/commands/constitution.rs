@@ -40,10 +40,13 @@ pub fn cmd_add(
     topic: Option<&str>,
     project: Option<&str>,
 ) -> Result<()> {
-    let resolved_topic = topic.map(str::to_owned).unwrap_or_else(|| match project {
-        Some(p) => format!("constitution/{p}"),
-        None => "constitution".to_string(),
-    });
+    let resolved_topic = topic.map_or_else(
+        || match project {
+            Some(p) => format!("constitution/{p}"),
+            None => "constitution".to_string(),
+        },
+        str::to_owned,
+    );
 
     let mut builder = Memory::builder(
         resolved_topic.clone(),

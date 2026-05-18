@@ -16,6 +16,7 @@ pub enum ArtifactType {
 
 impl ArtifactType {
     /// Canonical string value written to the `artifact_type` column.
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             ArtifactType::CompactSummary => "compact_summary",

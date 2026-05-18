@@ -1,10 +1,11 @@
-/// Calls an OpenAI-compatible /v1/chat/completions endpoint to consolidate a
-/// concept definition. Returns None if the LLM is unavailable or not configured.
+/// Calls an OpenAI-compatible `/v1/chat/completions` endpoint to consolidate a
+/// concept definition. Returns `None` if the LLM is unavailable or not configured.
 ///
 /// Configure via:
-///   HYPHAE_LLM_URL   — base URL, e.g. http://localhost:11434 or https://api.openai.com
-///   HYPHAE_LLM_MODEL — model name, e.g. gpt-4o-mini or llama3
-///   HYPHAE_LLM_API_KEY (optional) — sent as Bearer token
+///   `HYPHAE_LLM_URL`   — base URL, e.g. <http://localhost:11434> or <https://api.openai.com>
+///   `HYPHAE_LLM_MODEL` — model name, e.g. gpt-4o-mini or llama3
+///   `HYPHAE_LLM_API_KEY` (optional) — sent as Bearer token
+#[must_use]
 pub fn consolidate_via_llm(name: &str, definition: &str) -> Option<String> {
     let base_url = std::env::var("HYPHAE_LLM_URL")
         .ok()

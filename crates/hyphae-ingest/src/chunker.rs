@@ -48,6 +48,7 @@ pub enum OutputType {
 }
 
 /// Detect the output type from content by scanning for characteristic patterns.
+#[must_use]
 pub fn detect_output_type(content: &str) -> OutputType {
     for line in content.lines().take(50) {
         let trimmed = line.trim_start();
@@ -102,6 +103,7 @@ pub enum ChunkStrategy {
 }
 
 impl ChunkStrategy {
+    #[must_use]
     pub fn for_source_type(source_type: &SourceType) -> Self {
         match source_type {
             SourceType::Markdown => ChunkStrategy::ByHeading { max_tokens: 500 },
@@ -144,6 +146,8 @@ impl ChunkStrategy {
 ///
 /// The `document_id` is set to a placeholder; callers should update it after
 /// creating the parent `Document`.
+#[must_use]
+#[allow(clippy::needless_pass_by_value)] // ChunkMetadata is consumed only by clone; taking &ChunkMetadata would change the public API
 pub fn chunk_text(content: &str, metadata: ChunkMetadata, strategy: ChunkStrategy) -> Vec<Chunk> {
     let placeholder_doc_id = DocumentId::from("pending");
     let strategy_name = strategy.name().to_string();
@@ -200,7 +204,7 @@ fn chunk_sliding_window(
                 // Extend the current word if the previous character was not whitespace.
                 // A word ends when there is a gap (whitespace) before this character.
                 let prev_end = last.1;
-                if content[prev_end..i].chars().all(|ch| ch.is_whitespace()) && prev_end < i {
+                if content[prev_end..i].chars().all(char::is_whitespace) && prev_end < i {
                     acc.push((i, byte_end));
                 } else {
                     last.1 = byte_end;
@@ -387,8 +391,10 @@ fn chunk_by_function(
 ///
 /// When `pre_fetched` is `Some`, uses those boundaries directly. Otherwise,
 /// attempts to resolve the file from `metadata.source_path` and call rhizome's
-/// get_chunk_boundaries tool. Falls back to `chunk_by_function` when rhizome is
+/// `get_chunk_boundaries` tool. Falls back to `chunk_by_function` when rhizome is
 /// unavailable or returns no boundaries.
+#[allow(clippy::too_many_lines)] // algorithmic: boundary-to-chunk mapping without cleanly extractable sublogic
+#[allow(clippy::cast_possible_truncation)] // line numbers fit in u32 for any real file
 fn chunk_by_ast(
     content: &str,
     metadata: &ChunkMetadata,
@@ -403,7 +409,7 @@ fn chunk_by_ast(
                 .map(|sb| crate::rhizome::ChunkBoundary {
                     start_line: sb.line_start,
                     end_line: sb.line_end,
-                    kind: sb.kind.to_string(),
+                    kind: sb.kind.clone(),
                     name: sb.name.clone(),
                 })
                 .collect(),
@@ -607,7 +613,7 @@ fn sections_to_chunks(
     chunks
 }
 
-/// Split test output on test boundaries, returning (content, test_name) pairs.
+/// Split test output on test boundaries, returning `(content, test_name)` pairs.
 fn split_test_results(content: &str) -> Vec<(String, Option<String>)> {
     let re = test_boundary_regex();
     split_on_boundary_regex(content, re, |line| {
@@ -780,7 +786,7 @@ mod tests {
         assert_eq!(chunks[1].content, "three four five six");
         // Verify sequential indices
         for (i, chunk) in chunks.iter().enumerate() {
-            assert_eq!(chunk.chunk_index, i as u32);
+            assert_eq!(chunk.chunk_index, u32::try_from(i).unwrap());
         }
     }
 
@@ -908,8 +914,7 @@ mod tests {
                 code_strategy,
                 ChunkStrategy::ByAst { .. } | ChunkStrategy::ByFunction { .. }
             ),
-            "expected ByAst or ByFunction for Code, got {:?}",
-            code_strategy
+            "expected ByAst or ByFunction for Code, got {code_strategy:?}"
         );
         assert!(matches!(
             ChunkStrategy::for_source_type(&SourceType::Text),
@@ -1238,7 +1243,8 @@ diff --git a/c.rs b/c.rs
 
         for (i, chunk) in chunks.iter().enumerate() {
             assert_eq!(
-                chunk.chunk_index, i as u32,
+                chunk.chunk_index,
+                u32::try_from(i).unwrap(),
                 "chunk indices should be sequential"
             );
         }
@@ -1338,7 +1344,7 @@ fn main() {
 
         // Verify sequential indices
         for (i, chunk) in chunks.iter().enumerate() {
-            assert_eq!(chunk.chunk_index, i as u32);
+            assert_eq!(chunk.chunk_index, u32::try_from(i).unwrap());
         }
     }
 

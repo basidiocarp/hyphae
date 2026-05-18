@@ -69,9 +69,9 @@ pub(crate) fn cmd_ingest(
         ingested += 1;
     }
     if skipped > 0 {
-        println!("Skipped {} already-ingested source(s)", skipped);
+        println!("Skipped {skipped} already-ingested source(s)");
     }
-    println!("Done: {} source(s) ingested", ingested);
+    println!("Done: {ingested} source(s) ingested");
     Ok(())
 }
 

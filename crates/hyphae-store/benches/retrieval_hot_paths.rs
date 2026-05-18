@@ -1,3 +1,11 @@
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::semicolon_if_nothing_returned
+)]
+
 use chrono::{TimeZone, Utc};
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use hyphae_core::MemoryStore;

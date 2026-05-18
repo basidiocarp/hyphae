@@ -296,6 +296,7 @@ struct ContextItem {
     relevance: f64,
 }
 
+#[allow(clippy::struct_excessive_bools)]
 struct IncludeFlags {
     memories: bool,
     errors: bool,

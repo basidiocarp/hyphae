@@ -235,13 +235,12 @@ fn hook_entry_present(root: &serde_json::Value, spec: HookSpec, hook_command: &s
 }
 
 fn insert_hook_entry(root: &mut serde_json::Value, spec: HookSpec, hook_command: &str) {
-    let root_obj = match root.as_object_mut() {
-        Some(obj) => obj,
-        None => {
-            *root = serde_json::json!({});
-            root.as_object_mut()
-                .expect("fresh object must be present after initialization")
-        }
+    let root_obj = if let Some(obj) = root.as_object_mut() {
+        obj
+    } else {
+        *root = serde_json::json!({});
+        root.as_object_mut()
+            .expect("fresh object must be present after initialization")
     };
 
     let hooks = root_obj

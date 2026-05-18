@@ -127,7 +127,7 @@ pub(crate) fn cmd_recall_bundle(
 
     // L1: Recent decisions (search topic "decisions/{project}", limit 3)
     if used_tokens < args.budget {
-        let decisions_topic = format!("decisions/{}", project);
+        let decisions_topic = format!("decisions/{project}");
         if let Ok(decisions) = store.get_by_topic(&decisions_topic, resolved_project_ref) {
             for decision in decisions.into_iter().take(3) {
                 let item_tokens = estimate_tokens(&decision.summary);
@@ -202,13 +202,12 @@ fn emit_text(
     _l3_session_summary: &Option<String>,
 ) {
     println!(
-        "=== Recall Bundle (budget: {} tokens, used: ~{}, truncated: {}) ===",
-        budget, used_tokens, truncated
+        "=== Recall Bundle (budget: {budget} tokens, used: ~{used_tokens}, truncated: {truncated}) ==="
     );
     println!();
 
     // L0
-    println!("[L0] {}", l0_identity);
+    println!("[L0] {l0_identity}");
     println!();
 
     // L1: Active Errors
@@ -289,7 +288,7 @@ fn emit_json(
     };
 
     let json = serde_json::to_string_pretty(&payload)?;
-    println!("{}", json);
+    println!("{json}");
 
     Ok(())
 }
@@ -373,7 +372,7 @@ mod tests {
             store_memory(
                 &store,
                 "errors/active",
-                &format!("Error message number {} with substantial content", i),
+                &format!("Error message number {i} with substantial content"),
             );
         }
 

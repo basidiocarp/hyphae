@@ -60,13 +60,16 @@ impl Default for TranscriptSummary {
 }
 
 /// Parse a Claude Code or Codex JSONL transcript file into a summary.
+///
+/// # Errors
+/// Returns an error if the file cannot be opened or read.
 pub fn parse_transcript(path: &Path) -> Result<TranscriptSummary> {
     // Check file size before reading
     let meta =
         std::fs::metadata(path).with_context(|| format!("Failed to stat {}", path.display()))?;
     if meta.len() > MAX_INGEST_FILE_BYTES {
         tracing::warn!(path = %path.display(), size = meta.len(), "file too large for ingest, skipping");
-        return Ok(Default::default());
+        return Ok(TranscriptSummary::default());
     }
 
     let file =
@@ -110,7 +113,7 @@ pub fn parse_transcript(path: &Path) -> Result<TranscriptSummary> {
     let runtime = runtime.unwrap_or(SessionRuntime::ClaudeCode);
 
     Ok(TranscriptSummary::from_normalized(
-        normalized,
+        &normalized,
         runtime,
         path,
         project_from_path(path).unwrap_or_default(),
@@ -185,7 +188,7 @@ fn capture_claude_tool_context(content: &serde_json::Value, normalized: &mut Nor
         if item.get("type").and_then(|t| t.as_str()) == Some("tool_result")
             && item
                 .get("is_error")
-                .and_then(|e| e.as_bool())
+                .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false)
         {
             if let Some(err_content) = item.get("content").and_then(|c| c.as_str()) {
@@ -383,33 +386,34 @@ fn value_to_lifecycle_snippet(value: &serde_json::Value) -> String {
             if let Some(text) = map.get("content").and_then(|value| value.as_str()) {
                 return truncate_snippet(text, 140);
             }
-            serde_json::to_string(value)
-                .map(|s| truncate_snippet(&s, 140))
-                .unwrap_or_else(|_| "<unserializable>".to_string())
+            serde_json::to_string(value).map_or_else(
+                |_| "<unserializable>".to_string(),
+                |s| truncate_snippet(&s, 140),
+            )
         }
     }
 }
 
 impl TranscriptSummary {
     fn from_normalized(
-        normalized: NormalizedSession,
+        normalized: &NormalizedSession,
         runtime: SessionRuntime,
         path: &Path,
         fallback_project: String,
     ) -> Self {
-        let session_id = normalized
-            .session_id()
-            .map(str::to_string)
-            .unwrap_or_else(|| {
-                path.file_stem()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "unknown".to_string())
-            });
+        let session_id = normalized.session_id().map_or_else(
+            || {
+                path.file_stem().map_or_else(
+                    || "unknown".to_string(),
+                    |s| s.to_string_lossy().to_string(),
+                )
+            },
+            str::to_string,
+        );
 
         let project = normalized
             .project()
-            .map(str::to_string)
-            .unwrap_or(fallback_project);
+            .map_or(fallback_project, str::to_string);
 
         Self {
             runtime,

@@ -23,8 +23,7 @@ pub(crate) fn cmd_bench(count: usize) -> Result<()> {
     let write_ms = t0.elapsed().as_millis();
     let write_per_s = write_ms
         .checked_div(1)
-        .map(|_| count as u128 * 1000 / write_ms.max(1))
-        .unwrap_or(0);
+        .map_or(0, |_| count as u128 * 1000 / write_ms.max(1));
     println!("  Write:  {write_ms}ms total  ({write_per_s} writes/s)");
 
     // Search benchmark — query across stored memories
@@ -73,12 +72,11 @@ struct BenchFixture {
 }
 
 fn parse_importance(s: &str) -> Importance {
-    match s.parse() {
-        Ok(importance) => importance,
-        Err(_) => {
-            tracing::warn!("unrecognized importance level: {s}, defaulting to medium");
-            Importance::Medium
-        }
+    if let Ok(importance) = s.parse() {
+        importance
+    } else {
+        tracing::warn!("unrecognized importance level: {s}, defaulting to medium");
+        Importance::Medium
     }
 }
 
@@ -159,7 +157,7 @@ fn run_single_fixture(fixture: &BenchFixture) -> Result<(FixtureOutcome, String)
             if found {
                 query_passed = true;
                 if query_fixture.expected_rank_1_contains.is_none() {
-                    query_detail.push_str(&format!("PASS (top {})", k));
+                    query_detail.push_str(&format!("PASS (top {k})"));
                 }
             } else {
                 let summaries = top_k
@@ -168,8 +166,7 @@ fn run_single_fixture(fixture: &BenchFixture) -> Result<(FixtureOutcome, String)
                     .collect::<Vec<_>>()
                     .join("; ");
                 query_detail.push_str(&format!(
-                    "FAIL (expected '{}' in top {}, got: {})",
-                    expected, k, summaries
+                    "FAIL (expected '{expected}' in top {k}, got: {summaries})"
                 ));
             }
         }
@@ -228,15 +225,11 @@ pub(crate) fn cmd_bench_retrieval(fixtures_dir: Option<PathBuf>) -> Result<()> {
 
     if !fixtures_path.exists() {
         anyhow::bail!(
-            "fixtures directory not found at {:?}. Run from the hyphae project root.",
-            fixtures_path
+            "fixtures directory not found at {fixtures_path:?}. Run from the hyphae project root."
         );
     }
 
-    println!(
-        "Benchmarking retrieval quality from {:?} …\n",
-        fixtures_path
-    );
+    println!("Benchmarking retrieval quality from {fixtures_path:?} …\n");
 
     let mut passed_count = 0;
     let mut failed_count = 0;
@@ -250,9 +243,9 @@ pub(crate) fn cmd_bench_retrieval(fixtures_dir: Option<PathBuf>) -> Result<()> {
 
         if path.extension().is_some_and(|ext| ext == "json") {
             let content = std::fs::read_to_string(&path)
-                .with_context(|| format!("failed to read fixture: {:?}", path))?;
+                .with_context(|| format!("failed to read fixture: {path:?}"))?;
             let fixture: BenchFixture = serde_json::from_str(&content)
-                .with_context(|| format!("failed to parse fixture: {:?}", path))?;
+                .with_context(|| format!("failed to parse fixture: {path:?}"))?;
 
             match run_single_fixture(&fixture) {
                 Ok((outcome, result_text)) => {
@@ -264,7 +257,7 @@ pub(crate) fn cmd_bench_retrieval(fixtures_dir: Option<PathBuf>) -> Result<()> {
                     }
                 }
                 Err(e) => {
-                    results.push(format!("ERROR: {:?}: {}", path, e));
+                    results.push(format!("ERROR: {path:?}: {e}"));
                     failed_count += 1;
                 }
             }
@@ -272,16 +265,13 @@ pub(crate) fn cmd_bench_retrieval(fixtures_dir: Option<PathBuf>) -> Result<()> {
     }
 
     for result in results {
-        println!("{}\n", result);
+        println!("{result}\n");
     }
 
-    println!(
-        "Results: {} passed, {} skipped, {} failed",
-        passed_count, skipped_count, failed_count
-    );
+    println!("Results: {passed_count} passed, {skipped_count} skipped, {failed_count} failed");
 
     if failed_count > 0 {
-        anyhow::bail!("{} fixture(s) failed", failed_count);
+        anyhow::bail!("{failed_count} fixture(s) failed");
     }
 
     Ok(())

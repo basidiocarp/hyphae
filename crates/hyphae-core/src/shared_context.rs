@@ -14,7 +14,10 @@ pub struct SharedContextEntry {
 }
 
 pub trait SharedContextStore {
-    /// Write or overwrite a key. Returns the new entry_id.
+    /// Write or overwrite a key. Returns the new `entry_id`.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database write fails.
     fn put_context(
         &self,
         session_id: &str,
@@ -23,9 +26,15 @@ pub trait SharedContextStore {
         value: serde_json::Value,
     ) -> HyphaeResult<String>;
 
-    /// Read the most recent value for a key. Returns None if never written.
+    /// Read the most recent value for a key. Returns `None` if never written.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database query fails.
     fn get_context(&self, session_id: &str, key: &str) -> HyphaeResult<Option<SharedContextEntry>>;
 
     /// List all distinct keys written in this session, most-recently-written first.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database query fails.
     fn list_context_keys(&self, session_id: &str) -> HyphaeResult<Vec<String>>;
 }

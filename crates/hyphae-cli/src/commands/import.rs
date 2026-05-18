@@ -18,7 +18,7 @@ pub enum ConflictStrategy {
     /// Overwrite the existing record with the imported record.
     Overwrite,
     /// Merge the imported record into the existing record
-    /// (union keywords, take max weight, keep earliest created_at).
+    /// (union keywords, take max weight, keep earliest `created_at`).
     Merge,
 }
 
@@ -41,16 +41,10 @@ fn validate_archive(archive: &HyphaeArchive) -> Result<()> {
     // Validate memory entries
     for (idx, rec) in archive.memories.iter().enumerate() {
         if rec.content.is_empty() {
-            anyhow::bail!(
-                "malformed memory entry at index {}: field 'content' is empty",
-                idx
-            );
+            anyhow::bail!("malformed memory entry at index {idx}: field 'content' is empty");
         }
         if rec.topic.is_empty() {
-            anyhow::bail!(
-                "malformed memory entry at index {}: field 'topic' is empty",
-                idx
-            );
+            anyhow::bail!("malformed memory entry at index {idx}: field 'topic' is empty");
         }
     }
 
@@ -251,13 +245,7 @@ fn do_import_records(
 
     let dry_label = if dry_run { " (dry-run)" } else { "" };
     eprintln!(
-        "Import complete{dry_label}: {} memories, {} memoirs, {} sessions imported; {} memories, {} memoirs, {} sessions skipped",
-        memories_imported,
-        memoirs_imported,
-        sessions_imported,
-        memories_skipped,
-        memoirs_skipped,
-        sessions_skipped,
+        "Import complete{dry_label}: {memories_imported} memories, {memoirs_imported} memoirs, {sessions_imported} sessions imported; {memories_skipped} memories, {memoirs_skipped} memoirs, {sessions_skipped} sessions skipped",
     );
 
     Ok(())
@@ -705,8 +693,7 @@ mod tests {
         let err_msg = result.unwrap_err().to_string();
         assert!(
             err_msg.contains("schema_version"),
-            "error message should mention 'schema_version', got: {}",
-            err_msg
+            "error message should mention 'schema_version', got: {err_msg}"
         );
     }
 
@@ -728,8 +715,7 @@ mod tests {
         let err_msg = result.unwrap_err().to_string();
         assert!(
             err_msg.contains("unsupported"),
-            "error message should mention 'unsupported', got: {}",
-            err_msg
+            "error message should mention 'unsupported', got: {err_msg}"
         );
     }
 
@@ -750,8 +736,7 @@ mod tests {
         let err_msg = result.unwrap_err().to_string();
         assert!(
             err_msg.contains("content"),
-            "error message should mention 'content', got: {}",
-            err_msg
+            "error message should mention 'content', got: {err_msg}"
         );
     }
 
@@ -821,8 +806,7 @@ mod tests {
         let result = validate_archive(&archive);
         assert!(
             result.is_ok(),
-            "fixture structure should validate, got: {:?}",
-            result
+            "fixture structure should validate, got: {result:?}"
         );
     }
 }

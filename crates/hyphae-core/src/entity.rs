@@ -54,12 +54,12 @@ fn contains_word(text: &str, word: &str) -> bool {
             || !text
                 .as_bytes()
                 .get(abs_pos - 1)
-                .is_some_and(|b| b.is_ascii_alphanumeric());
+                .is_some_and(u8::is_ascii_alphanumeric);
         let after = abs_pos + word.len();
         let after_ok = !text
             .as_bytes()
             .get(after)
-            .is_some_and(|b| b.is_ascii_alphanumeric());
+            .is_some_and(u8::is_ascii_alphanumeric);
         if before_ok && after_ok {
             return true;
         }

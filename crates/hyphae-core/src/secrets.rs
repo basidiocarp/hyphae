@@ -49,6 +49,7 @@ fn compiled_secret_patterns() -> &'static [(Regex, &'static str)] {
 ///
 /// Returns a vector of detected secret types. If secrets are found, the caller
 /// should warn or block storage depending on configuration.
+#[must_use]
 pub fn detect_secrets(content: &str) -> Vec<String> {
     compiled_secret_patterns()
         .iter()

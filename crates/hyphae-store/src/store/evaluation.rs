@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::cmp::{Ordering, Reverse};
 use std::collections::HashMap;
 
 use chrono::{DateTime, Duration, Utc};
@@ -314,22 +314,19 @@ fn merge_session_counts(
                 .unwrap_or_else(|| legacy.topic.clone()),
             legacy.summary.clone(),
         );
-        match structured_session_times.get_mut(&dedupe_key) {
-            Some(candidates) => {
-                if let Some(index) = candidates
-                    .iter()
-                    .position(|candidate| timestamps_match(*candidate, legacy.created_at))
-                {
-                    candidates.swap_remove(index);
-                } else {
-                    session_count += 1;
-                    total_session_length += legacy.summary.len();
-                }
-            }
-            _ => {
+        if let Some(candidates) = structured_session_times.get_mut(&dedupe_key) {
+            if let Some(index) = candidates
+                .iter()
+                .position(|candidate| timestamps_match(*candidate, legacy.created_at))
+            {
+                candidates.swap_remove(index);
+            } else {
                 session_count += 1;
                 total_session_length += legacy.summary.len();
             }
+        } else {
+            session_count += 1;
+            total_session_length += legacy.summary.len();
         }
     }
 
@@ -655,10 +652,7 @@ fn compute_trend_from_scores(recent_scores: &[f64]) -> f64 {
     recent_scores[0] / avg.max(f64::EPSILON)
 }
 
-fn get_recent_evaluation_scores(
-    store: &SqliteStore,
-    project: Option<&str>,
-) -> HyphaeResult<Vec<f64>> {
+fn get_recent_evaluation_scores(store: &SqliteStore, project: Option<&str>) -> Vec<f64> {
     let evaluation_memories = store
         .get_by_topic("evaluation/score", project)
         .unwrap_or_default();
@@ -673,9 +667,9 @@ fn get_recent_evaluation_scores(
         })
         .collect();
 
-    scores.sort_by(|a, b| b.0.cmp(&a.0));
+    scores.sort_by_key(|&(ts, _)| Reverse(ts));
 
-    Ok(scores.into_iter().take(5).map(|(_, score)| score).collect())
+    scores.into_iter().take(5).map(|(_, score)| score).collect()
 }
 
 pub fn collect_evaluation_window(
@@ -758,7 +752,7 @@ pub fn collect_evaluation_window(
     };
 
     let current_score = compute_overall_score(&evaluation_window);
-    let recent_scores = get_recent_evaluation_scores(store, project).unwrap_or_default();
+    let recent_scores = get_recent_evaluation_scores(store, project);
 
     let trend = if !recent_scores.is_empty() {
         let mut all_scores = vec![current_score];

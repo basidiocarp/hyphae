@@ -41,6 +41,10 @@ impl HttpEmbedder {
     ///
     /// Returns `None` if `HYPHAE_EMBEDDING_URL` is not set.
     /// Returns `Err` if the URL is set but the model is missing.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError::Config` if the URL is set but the model variable
+    /// is missing or empty.
     pub fn from_env() -> HyphaeResult<Option<Self>> {
         let url = match std::env::var("HYPHAE_EMBEDDING_URL") {
             Ok(u) if !u.is_empty() => u,
@@ -58,6 +62,7 @@ impl HttpEmbedder {
     }
 
     /// Create with explicit URL and model.
+    #[must_use]
     pub fn new(url: String, model: String) -> Self {
         let api_format = if url.contains("/api/embed") || url.contains(":11434") {
             ApiFormat::Ollama
@@ -142,10 +147,12 @@ impl HttpEmbedder {
     }
 
     /// Parse a JSON array of numbers into `Vec<f32>`.
+    #[allow(clippy::cast_possible_truncation)] // JSON numbers are f64; f32 truncation is intentional
     fn parse_float_array(arr: &[Value]) -> HyphaeResult<Vec<f32>> {
         arr.iter()
             .map(|v: &Value| {
                 v.as_f64()
+                    // JSON numbers are f64; truncation to f32 is intentional for embedding storage.
                     .map(|f| f as f32)
                     .ok_or_else(|| HyphaeError::Embedding("non-numeric embedding value".into()))
             })
@@ -257,11 +264,12 @@ mod tests {
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
+    #[allow(unsafe_code)]
     #[test]
     fn test_from_env_returns_none_when_unset() {
         let _guard = ENV_LOCK.lock().unwrap();
 
-        // SAFETY: test-only, single-threaded env manipulation
+        // SAFETY: Single-threaded access guaranteed by ENV_LOCK; test-only env mutation.
         unsafe {
             std::env::remove_var("HYPHAE_EMBEDDING_URL");
             std::env::remove_var("HYPHAE_EMBEDDING_MODEL");
@@ -271,11 +279,12 @@ mod tests {
         assert!(result.is_none());
     }
 
+    #[allow(unsafe_code)]
     #[test]
     fn test_from_env_error_when_url_set_but_no_model() {
         let _guard = ENV_LOCK.lock().unwrap();
 
-        // SAFETY: test-only, single-threaded env manipulation
+        // SAFETY: Single-threaded access guaranteed by ENV_LOCK; test-only env mutation.
         unsafe {
             std::env::set_var("HYPHAE_EMBEDDING_URL", "http://localhost:11434");
             std::env::remove_var("HYPHAE_EMBEDDING_MODEL");
@@ -286,7 +295,7 @@ mod tests {
         let err = result.unwrap_err().to_string();
         assert!(err.contains("HYPHAE_EMBEDDING_MODEL"));
 
-        // SAFETY: cleanup
+        // SAFETY: Single-threaded access guaranteed by ENV_LOCK; test-only cleanup.
         unsafe {
             std::env::remove_var("HYPHAE_EMBEDDING_URL");
         }

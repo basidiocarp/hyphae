@@ -169,7 +169,7 @@ fn open_store(db: Option<PathBuf>, embedding_dims: usize) -> Result<SqliteStore>
 ///
 /// Priority:
 /// 1. HTTP embedder (if `HYPHAE_EMBEDDING_URL` is set) — always available
-/// 2. FastEmbedder (if `embeddings` feature is compiled in)
+/// 2. `FastEmbedder` (if `embeddings` feature is compiled in)
 /// 3. None — FTS-only search
 fn init_embedder(model: &str) -> Option<Box<dyn Embedder>> {
     // Try HTTP embedder first (always compiled)
@@ -285,11 +285,11 @@ fn main() -> Result<()> {
     }
 
     let embedder = init_embedder(&cfg.embeddings.model);
-    let embedding_dims = embedder.as_ref().map(|e| e.dimensions()).unwrap_or(384);
+    let embedding_dims = embedder.as_ref().map_or(384, |e| e.dimensions());
 
     let store = open_store(Some(resolved_db_path.clone()), embedding_dims)?;
 
-    let embedder_ref: Option<&dyn Embedder> = embedder.as_ref().map(|e| e.as_ref());
+    let embedder_ref: Option<&dyn Embedder> = embedder.as_ref().map(std::convert::AsRef::as_ref);
 
     match cli.command {
         Commands::Store {
@@ -364,7 +364,7 @@ fn main() -> Result<()> {
                 String::from_utf8_lossy(&raw).into_owned()
             };
             let stored = extract::extract_and_store(&store, &text, &project)?;
-            println!("Extracted and stored {} facts", stored);
+            println!("Extracted and stored {stored} facts");
         }
 
         Commands::GatherContext(args) => {
@@ -613,7 +613,7 @@ fn main() -> Result<()> {
         } => {
             let fmt = format
                 .parse::<commands::export_training::TrainingFormat>()
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
             commands::export_training::cmd_export_training(
                 &store,
                 fmt,
@@ -644,7 +644,7 @@ fn main() -> Result<()> {
             commands::export::cmd_export(
                 &store,
                 output.clone(),
-                resolved_project.map(|p| p.to_string()),
+                resolved_project,
                 topic.clone(),
                 since.clone(),
                 until.clone(),

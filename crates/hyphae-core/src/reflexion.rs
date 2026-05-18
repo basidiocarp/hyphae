@@ -86,6 +86,7 @@ pub struct ReflexionRecord {
 }
 
 impl ReflexionRecord {
+    #[must_use]
     pub fn new(
         id: String,
         error_type: ReflexionErrorType,
@@ -111,10 +112,16 @@ impl ReflexionRecord {
 /// Reflexion storage trait for persisting and retrieving structured error-learning records.
 pub trait ReflexionStore {
     /// Store a reflexion record and return its ID.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database write fails.
     fn store_reflexion(&self, record: &ReflexionRecord) -> HyphaeResult<String>;
 
     /// Search reflexion records by query, with optional error type filter.
-    /// Results are sorted by confidence (high > medium > low) then by created_at DESC.
+    /// Results are sorted by confidence (high > medium > low) then by `created_at` DESC.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database query fails.
     fn search_reflexions(
         &self,
         query: &str,
@@ -123,5 +130,8 @@ pub trait ReflexionStore {
     ) -> HyphaeResult<Vec<ReflexionRecord>>;
 
     /// List all reflexion records sorted by confidence and creation time.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database query fails.
     fn list_reflexions_by_pattern(&self, limit: usize) -> HyphaeResult<Vec<ReflexionRecord>>;
 }

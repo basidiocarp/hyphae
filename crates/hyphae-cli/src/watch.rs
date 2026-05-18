@@ -74,8 +74,7 @@ fn process_event(
 
         if debounce
             .get(path)
-            .map(|t| t.elapsed().as_millis() < opts.debounce_ms as u128)
-            .unwrap_or(false)
+            .is_some_and(|t| t.elapsed().as_millis() < u128::from(opts.debounce_ms))
         {
             continue;
         }
@@ -145,8 +144,7 @@ mod tests {
         debounce.insert(path.clone(), Instant::now());
         let skip = debounce
             .get(&path)
-            .map(|t| t.elapsed().as_millis() < 500)
-            .unwrap_or(false);
+            .is_some_and(|t| t.elapsed().as_millis() < 500);
         assert!(skip, "should skip rapid event");
     }
 

@@ -336,7 +336,7 @@ impl MemoirStore for SqliteStore {
         page_size: usize,
         page: usize,
     ) -> HyphaeResult<(Vec<Concept>, bool)> {
-        let capped_page_size = page_size.min(200).max(1);
+        let capped_page_size = page_size.clamp(1, 200);
         let offset = page * capped_page_size;
 
         let sql = format!(
@@ -724,7 +724,7 @@ impl MemoirStore for SqliteStore {
         } else {
             p_relation = String::new();
             sql = base.replace("{filter}", "");
-        };
+        }
 
         let mut stmt = self
             .conn

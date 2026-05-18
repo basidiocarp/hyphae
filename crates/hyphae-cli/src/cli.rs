@@ -599,7 +599,7 @@ pub(crate) enum AuditCommand {
         /// Only show entries since this date (ISO 8601 or YYYY-MM-DD)
         #[arg(long)]
         since: Option<String>,
-        /// Filter by operation type (store, update, delete, invalidate, decay, prune, prune_expired, consolidate)
+        /// Filter by operation type (store, update, delete, invalidate, decay, prune, `prune_expired`, consolidate)
         #[arg(long)]
         operation: Option<String>,
         /// Maximum entries to show

@@ -53,8 +53,7 @@ pub(crate) fn cmd_export_obsidian(
 
     // Summary
     println!(
-        "Export complete: {} created, {} skipped, {} failed",
-        total_created, total_skipped, total_failed
+        "Export complete: {total_created} created, {total_skipped} skipped, {total_failed} failed"
     );
 
     Ok(())
@@ -78,7 +77,7 @@ fn export_memories(
     for (topic, _count) in topics {
         let memories = store
             .get_by_topic(&topic, project)
-            .with_context(|| format!("failed to get memories for topic {}", topic))?;
+            .with_context(|| format!("failed to get memories for topic {topic}"))?;
 
         for memory in memories {
             let (subfolder, note_type) = if topic.starts_with("decisions/") {
@@ -262,10 +261,10 @@ fn memory_frontmatter(memory: &Memory, note_type: &str, topic: &str) -> String {
         let items = memory
             .keywords
             .iter()
-            .map(|k| format!("  - {}", k))
+            .map(|k| format!("  - {k}"))
             .collect::<Vec<_>>()
             .join("\n");
-        format!("tags:\n{}", items)
+        format!("tags:\n{items}")
     };
 
     format!(
@@ -304,7 +303,7 @@ fn create_memory_note(memory: &Memory, topic: &str, note_type: &str) -> Result<S
         }
     );
 
-    Ok(format!("{}{}", frontmatter, body))
+    Ok(format!("{frontmatter}{body}"))
 }
 
 fn create_memoir_index(memoir: &Memoir) -> Result<String> {
@@ -318,12 +317,12 @@ fn create_memoir_index(memoir: &Memoir) -> Result<String> {
 
     let body = format!("## Description\n{}", memoir.description);
 
-    Ok(format!("{}{}", frontmatter, body))
+    Ok(format!("{frontmatter}{body}"))
 }
 
 fn create_concept_note(concept: &Concept, memoir_name: &str) -> Result<String> {
     let frontmatter = concept_frontmatter(concept, memoir_name);
     let body = format!("## Definition\n{}", concept.definition);
 
-    Ok(format!("{}{}", frontmatter, body))
+    Ok(format!("{frontmatter}{body}"))
 }

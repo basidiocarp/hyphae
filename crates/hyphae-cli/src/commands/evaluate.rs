@@ -129,8 +129,10 @@ fn recall_effectiveness_lines(
             .get(&MemoryId::from(row.memory_id.as_str()))
             .ok()
             .flatten()
-            .map(|memory| memory_display_label(&memory))
-            .unwrap_or_else(|| row.memory_id.clone());
+            .map_or_else(
+                || row.memory_id.clone(),
+                |memory| memory_display_label(&memory),
+            );
         lines.push(format!(
             "{:>2}. {:>8.2} {}",
             index + 1,
@@ -199,7 +201,7 @@ pub(crate) fn cmd_evaluate(store: &SqliteStore, days: i64, project: Option<Strin
     // Print report header
     let proj_name = project_ref.unwrap_or("all projects");
     println!("\nAgent Evaluation Report (last {days} days)");
-    println!("Project: {}", proj_name);
+    println!("Project: {proj_name}");
     println!();
 
     // Print metrics table
@@ -289,7 +291,7 @@ pub(crate) fn cmd_evaluate(store: &SqliteStore, days: i64, project: Option<Strin
         _ => "Needs attention: Most metrics declining or stable",
     };
 
-    println!("Overall: {}", assessment);
+    println!("Overall: {assessment}");
 
     let recall_report = collect_recall_effectiveness_window(store, 0, days, project_ref)?;
     println!();
@@ -304,16 +306,16 @@ fn format_trend_with_pct(trend: Trend, pct: f64, lower_is_better: bool) -> Strin
     match trend {
         Trend::Better => {
             if lower_is_better {
-                format!("↓ {:.0}% better", pct)
+                format!("↓ {pct:.0}% better")
             } else {
-                format!("↑ {:.0}% better", pct)
+                format!("↑ {pct:.0}% better")
             }
         }
         Trend::Worse => {
             if lower_is_better {
-                format!("↑ {:.0}% worse", pct)
+                format!("↑ {pct:.0}% worse")
             } else {
-                format!("↓ {:.0}% worse", pct)
+                format!("↓ {pct:.0}% worse")
             }
         }
         Trend::Stable => "→ stable".to_string(),

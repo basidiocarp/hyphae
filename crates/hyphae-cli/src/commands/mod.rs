@@ -102,6 +102,6 @@ pub(crate) fn cmd_config(cfg: &Config) {
     println!("    Transport: {}", cfg.mcp.transport);
     println!("    Compact Mode: {}", cfg.mcp.compact);
     if let Some(instructions) = &cfg.mcp.instructions {
-        println!("    Instructions: {}", instructions);
+        println!("    Instructions: {instructions}");
     }
 }

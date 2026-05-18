@@ -9,6 +9,7 @@ pub struct GitContext {
     pub worktree: Option<String>,
 }
 
+#[must_use]
 pub fn detect_git_context_from(cwd: Option<&Path>) -> GitContext {
     GitContext {
         branch: git_output(["rev-parse", "--abbrev-ref", "HEAD"], cwd)
@@ -19,6 +20,7 @@ pub fn detect_git_context_from(cwd: Option<&Path>) -> GitContext {
 }
 
 /// Returns the current git HEAD commit hash, or None if not in a git repo.
+#[must_use]
 pub fn current_git_hash(cwd: Option<&Path>) -> Option<String> {
     git_output(["rev-parse", "HEAD"], cwd).filter(|s| !s.is_empty())
 }

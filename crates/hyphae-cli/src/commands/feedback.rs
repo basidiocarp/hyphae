@@ -25,13 +25,13 @@ pub(crate) enum FeedbackCommand {
         /// Session ID to associate with the signal
         #[arg(short = 'i', long)]
         session_id: String,
-        /// Signal type, for example correction or session_success
+        /// Signal type, for example correction or `session_success`
         #[arg(short = 't', long)]
         signal_type: String,
         /// Signal value. Positive values help, negative values penalize.
         #[arg(short, long)]
         value: i64,
-        /// Signal source, for example cortina.post_tool_use
+        /// Signal source, for example `cortina.post_tool_use`
         #[arg(short, long)]
         source: Option<String>,
         /// Optional project override

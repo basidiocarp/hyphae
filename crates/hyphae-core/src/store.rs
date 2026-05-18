@@ -30,17 +30,52 @@ pub enum TopicMemoryOrder {
 /// proceed when invoking hooks from orchestration code.
 pub trait MemoryStore {
     // CRUD
+
+    /// Store a memory and return its ID.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database write fails.
     fn store(&self, memory: Memory) -> HyphaeResult<MemoryId>;
+
+    /// Fetch a memory by ID.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database query fails.
     fn get(&self, id: &MemoryId) -> HyphaeResult<Option<Memory>>;
+
+    /// Fetch multiple memories by their string IDs.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database query fails.
     fn get_by_ids(&self, ids: &[&str], project: Option<&str>) -> HyphaeResult<Vec<Memory>>;
+
+    /// Update an existing memory record.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database write fails.
     fn update(&self, memory: &Memory) -> HyphaeResult<()>;
+
+    /// Permanently delete a memory by ID.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database write fails.
     fn delete(&self, id: &MemoryId) -> HyphaeResult<()>;
+
+    /// Mark a memory as invalid, optionally recording the reason and successor ID.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database write fails.
     fn invalidate(
         &self,
         id: &MemoryId,
         reason: Option<&str>,
         superseded_by: Option<&MemoryId>,
     ) -> HyphaeResult<()>;
+
+    /// List invalidated memories with pagination.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database query fails.
     fn list_invalidated(
         &self,
         limit: usize,
@@ -49,6 +84,11 @@ pub trait MemoryStore {
     ) -> HyphaeResult<Vec<Memory>>;
 
     // Search
+
+    /// Search memories whose keywords match all of the given terms.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database query fails.
     fn search_by_keywords(
         &self,
         keywords: &[&str],
@@ -56,6 +96,11 @@ pub trait MemoryStore {
         offset: usize,
         project: Option<&str>,
     ) -> HyphaeResult<Vec<Memory>>;
+
+    /// Full-text search over memory content.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database query fails.
     fn search_fts(
         &self,
         query: &str,
@@ -63,6 +108,11 @@ pub trait MemoryStore {
         offset: usize,
         project: Option<&str>,
     ) -> HyphaeResult<Vec<Memory>>;
+
+    /// Full-text search scoped to a single topic.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database query fails.
     fn search_fts_in_topic(
         &self,
         query: &str,
@@ -71,6 +121,11 @@ pub trait MemoryStore {
         offset: usize,
         project: Option<&str>,
     ) -> HyphaeResult<Vec<Memory>>;
+
+    /// Vector similarity search over memory embeddings.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database query fails.
     fn search_by_embedding(
         &self,
         embedding: &[f32],
@@ -78,6 +133,11 @@ pub trait MemoryStore {
         offset: usize,
         project: Option<&str>,
     ) -> HyphaeResult<Vec<(Memory, f32)>>;
+
+    /// Hybrid (FTS + vector) search.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database query fails.
     fn search_hybrid(
         &self,
         query: &str,
@@ -88,6 +148,11 @@ pub trait MemoryStore {
     ) -> HyphaeResult<Vec<(Memory, f32)>>;
 
     // Search with options
+
+    /// Full-text search with extended filter and sort options.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database query fails.
     #[allow(clippy::too_many_arguments)]
     fn search_fts_with_options(
         &self,
@@ -99,6 +164,11 @@ pub trait MemoryStore {
         include_invalidated: bool,
         order: SearchOrder,
     ) -> HyphaeResult<Vec<Memory>>;
+
+    /// Count FTS matches with extended filter options.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database query fails.
     fn search_fts_count_with_options(
         &self,
         query: &str,
@@ -108,13 +178,43 @@ pub trait MemoryStore {
     ) -> HyphaeResult<usize>;
 
     // Lifecycle
+
+    /// Record an access event for a memory (updates `last_accessed`).
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database write fails.
     fn update_access(&self, id: &MemoryId) -> HyphaeResult<()>;
+
+    /// Apply weight decay to all active memories.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database write fails.
     fn apply_decay(&self, decay_factor: f32) -> HyphaeResult<usize>;
+
+    /// Delete memories whose weight has dropped below the threshold.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database write fails.
     fn prune(&self, weight_threshold: f32) -> HyphaeResult<usize>;
+
+    /// Delete memories whose `expires_at` timestamp has passed.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database write fails.
     fn prune_expired(&self) -> HyphaeResult<usize>;
 
     // Organization
+
+    /// List all memories in a topic.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database query fails.
     fn get_by_topic(&self, topic: &str, project: Option<&str>) -> HyphaeResult<Vec<Memory>>;
+
+    /// List memories in a topic with extended filter and sort options.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database query fails.
     fn get_by_topic_with_options(
         &self,
         topic: &str,
@@ -122,24 +222,69 @@ pub trait MemoryStore {
         include_invalidated: bool,
         order: TopicMemoryOrder,
     ) -> HyphaeResult<Vec<Memory>>;
+
+    /// List all topics with their memory counts.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database query fails.
     fn list_topics(&self, project: Option<&str>) -> HyphaeResult<Vec<(String, usize)>>;
+
+    /// List topics with extended filter options.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database query fails.
     fn list_topics_with_options(
         &self,
         project: Option<&str>,
         include_invalidated: bool,
     ) -> HyphaeResult<Vec<(String, usize)>>;
+
+    /// Replace all memories in a topic with a single consolidated memory.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database write fails.
     fn consolidate_topic(&self, topic: &str, consolidated: Memory) -> HyphaeResult<()>;
 
     // Stats
+
+    /// Count all active memories.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database query fails.
     fn count(&self, project: Option<&str>) -> HyphaeResult<usize>;
+
+    /// Count memories in a topic.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database query fails.
     fn count_by_topic(&self, topic: &str, project: Option<&str>) -> HyphaeResult<usize>;
+
+    /// Return aggregate store statistics.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database query fails.
     fn stats(&self, project: Option<&str>) -> HyphaeResult<StoreStats>;
+
+    /// Return aggregate store statistics with extended filter options.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database query fails.
     fn stats_with_options(
         &self,
         project: Option<&str>,
         include_invalidated: bool,
     ) -> HyphaeResult<StoreStats>;
+
+    /// Return health metrics for a specific topic.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database query fails.
     fn topic_health(&self, topic: &str, project: Option<&str>) -> HyphaeResult<TopicHealth>;
+
+    /// Return topic health metrics with extended filter options.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the database query fails.
     fn topic_health_with_options(
         &self,
         topic: &str,
@@ -158,6 +303,9 @@ pub trait MemoryStore {
     /// Call this before the model turn starts so that relevant memories can be
     /// warmed before they are needed. The default implementation is a no-op.
     /// Implementors may choose to ignore the hint or enqueue asynchronous work.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the backend fails to enqueue the prefetch.
     fn queue_prefetch(&self, query_hint: &str) -> HyphaeResult<()> {
         let _ = query_hint;
         Ok(())
@@ -171,6 +319,9 @@ pub trait MemoryStore {
     ///
     /// Callers must treat a hook error as non-fatal: log it and proceed with
     /// compression as if the backend returned an empty protection set.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the backend cannot determine which entries to protect.
     fn on_pre_compress(&self, candidate_ids: &[&str]) -> HyphaeResult<Vec<String>> {
         let _ = candidate_ids;
         Ok(vec![])
@@ -181,6 +332,9 @@ pub trait MemoryStore {
     /// Backends may use this to flush, snapshot, or annotate memory state so
     /// the receiving agent has relevant context. The default implementation is
     /// a no-op.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the backend rejects or cannot process the delegation signal.
     fn on_delegation(&self, target_agent_id: &str) -> HyphaeResult<()> {
         let _ = target_agent_id;
         Ok(())
@@ -429,179 +583,183 @@ mod tests {
     /// Demonstrate the isolation pattern callers should use when a hook fails.
     #[test]
     fn test_hook_failure_isolation_pattern() {
-        struct FailingStore;
-
-        impl MemoryStore for FailingStore {
-            fn store(&self, _: Memory) -> HyphaeResult<MemoryId> {
-                unimplemented!()
-            }
-            fn get(&self, _: &MemoryId) -> HyphaeResult<Option<Memory>> {
-                unimplemented!()
-            }
-            fn get_by_ids(&self, _: &[&str], _: Option<&str>) -> HyphaeResult<Vec<Memory>> {
-                unimplemented!()
-            }
-            fn update(&self, _: &Memory) -> HyphaeResult<()> {
-                unimplemented!()
-            }
-            fn delete(&self, _: &MemoryId) -> HyphaeResult<()> {
-                unimplemented!()
-            }
-            fn invalidate(
-                &self,
-                _: &MemoryId,
-                _: Option<&str>,
-                _: Option<&MemoryId>,
-            ) -> HyphaeResult<()> {
-                unimplemented!()
-            }
-            fn list_invalidated(
-                &self,
-                _: usize,
-                _: usize,
-                _: Option<&str>,
-            ) -> HyphaeResult<Vec<Memory>> {
-                unimplemented!()
-            }
-            fn search_by_keywords(
-                &self,
-                _: &[&str],
-                _: usize,
-                _: usize,
-                _: Option<&str>,
-            ) -> HyphaeResult<Vec<Memory>> {
-                unimplemented!()
-            }
-            fn search_fts(
-                &self,
-                _: &str,
-                _: usize,
-                _: usize,
-                _: Option<&str>,
-            ) -> HyphaeResult<Vec<Memory>> {
-                unimplemented!()
-            }
-            fn search_fts_in_topic(
-                &self,
-                _: &str,
-                _: &str,
-                _: usize,
-                _: usize,
-                _: Option<&str>,
-            ) -> HyphaeResult<Vec<Memory>> {
-                unimplemented!()
-            }
-            fn search_by_embedding(
-                &self,
-                _: &[f32],
-                _: usize,
-                _: usize,
-                _: Option<&str>,
-            ) -> HyphaeResult<Vec<(Memory, f32)>> {
-                unimplemented!()
-            }
-            fn search_hybrid(
-                &self,
-                _: &str,
-                _: &[f32],
-                _: usize,
-                _: usize,
-                _: Option<&str>,
-            ) -> HyphaeResult<Vec<(Memory, f32)>> {
-                unimplemented!()
-            }
-            fn update_access(&self, _: &MemoryId) -> HyphaeResult<()> {
-                unimplemented!()
-            }
-            fn apply_decay(&self, _: f32) -> HyphaeResult<usize> {
-                unimplemented!()
-            }
-            fn prune(&self, _: f32) -> HyphaeResult<usize> {
-                unimplemented!()
-            }
-            fn prune_expired(&self) -> HyphaeResult<usize> {
-                unimplemented!()
-            }
-            fn get_by_topic(&self, _: &str, _: Option<&str>) -> HyphaeResult<Vec<Memory>> {
-                unimplemented!()
-            }
-            fn list_topics(&self, _: Option<&str>) -> HyphaeResult<Vec<(String, usize)>> {
-                unimplemented!()
-            }
-            fn consolidate_topic(&self, _: &str, _: Memory) -> HyphaeResult<()> {
-                unimplemented!()
-            }
-            fn count(&self, _: Option<&str>) -> HyphaeResult<usize> {
-                unimplemented!()
-            }
-            fn count_by_topic(&self, _: &str, _: Option<&str>) -> HyphaeResult<usize> {
-                unimplemented!()
-            }
-            fn stats(&self, _: Option<&str>) -> HyphaeResult<StoreStats> {
-                unimplemented!()
-            }
-            fn topic_health(&self, _: &str, _: Option<&str>) -> HyphaeResult<TopicHealth> {
-                unimplemented!()
-            }
-            fn search_fts_with_options(
-                &self,
-                _: &str,
-                _: Option<&str>,
-                _: usize,
-                _: usize,
-                _: Option<&str>,
-                _: bool,
-                _: SearchOrder,
-            ) -> HyphaeResult<Vec<Memory>> {
-                unimplemented!()
-            }
-            fn search_fts_count_with_options(
-                &self,
-                _: &str,
-                _: Option<&str>,
-                _: Option<&str>,
-                _: bool,
-            ) -> HyphaeResult<usize> {
-                unimplemented!()
-            }
-            fn get_by_topic_with_options(
-                &self,
-                _: &str,
-                _: Option<&str>,
-                _: bool,
-                _: TopicMemoryOrder,
-            ) -> HyphaeResult<Vec<Memory>> {
-                unimplemented!()
-            }
-            fn list_topics_with_options(
-                &self,
-                _: Option<&str>,
-                _: bool,
-            ) -> HyphaeResult<Vec<(String, usize)>> {
-                unimplemented!()
-            }
-            fn stats_with_options(&self, _: Option<&str>, _: bool) -> HyphaeResult<StoreStats> {
-                unimplemented!()
-            }
-            fn topic_health_with_options(
-                &self,
-                _: &str,
-                _: Option<&str>,
-                _: bool,
-            ) -> HyphaeResult<TopicHealth> {
-                unimplemented!()
-            }
-
-            // Override to simulate a backend that rejects the hook.
-            fn on_delegation(&self, _target_agent_id: &str) -> HyphaeResult<()> {
-                Err(HyphaeError::Validation(
-                    "delegation not supported".to_string(),
-                ))
-            }
-        }
-
+        // FailingStore overrides on_delegation to return an error.
+        // All other methods are unimplemented — only the hook is exercised here.
         let store = FailingStore;
         // Callers must isolate hook failures — use unwrap_or_default() or log and proceed.
         store.on_delegation("agent-xyz").unwrap_or(());
+    }
+
+    /// A stub that overrides `on_delegation` to return an error, simulating a
+    /// backend that does not support the delegation hook.
+    struct FailingStore;
+
+    impl MemoryStore for FailingStore {
+        fn store(&self, _: Memory) -> HyphaeResult<MemoryId> {
+            unimplemented!()
+        }
+        fn get(&self, _: &MemoryId) -> HyphaeResult<Option<Memory>> {
+            unimplemented!()
+        }
+        fn get_by_ids(&self, _: &[&str], _: Option<&str>) -> HyphaeResult<Vec<Memory>> {
+            unimplemented!()
+        }
+        fn update(&self, _: &Memory) -> HyphaeResult<()> {
+            unimplemented!()
+        }
+        fn delete(&self, _: &MemoryId) -> HyphaeResult<()> {
+            unimplemented!()
+        }
+        fn invalidate(
+            &self,
+            _: &MemoryId,
+            _: Option<&str>,
+            _: Option<&MemoryId>,
+        ) -> HyphaeResult<()> {
+            unimplemented!()
+        }
+        fn list_invalidated(
+            &self,
+            _: usize,
+            _: usize,
+            _: Option<&str>,
+        ) -> HyphaeResult<Vec<Memory>> {
+            unimplemented!()
+        }
+        fn search_by_keywords(
+            &self,
+            _: &[&str],
+            _: usize,
+            _: usize,
+            _: Option<&str>,
+        ) -> HyphaeResult<Vec<Memory>> {
+            unimplemented!()
+        }
+        fn search_fts(
+            &self,
+            _: &str,
+            _: usize,
+            _: usize,
+            _: Option<&str>,
+        ) -> HyphaeResult<Vec<Memory>> {
+            unimplemented!()
+        }
+        fn search_fts_in_topic(
+            &self,
+            _: &str,
+            _: &str,
+            _: usize,
+            _: usize,
+            _: Option<&str>,
+        ) -> HyphaeResult<Vec<Memory>> {
+            unimplemented!()
+        }
+        fn search_by_embedding(
+            &self,
+            _: &[f32],
+            _: usize,
+            _: usize,
+            _: Option<&str>,
+        ) -> HyphaeResult<Vec<(Memory, f32)>> {
+            unimplemented!()
+        }
+        fn search_hybrid(
+            &self,
+            _: &str,
+            _: &[f32],
+            _: usize,
+            _: usize,
+            _: Option<&str>,
+        ) -> HyphaeResult<Vec<(Memory, f32)>> {
+            unimplemented!()
+        }
+        fn update_access(&self, _: &MemoryId) -> HyphaeResult<()> {
+            unimplemented!()
+        }
+        fn apply_decay(&self, _: f32) -> HyphaeResult<usize> {
+            unimplemented!()
+        }
+        fn prune(&self, _: f32) -> HyphaeResult<usize> {
+            unimplemented!()
+        }
+        fn prune_expired(&self) -> HyphaeResult<usize> {
+            unimplemented!()
+        }
+        fn get_by_topic(&self, _: &str, _: Option<&str>) -> HyphaeResult<Vec<Memory>> {
+            unimplemented!()
+        }
+        fn list_topics(&self, _: Option<&str>) -> HyphaeResult<Vec<(String, usize)>> {
+            unimplemented!()
+        }
+        fn consolidate_topic(&self, _: &str, _: Memory) -> HyphaeResult<()> {
+            unimplemented!()
+        }
+        fn count(&self, _: Option<&str>) -> HyphaeResult<usize> {
+            unimplemented!()
+        }
+        fn count_by_topic(&self, _: &str, _: Option<&str>) -> HyphaeResult<usize> {
+            unimplemented!()
+        }
+        fn stats(&self, _: Option<&str>) -> HyphaeResult<StoreStats> {
+            unimplemented!()
+        }
+        fn topic_health(&self, _: &str, _: Option<&str>) -> HyphaeResult<TopicHealth> {
+            unimplemented!()
+        }
+        fn search_fts_with_options(
+            &self,
+            _: &str,
+            _: Option<&str>,
+            _: usize,
+            _: usize,
+            _: Option<&str>,
+            _: bool,
+            _: SearchOrder,
+        ) -> HyphaeResult<Vec<Memory>> {
+            unimplemented!()
+        }
+        fn search_fts_count_with_options(
+            &self,
+            _: &str,
+            _: Option<&str>,
+            _: Option<&str>,
+            _: bool,
+        ) -> HyphaeResult<usize> {
+            unimplemented!()
+        }
+        fn get_by_topic_with_options(
+            &self,
+            _: &str,
+            _: Option<&str>,
+            _: bool,
+            _: TopicMemoryOrder,
+        ) -> HyphaeResult<Vec<Memory>> {
+            unimplemented!()
+        }
+        fn list_topics_with_options(
+            &self,
+            _: Option<&str>,
+            _: bool,
+        ) -> HyphaeResult<Vec<(String, usize)>> {
+            unimplemented!()
+        }
+        fn stats_with_options(&self, _: Option<&str>, _: bool) -> HyphaeResult<StoreStats> {
+            unimplemented!()
+        }
+        fn topic_health_with_options(
+            &self,
+            _: &str,
+            _: Option<&str>,
+            _: bool,
+        ) -> HyphaeResult<TopicHealth> {
+            unimplemented!()
+        }
+
+        // Override to simulate a backend that rejects the hook.
+        fn on_delegation(&self, _target_agent_id: &str) -> HyphaeResult<()> {
+            Err(HyphaeError::Validation(
+                "delegation not supported".to_string(),
+            ))
+        }
     }
 }

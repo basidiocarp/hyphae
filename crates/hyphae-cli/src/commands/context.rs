@@ -97,8 +97,7 @@ fn gather_context_payload(
             result
                 .content
                 .first()
-                .map(|block| block.text.as_str())
-                .unwrap_or("gather-context failed")
+                .map_or("gather-context failed", |block| block.text.as_str())
         );
     }
 

@@ -88,7 +88,7 @@ pub(crate) fn tool_memoir_show(
         Ok(n) => n,
         Err(e) => return e,
     };
-    let page = get_bounded_i64(args, "page", 0, 0, 1000000) as usize;
+    let page = get_bounded_i64(args, "page", 0, 0, 1_000_000) as usize;
     let workflow_context = workflow_span_context(trace, None, Some(name));
     let _workflow_span = workflow_span("memoir_show", &workflow_context).entered();
 
@@ -1216,6 +1216,7 @@ fn query_symbols(store: &SqliteStore, memoir: &Memoir, args: &Value) -> Result<V
     Ok(Value::Array(json_concepts))
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn matches_call_relation(relation: &Relation) -> bool {
     // Explicit call-semantics relations only.
     // DependsOn covers "calls", "uses", "imports", "requires" synonyms from code graphs.
@@ -1225,6 +1226,7 @@ fn matches_call_relation(relation: &Relation) -> bool {
     matches!(relation, Relation::DependsOn)
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn matches_implements_relation(relation: &Relation) -> bool {
     // Refines covers "implements", "realizes", "satisfies" synonyms from code graphs.
     // InstanceOf covers direct instance relationships.

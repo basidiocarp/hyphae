@@ -139,7 +139,11 @@ pub(crate) fn cmd_export(
                     if fm.is_empty() {
                         None
                     } else {
-                        Some(fm.split(',').map(|s| s.to_string()).collect())
+                        Some(
+                            fm.split(',')
+                                .map(std::string::ToString::to_string)
+                                .collect(),
+                        )
                     }
                 });
 
@@ -147,7 +151,7 @@ pub(crate) fn cmd_export(
                     if e.is_empty() {
                         None
                     } else {
-                        Some(e.split(',').map(|s| s.to_string()).collect())
+                        Some(e.split(',').map(std::string::ToString::to_string).collect())
                     }
                 });
 

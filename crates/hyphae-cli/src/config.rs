@@ -31,7 +31,7 @@ pub struct Config {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct StoreConfig {
-    /// SQLite database path. Default: platform-specific data dir.
+    /// `SQLite` database path. Default: platform-specific data dir.
     pub path: Option<String>,
     /// Default project namespace for memory isolation.
     pub default_project: Option<String>,
@@ -51,7 +51,7 @@ pub struct MemoryConfig {
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct EmbeddingsConfig {
-    /// Model identifier (fastembed model_code, e.g. "BAAI/bge-small-en-v1.5").
+    /// Model identifier (fastembed `model_code`, e.g. "BAAI/bge-small-en-v1.5").
     pub model: String,
 }
 
@@ -262,10 +262,10 @@ mod tests {
 
     #[test]
     fn test_parse_minimal_toml() {
-        let toml_str = r#"
+        let toml_str = r"
 [memory]
 decay_rate = 0.90
-"#;
+";
         let config: Config = toml::from_str(toml_str).unwrap();
         assert_eq!(config.memory.decay_rate, 0.90);
         // Other fields should be defaults

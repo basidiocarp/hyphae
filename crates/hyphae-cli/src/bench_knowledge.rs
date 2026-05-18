@@ -149,7 +149,7 @@ pub const QUESTIONS: &[Question] = &[
 ];
 
 /// Score an answer against expected keywords.
-/// Returns (matches, total_expected, score_pct).
+/// Returns (matches, `total_expected`, `score_pct`).
 pub fn score_answer(answer: &str, question: &Question) -> (usize, usize, f64) {
     let answer_lower = answer.to_lowercase();
     let matches = question

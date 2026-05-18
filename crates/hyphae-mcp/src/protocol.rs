@@ -109,6 +109,7 @@ impl ToolResult {
     }
 
     /// Append a hint to the last text content block, returning the modified result.
+    #[must_use]
     pub fn with_hint(mut self, hint: &str) -> Self {
         if let Some(last) = self.content.last_mut() {
             last.text.push_str(hint);
@@ -198,7 +199,7 @@ mod tests {
 
     #[test]
     fn test_jsonrpc_parse_invalid_json() {
-        let raw = r#"not json at all"#;
+        let raw = "not json at all";
         let result: Result<JsonRpcMessage, _> = serde_json::from_str(raw);
         assert!(result.is_err());
     }

@@ -11,6 +11,11 @@ const MAX_INGEST_FILE_BYTES: u64 = 10 * 1024 * 1024; // 10 MB
 ///
 /// Returns an error for binary files (detected via null bytes in first 8KB)
 /// or files that exceed [`MAX_INGEST_FILE_BYTES`].
+///
+/// # Errors
+/// Returns `HyphaeError::Ingest` if the file is too large, contains null bytes
+/// (binary detection), or is not valid UTF-8.
+/// Returns `HyphaeError::Io` if the file cannot be read.
 pub fn read_file(path: &Path) -> HyphaeResult<(String, SourceType)> {
     let metadata = fs::metadata(path)?;
     if metadata.len() > MAX_INGEST_FILE_BYTES {
@@ -51,7 +56,6 @@ fn detect_source_type(path: &Path) -> SourceType {
         "rs" | "py" | "js" | "ts" | "tsx" | "go" | "java" | "c" | "cpp" | "h" | "cs" | "rb"
         | "swift" | "kt" => SourceType::Code,
         "md" | "mdx" => SourceType::Markdown,
-        "txt" | "log" | "csv" | "json" | "toml" | "yaml" | "yml" => SourceType::Text,
         _ => SourceType::Text,
     }
 }
@@ -133,6 +137,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("large.txt");
         // Write slightly more than the 10 MB limit.
+        #[allow(clippy::cast_possible_truncation)] // test-only: known small constant
         let big: Vec<u8> = vec![b'x'; (MAX_INGEST_FILE_BYTES + 1) as usize];
         fs::write(&path, &big).unwrap();
 

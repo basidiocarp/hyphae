@@ -73,7 +73,7 @@ pub struct ChunkMetadata {
     pub heading: Option<String>,
     pub line_start: Option<u32>,
     pub line_end: Option<u32>,
-    /// Which chunking strategy produced this chunk (e.g. "by_ast", "by_function").
+    /// Which chunking strategy produced this chunk (e.g. `"by_ast"`, `"by_function"`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chunk_strategy: Option<String>,
 }

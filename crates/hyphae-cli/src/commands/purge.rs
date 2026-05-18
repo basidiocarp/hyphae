@@ -22,7 +22,7 @@ impl PurgeStats {
     }
 
     fn print_summary(&self, prefix: &str) {
-        println!("{}", prefix);
+        println!("{prefix}");
         println!("  {} memories", self.memories);
         println!("  {} sessions", self.sessions);
         println!("  {} chunks", self.chunks);
@@ -99,7 +99,7 @@ fn purge_by_project(
     };
 
     if dry_run {
-        println!("DRY RUN: Deletion by project '{}'", project);
+        println!("DRY RUN: Deletion by project '{project}'");
         stats.print_summary("Would delete:");
         println!("\nTo confirm, run without --dry-run");
         return Ok(());
@@ -125,7 +125,7 @@ fn purge_by_project(
         documents: doc_del,
     };
 
-    result_stats.print_summary(&format!("Deleted from project '{}':", project));
+    result_stats.print_summary(&format!("Deleted from project '{project}':"));
     Ok(())
 }
 
@@ -165,7 +165,7 @@ fn purge_before_date(
     };
 
     if dry_run {
-        println!("DRY RUN: Deletion before date '{}'", before_str);
+        println!("DRY RUN: Deletion before date '{before_str}'");
         stats.print_summary("Would delete:");
         println!("\nTo confirm, run without --dry-run");
         return Ok(());
@@ -191,6 +191,6 @@ fn purge_before_date(
         documents: doc_del,
     };
 
-    result_stats.print_summary(&format!("Deleted items created before '{}':", before_str));
+    result_stats.print_summary(&format!("Deleted items created before '{before_str}':"));
     Ok(())
 }

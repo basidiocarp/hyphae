@@ -186,12 +186,11 @@ struct VersionedPayload<'a, T: Serialize> {
 }
 
 fn parse_importance(s: &str) -> hyphae_core::Importance {
-    match s.parse() {
-        Ok(importance) => importance,
-        Err(_) => {
-            tracing::warn!("unrecognized importance level: {s}, defaulting to medium");
-            hyphae_core::Importance::Medium
-        }
+    if let Ok(importance) = s.parse() {
+        importance
+    } else {
+        tracing::warn!("unrecognized importance level: {s}, defaulting to medium");
+        hyphae_core::Importance::Medium
     }
 }
 
@@ -536,7 +535,7 @@ pub(crate) fn cmd_embed_all(
             .iter()
             .map(|m| format!("{} {}", m.topic, m.summary))
             .collect();
-        let text_refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
+        let text_refs: Vec<&str> = texts.iter().map(std::string::String::as_str).collect();
 
         match embedder.embed_batch(&text_refs) {
             Ok(vecs) => {
@@ -886,7 +885,7 @@ fn memory_from_payload(payload: &MemoryPayload) -> Memory {
         expires_at: payload.expires_at,
         invalidated_at: payload.invalidated_at,
         invalidation_reason: payload.invalidation_reason.clone(),
-        superseded_by: payload.superseded_by.as_ref().cloned().map(MemoryId::from),
+        superseded_by: payload.superseded_by.clone().map(MemoryId::from),
         embedding: None,
         entities: Vec::new(), // will be auto-extracted at store time
     }

@@ -43,7 +43,7 @@ description = "Expression parser, matrix operations, statistics, and complex num
 [dependencies]
 "#;
 
-const CLAUDE_MD: &str = r#"# mathlib — Expression parser and math toolkit
+const CLAUDE_MD: &str = r"# mathlib — Expression parser and math toolkit
 
 ## Architecture
 
@@ -76,7 +76,7 @@ main.rs → lib.rs → parser.rs → token.rs → error.rs
 3. Add `Op` variant in `ast.rs` with precedence + associativity
 4. Handle in `parser.rs` infix parsing
 5. Evaluate in `eval.rs`
-"#;
+";
 
 const MAIN_RS: &str = r#"//! CLI entry point — interactive expression evaluator.
 //!
@@ -131,7 +131,7 @@ fn evaluate_line(input: &str, env: &mut Environment) -> Result<f64, mathlib::Mat
 }
 "#;
 
-const LIB_RS: &str = r#"//! mathlib — A pure-Rust math toolkit.
+const LIB_RS: &str = r"//! mathlib — A pure-Rust math toolkit.
 //!
 //! Modules:
 //! - `token`: Tokenizer (string → token stream)
@@ -155,7 +155,7 @@ pub use error::MathError;
 pub use eval::{Environment, Evaluator};
 pub use parser::Parser;
 pub use token::Tokenizer;
-"#;
+";
 
 const ERROR_RS: &str = r#"//! Error types for mathlib.
 
@@ -316,7 +316,7 @@ impl Tokenizer {
 }
 "#;
 
-const AST_RS: &str = r#"//! Abstract syntax tree types for math expressions.
+const AST_RS: &str = r"//! Abstract syntax tree types for math expressions.
 
 /// An expression node in the AST.
 #[derive(Debug, Clone)]
@@ -368,7 +368,7 @@ impl Op {
         matches!(self, Op::Pow)
     }
 }
-"#;
+";
 
 const PARSER_RS: &str = r#"//! Pratt parser — converts token stream into an AST.
 //!

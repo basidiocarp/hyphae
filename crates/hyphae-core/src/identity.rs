@@ -34,10 +34,12 @@ impl ScopedIdentity {
         }
     }
 
+    #[must_use]
     pub fn from_project(project: Option<&str>) -> Self {
         Self::new(project, None, None, None, None)
     }
 
+    #[must_use]
     pub fn has_structured_scope(&self) -> bool {
         self.project_root.is_some() && self.worktree_id.is_some()
     }
@@ -56,6 +58,7 @@ pub struct BackupExportManifest {
 }
 
 impl BackupExportManifest {
+    #[must_use]
     pub fn new(
         generated_at: &str,
         artifact_path: &str,

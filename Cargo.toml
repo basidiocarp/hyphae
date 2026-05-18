@@ -27,6 +27,34 @@ unsafe_code = "warn"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
+# Pre-existing pedantic violations to be addressed incrementally.
+needless_pass_by_value = "allow"
+similar_names = "allow"
+match_same_arms = "allow"
+items_after_statements = "allow"
+string_add = "allow"
+unnecessary_wraps = "allow"
+cast_precision_loss = "allow"
+wildcard_in_or_patterns = "allow"
+use_debug = "allow"
+assigning_clones = "allow"
+needless_continue = "allow"
+float_cmp = "allow"
+fn_params_excessive_bools = "allow"
+ref_option_ref = "allow"
+cast_possible_wrap = "allow"
+cast_possible_truncation = "allow"
+manual_let_else = "allow"
+too_many_lines = "allow"
+needless_raw_string_hashes = "allow"
+trivially_copy_pass_by_ref = "allow"
+doc_markdown = "allow"
+format_push_string = "allow"
+unnecessary_debug_formatting = "allow"
+default_trait_access = "allow"
+ref_option = "allow"
+match_wildcard_for_single_variants = "allow"
+semicolon_if_nothing_returned = "allow"
 
 [workspace.dependencies]
 # Database

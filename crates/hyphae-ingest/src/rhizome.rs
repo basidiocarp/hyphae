@@ -28,6 +28,11 @@ pub fn is_available() -> bool {
 /// This is optimized for chunking and returns boundaries based on the specified
 /// strategy. Returns `Ok(vec)` on success (possibly empty), or `Err` if rhizome
 /// is unavailable or the call fails.
+///
+/// # Errors
+/// Returns `RhizomeError::NotAvailable` if rhizome is not discoverable.
+/// Returns `RhizomeError::CommandFailed` if the MCP call fails or the path
+/// cannot be encoded as UTF-8.
 pub fn get_chunk_boundaries_for_chunking(
     file: &Path,
     strategy: &str,
@@ -51,15 +56,15 @@ pub fn get_chunk_boundaries_for_chunking(
         )
         .map_err(|e| RhizomeError::CommandFailed(format!("get_chunk_boundaries failed: {e}")))?;
 
-    parse_chunk_boundaries_response(result)
+    parse_chunk_boundaries_response(&result)
 }
 
 /// Parse rhizome MCP `get_chunk_boundaries` response into boundaries.
 ///
 /// The response has shape: `[{"type":"text","text":"<JSON object with boundaries array>"}]`
-/// where boundaries is an array of boundary objects with start_line, end_line, kind, name.
+/// where boundaries is an array of boundary objects with `start_line`, `end_line`, kind, name.
 fn parse_chunk_boundaries_response(
-    value: serde_json::Value,
+    value: &serde_json::Value,
 ) -> Result<Vec<ChunkBoundary>, RhizomeError> {
     let text = value
         .as_array()
@@ -81,13 +86,15 @@ fn parse_chunk_boundaries_response(
 
     let mut result = Vec::new();
     for boundary in boundaries {
+        #[allow(clippy::cast_possible_truncation)] // JSON line numbers are small; u64→u32 is safe
         let start_line = boundary
             .get("start_line")
-            .and_then(|v| v.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .unwrap_or(0) as u32;
+        #[allow(clippy::cast_possible_truncation)]
         let end_line = boundary
             .get("end_line")
-            .and_then(|v| v.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .unwrap_or(0) as u32;
 
         // Skip boundaries with invalid ranges
@@ -116,7 +123,7 @@ fn parse_chunk_boundaries_response(
     Ok(result)
 }
 
-/// A chunk boundary extracted from rhizome's get_chunk_boundaries output.
+/// A chunk boundary extracted from rhizome's `get_chunk_boundaries` output.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChunkBoundary {
     pub start_line: u32,
@@ -129,6 +136,11 @@ pub struct ChunkBoundary {
 ///
 /// Returns `Ok(vec)` on success (possibly empty), or `Err` if rhizome is
 /// unavailable or the call fails.
+///
+/// # Errors
+/// Returns `RhizomeError::NotAvailable` if rhizome is not discoverable.
+/// Returns `RhizomeError::CommandFailed` if the MCP call fails or the path
+/// cannot be encoded as UTF-8.
 pub fn get_symbol_boundaries(file: &Path) -> Result<Vec<SymbolBoundary>, RhizomeError> {
     // Confirm rhizome is discoverable before spawning an MCP client
     if !is_available() {
@@ -146,16 +158,16 @@ pub fn get_symbol_boundaries(file: &Path) -> Result<Vec<SymbolBoundary>, Rhizome
         .call_tool("get_symbols", serde_json::json!({ "file": file_str }))
         .map_err(|e| RhizomeError::CommandFailed(format!("get_symbols failed: {e}")))?;
 
-    parse_mcp_symbols_response(result)
+    parse_mcp_symbols_response(&result)
 }
 
 /// Parse rhizome MCP `get_symbols` response into boundaries.
 ///
 /// The response has shape: `[{"type":"text","text":"<JSON array>"}]`
 /// where the JSON array contains symbol objects with fields like name, kind,
-/// and location with line_start and line_end.
+/// and location with `line_start` and `line_end`.
 fn parse_mcp_symbols_response(
-    value: serde_json::Value,
+    value: &serde_json::Value,
 ) -> Result<Vec<SymbolBoundary>, RhizomeError> {
     let text = value
         .as_array()
@@ -180,13 +192,15 @@ fn parse_mcp_symbols_response(
             _ => continue, // skip symbols without a kind (consistent with CLI parser which skips malformed lines)
         };
         let loc = sym.get("location");
+        #[allow(clippy::cast_possible_truncation)] // JSON line numbers are small; u64→u32 is safe
         let line_start = loc
             .and_then(|l| l.get("line_start"))
-            .and_then(|v| v.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .unwrap_or(0) as u32;
+        #[allow(clippy::cast_possible_truncation)]
         let line_end = loc
             .and_then(|l| l.get("line_end"))
-            .and_then(|v| v.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .unwrap_or(0) as u32;
 
         result.push(SymbolBoundary {
@@ -203,6 +217,7 @@ fn parse_mcp_symbols_response(
 ///
 /// Each line has the format: `kind name [line_start:col_start-line_end:col_end]`
 /// Optionally followed by an indented signature line.
+#[must_use]
 pub fn parse_symbols_output(output: &str) -> Vec<SymbolBoundary> {
     let mut symbols = Vec::new();
 
@@ -294,7 +309,7 @@ mod tests {
             "type": "text",
             "text": sym_json.to_string(),
         }]);
-        let symbols = parse_mcp_symbols_response(response).unwrap();
+        let symbols = parse_mcp_symbols_response(&response).unwrap();
         assert_eq!(symbols.len(), 1);
         assert_eq!(symbols[0].name, "main");
         assert_eq!(symbols[0].kind, "Function");
@@ -309,7 +324,7 @@ mod tests {
             "type": "text",
             "text": "[]",
         }]);
-        let symbols = parse_mcp_symbols_response(response).unwrap();
+        let symbols = parse_mcp_symbols_response(&response).unwrap();
         assert!(symbols.is_empty());
     }
 
@@ -322,7 +337,7 @@ mod tests {
             { "name": "real_fn", "kind": "Function", "location": { "line_start": 12, "line_end": 15 } },
         ]);
         let response = serde_json::json!([{ "type": "text", "text": sym_json.to_string() }]);
-        let symbols = parse_mcp_symbols_response(response).unwrap();
+        let symbols = parse_mcp_symbols_response(&response).unwrap();
         assert_eq!(symbols.len(), 1);
         assert_eq!(symbols[0].name, "real_fn");
     }
@@ -335,7 +350,7 @@ mod tests {
             { "name": "has_kind", "kind": "Struct", "location": { "line_start": 7, "line_end": 20 } },
         ]);
         let response = serde_json::json!([{ "type": "text", "text": sym_json.to_string() }]);
-        let symbols = parse_mcp_symbols_response(response).unwrap();
+        let symbols = parse_mcp_symbols_response(&response).unwrap();
         assert_eq!(symbols.len(), 1);
         assert_eq!(symbols[0].name, "has_kind");
         assert_eq!(symbols[0].kind, "Struct");
@@ -349,7 +364,7 @@ mod tests {
             "kind": "Function",
         }]);
         let response = serde_json::json!([{ "type": "text", "text": sym_json.to_string() }]);
-        let symbols = parse_mcp_symbols_response(response).unwrap();
+        let symbols = parse_mcp_symbols_response(&response).unwrap();
         assert_eq!(symbols.len(), 1);
         assert_eq!(symbols[0].line_start, 0);
         assert_eq!(symbols[0].line_end, 0);
@@ -359,18 +374,18 @@ mod tests {
     fn parse_mcp_symbols_response_wrong_shape_returns_err() {
         // Outer value is not an array — should return Err
         let bad = serde_json::json!({"type": "text", "text": "[]"});
-        assert!(parse_mcp_symbols_response(bad).is_err());
+        assert!(parse_mcp_symbols_response(&bad).is_err());
 
         // Outer array is empty — .first() returns None — should return Err
         let empty_arr = serde_json::json!([]);
-        assert!(parse_mcp_symbols_response(empty_arr).is_err());
+        assert!(parse_mcp_symbols_response(&empty_arr).is_err());
     }
 
     #[test]
     fn parse_mcp_symbols_response_invalid_inner_json_returns_err() {
         // text field contains non-JSON — should return Err
         let response = serde_json::json!([{ "type": "text", "text": "not valid json" }]);
-        assert!(parse_mcp_symbols_response(response).is_err());
+        assert!(parse_mcp_symbols_response(&response).is_err());
     }
 
     #[test]
@@ -486,7 +501,7 @@ mod utils [74:0-100:1]
             "type": "text",
             "text": boundaries_json.to_string(),
         }]);
-        let boundaries = parse_chunk_boundaries_response(response).unwrap();
+        let boundaries = parse_chunk_boundaries_response(&response).unwrap();
         assert_eq!(boundaries.len(), 2);
         assert_eq!(boundaries[0].start_line, 1);
         assert_eq!(boundaries[0].end_line, 10);
@@ -504,7 +519,7 @@ mod utils [74:0-100:1]
             "type": "text",
             "text": boundaries_json.to_string(),
         }]);
-        let boundaries = parse_chunk_boundaries_response(response).unwrap();
+        let boundaries = parse_chunk_boundaries_response(&response).unwrap();
         assert!(boundaries.is_empty());
     }
 
@@ -522,7 +537,7 @@ mod utils [74:0-100:1]
             "type": "text",
             "text": boundaries_json.to_string(),
         }]);
-        let boundaries = parse_chunk_boundaries_response(response).unwrap();
+        let boundaries = parse_chunk_boundaries_response(&response).unwrap();
         assert_eq!(boundaries.len(), 1);
         assert_eq!(boundaries[0].name, "good");
     }
@@ -530,9 +545,9 @@ mod utils [74:0-100:1]
     #[test]
     fn parse_chunk_boundaries_response_wrong_shape_returns_err() {
         let bad = serde_json::json!({"type": "text", "text": "{}"});
-        assert!(parse_chunk_boundaries_response(bad).is_err());
+        assert!(parse_chunk_boundaries_response(&bad).is_err());
 
         let empty_arr = serde_json::json!([]);
-        assert!(parse_chunk_boundaries_response(empty_arr).is_err());
+        assert!(parse_chunk_boundaries_response(&empty_arr).is_err());
     }
 }

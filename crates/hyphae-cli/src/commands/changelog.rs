@@ -41,8 +41,7 @@ fn parse_date_argument(since_str: &str, _default_days: i64) -> anyhow::Result<Da
                 })
                 .map_err(|_| {
                     anyhow::anyhow!(
-                        "invalid date format: {}\nSupported: 'yesterday', 'today', 'last-week', 'last-month', or ISO 8601",
-                        since_str
+                        "invalid date format: {since_str}\nSupported: 'yesterday', 'today', 'last-week', 'last-month', or ISO 8601"
                     )
                 })
         }
@@ -90,7 +89,7 @@ pub fn cmd_changelog(
             } else if days_ago == 1 {
                 "1 day ago".to_string()
             } else {
-                format!("{} days ago", days_ago)
+                format!("{days_ago} days ago")
             };
             println!("  - {} ({})", session.summary, days_text);
         }
@@ -119,9 +118,9 @@ pub fn cmd_changelog(
 
     if !topic_counts.is_empty() {
         let total: usize = topic_counts.values().sum();
-        println!("Memories: {} stored", total);
-        for (topic, count) in topic_counts.iter() {
-            println!("  {}: {}", topic, count);
+        println!("Memories: {total} stored");
+        for (topic, count) in &topic_counts {
+            println!("  {topic}: {count}");
         }
         println!();
     }

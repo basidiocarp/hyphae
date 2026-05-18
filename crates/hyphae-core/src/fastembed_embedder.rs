@@ -15,7 +15,7 @@ pub struct FastEmbedder {
 /// Default model: BGE-small-en-v1.5 (384d, English, fast)
 const DEFAULT_MODEL: &str = "BAAI/bge-small-en-v1.5";
 
-/// Resolve a model string to (EmbeddingModel, dimensions).
+/// Resolve a model string to (`EmbeddingModel`, dimensions).
 fn resolve_model(name: &str) -> HyphaeResult<(EmbeddingModel, usize)> {
     let model: EmbeddingModel = name
         .parse()
@@ -27,21 +27,15 @@ fn resolve_model(name: &str) -> HyphaeResult<(EmbeddingModel, usize)> {
 /// Known dimensions for fastembed models.
 fn model_dimensions(model: &EmbeddingModel) -> usize {
     match model {
-        EmbeddingModel::AllMiniLML6V2
-        | EmbeddingModel::AllMiniLML6V2Q
-        | EmbeddingModel::AllMiniLML12V2
-        | EmbeddingModel::AllMiniLML12V2Q
-        | EmbeddingModel::BGESmallENV15
-        | EmbeddingModel::BGESmallENV15Q
-        | EmbeddingModel::ParaphraseMLMiniLML12V2
-        | EmbeddingModel::ParaphraseMLMiniLML12V2Q => 384,
-
         EmbeddingModel::BGEBaseENV15
         | EmbeddingModel::BGEBaseENV15Q
         | EmbeddingModel::ParaphraseMLMpnetBaseV2
         | EmbeddingModel::GTEBaseENV15
         | EmbeddingModel::GTEBaseENV15Q
-        | EmbeddingModel::JinaEmbeddingsV2BaseCode => 768,
+        | EmbeddingModel::JinaEmbeddingsV2BaseCode
+        | EmbeddingModel::NomicEmbedTextV1
+        | EmbeddingModel::NomicEmbedTextV15
+        | EmbeddingModel::NomicEmbedTextV15Q => 768,
 
         EmbeddingModel::BGELargeENV15
         | EmbeddingModel::BGELargeENV15Q
@@ -51,13 +45,9 @@ fn model_dimensions(model: &EmbeddingModel) -> usize {
         | EmbeddingModel::GTELargeENV15Q
         | EmbeddingModel::ModernBertEmbedLarge => 1024,
 
-        EmbeddingModel::NomicEmbedTextV1
-        | EmbeddingModel::NomicEmbedTextV15
-        | EmbeddingModel::NomicEmbedTextV15Q => 768,
-
         EmbeddingModel::ClipVitB32 => 512,
 
-        // Unsupported models (multilingual, Chinese) — fall back to 384
+        // All 384d models and unsupported models (multilingual, Chinese) — fall back to 384
         _ => 384,
     }
 }
@@ -72,11 +62,17 @@ fn cache_directory() -> Option<std::path::PathBuf> {
 
 impl FastEmbedder {
     /// Create with default model (bge-small-en-v1.5).
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the model name cannot be resolved.
     pub fn new() -> HyphaeResult<Self> {
         Self::with_model(DEFAULT_MODEL)
     }
 
-    /// Create with a specific model by name (e.g. "BAAI/bge-small-en-v1.5").
+    /// Create with a specific model by name (e.g. `"BAAI/bge-small-en-v1.5"`).
+    ///
+    /// # Errors
+    /// Returns `HyphaeError` if the model name is not recognized.
     pub fn with_model(model_name: &str) -> HyphaeResult<Self> {
         let (_, dims) = resolve_model(model_name)?;
         Ok(Self {

@@ -48,7 +48,7 @@ pub fn run(fix: bool, cli_db_path: Option<PathBuf>) -> Result<()> {
     println!("\x1b[1mDatabase\x1b[0m");
 
     if db_path.exists() {
-        let size = std::fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
+        let size = std::fs::metadata(&db_path).map_or(0, |m| m.len());
         pass(&format!(
             "Database exists at {} ({:.0} KB)",
             db_path.display(),
@@ -230,12 +230,11 @@ fn inspect_config_at_path(path: PathBuf) -> ConfigInspection {
 }
 
 fn check_mcp(resolved_binary: Option<&std::path::Path>, warnings: &mut u32, errors: &mut u32) {
-    match discover(Tool::Hyphae) {
-        Some(info) => pass(&format!("hyphae binary at {}", info.binary_path.display())),
-        None => {
-            warn("hyphae binary not in PATH");
-            *warnings += 1;
-        }
+    if let Some(info) = discover(Tool::Hyphae) {
+        pass(&format!("hyphae binary at {}", info.binary_path.display()))
+    } else {
+        warn("hyphae binary not in PATH");
+        *warnings += 1;
     }
 
     let version = env!("CARGO_PKG_VERSION");
@@ -260,7 +259,7 @@ fn check_editor_registration(
     errors: &mut u32,
 ) {
     let Ok(config_path) = config_path_for(editor) else {
-        warn(&format!("Could not resolve {} config path", editor));
+        warn(&format!("Could not resolve {editor} config path"));
         *warnings += 1;
         return;
     };
@@ -278,7 +277,7 @@ fn check_editor_registration(
     if editor.uses_toml() {
         match toml_config_hyphae_server(&config_path) {
             Ok(Some(server)) => {
-                pass(&format!("Registered in {} config", editor));
+                pass(&format!("Registered in {editor} config"));
                 validate_registered_server(
                     &editor.to_string(),
                     &server,
@@ -288,11 +287,11 @@ fn check_editor_registration(
                 );
             }
             Ok(None) => {
-                warn(&format!("Not registered in {} config", editor));
+                warn(&format!("Not registered in {editor} config"));
                 *warnings += 1;
             }
             Err(error) => {
-                fail(&format!("Invalid {} config: {error}", editor));
+                fail(&format!("Invalid {editor} config: {error}"));
                 *errors += 1;
             }
         }
@@ -313,7 +312,7 @@ fn check_editor_registration(
     } else {
         match json_config_hyphae_server(&config_path, editor.mcp_key()) {
             Ok(Some(server)) => {
-                pass(&format!("Registered in {} config", editor));
+                pass(&format!("Registered in {editor} config"));
                 validate_registered_server(
                     &editor.to_string(),
                     &server,
@@ -323,11 +322,11 @@ fn check_editor_registration(
                 );
             }
             Ok(None) => {
-                warn(&format!("Not registered in {} config", editor));
+                warn(&format!("Not registered in {editor} config"));
                 *warnings += 1;
             }
             Err(error) => {
-                fail(&format!("Invalid {} config: {error}", editor));
+                fail(&format!("Invalid {editor} config: {error}"));
                 *errors += 1;
             }
         }
@@ -339,23 +338,20 @@ fn check_editor_registration(
             span_context = span_context.with_workspace_root(cwd.display().to_string());
         }
         let _subprocess_span = subprocess_span("claude mcp list", &span_context).entered();
-        match std::process::Command::new("claude")
+        if let Ok(output) = std::process::Command::new("claude")
             .args(["mcp", "list"])
             .output()
         {
-            Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                if stdout.contains("hyphae") {
-                    pass("Registered in Claude Code CLI runtime");
-                } else {
-                    warn("Not registered in Claude Code CLI runtime");
-                    *warnings += 1;
-                }
-            }
-            Err(_) => {
-                warn("Could not check Claude Code CLI runtime registration");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if stdout.contains("hyphae") {
+                pass("Registered in Claude Code CLI runtime");
+            } else {
+                warn("Not registered in Claude Code CLI runtime");
                 *warnings += 1;
             }
+        } else {
+            warn("Could not check Claude Code CLI runtime registration");
+            *warnings += 1;
         }
 
         check_claude_hook_health(resolved_binary, warnings, errors);
@@ -551,38 +547,35 @@ fn check_claude_hook_health(
 
     let mut configured_events = 0usize;
     if settings_exists {
-        match std::fs::read_to_string(&settings_path)
+        if let Some(root) = std::fs::read_to_string(&settings_path)
             .ok()
             .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
         {
-            Some(root) => {
-                for (event, file_name) in CLAUDE_HOOK_EVENTS {
-                    let expected_command = hook_dir.join(file_name).to_string_lossy().to_string();
-                    let present = root
-                        .get("hooks")
-                        .and_then(|hooks| hooks.get(event))
-                        .and_then(serde_json::Value::as_array)
-                        .is_some_and(|entries| {
-                            entries
-                                .iter()
-                                .filter_map(|entry| entry.get("hooks")?.as_array())
-                                .flatten()
-                                .filter_map(|hook| hook.get("command")?.as_str())
-                                .any(|command| command == expected_command)
-                        });
-                    if present {
-                        configured_events += 1;
-                    }
+            for (event, file_name) in CLAUDE_HOOK_EVENTS {
+                let expected_command = hook_dir.join(file_name).to_string_lossy().to_string();
+                let present = root
+                    .get("hooks")
+                    .and_then(|hooks| hooks.get(event))
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|entries| {
+                        entries
+                            .iter()
+                            .filter_map(|entry| entry.get("hooks")?.as_array())
+                            .flatten()
+                            .filter_map(|hook| hook.get("command")?.as_str())
+                            .any(|command| command == expected_command)
+                    });
+                if present {
+                    configured_events += 1;
                 }
             }
-            None => {
-                fail(&format!(
-                    "Claude Code settings at {} could not be parsed for hook validation",
-                    settings_path.display()
-                ));
-                *errors += 1;
-                return;
-            }
+        } else {
+            fail(&format!(
+                "Claude Code settings at {} could not be parsed for hook validation",
+                settings_path.display()
+            ));
+            *errors += 1;
+            return;
         }
     }
 
@@ -630,8 +623,7 @@ fn check_claude_hook_health(
     }
 
     fail(&format!(
-        "Claude Code lifecycle hooks are partially installed ({} settings entries, {} scripts)",
-        configured_events, installed_scripts
+        "Claude Code lifecycle hooks are partially installed ({configured_events} settings entries, {installed_scripts} scripts)"
     ));
     *errors += 1;
 }
@@ -685,9 +677,8 @@ fn check_embeddings(warnings: &mut u32) {
         if let Some(home) = directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf()) {
             let cache_dir = home.join(".cache/hyphae/models");
             if cache_dir.exists() {
-                let model_count = std::fs::read_dir(&cache_dir)
-                    .map(|entries| entries.count())
-                    .unwrap_or(0);
+                let model_count =
+                    std::fs::read_dir(&cache_dir).map_or(0, std::iter::Iterator::count);
                 if model_count > 0 {
                     pass(&format!(
                         "Model cache: {} ({model_count} item(s))",
@@ -725,21 +716,19 @@ fn check_embeddings(warnings: &mut u32) {
 
 fn check_ecosystem(warnings: &mut u32) {
     // Check mycelium
-    match discover(Tool::Mycelium) {
-        Some(_) => pass("Mycelium available (chunked output integration)"),
-        None => {
-            warn("Mycelium not installed (optional: token-optimized CLI)");
-            *warnings += 1;
-        }
+    if discover(Tool::Mycelium).is_some() {
+        pass("Mycelium available (chunked output integration)")
+    } else {
+        warn("Mycelium not installed (optional: token-optimized CLI)");
+        *warnings += 1;
     }
 
     // Check rhizome
-    match discover(Tool::Rhizome) {
-        Some(_) => pass("Rhizome available (code-aware recall)"),
-        None => {
-            warn("Rhizome not installed (optional: code intelligence)");
-            *warnings += 1;
-        }
+    if discover(Tool::Rhizome).is_some() {
+        pass("Rhizome available (code-aware recall)")
+    } else {
+        warn("Rhizome not installed (optional: code intelligence)");
+        *warnings += 1;
     }
 }
 

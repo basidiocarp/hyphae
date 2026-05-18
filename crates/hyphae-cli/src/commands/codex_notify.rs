@@ -123,8 +123,7 @@ fn build_turn_record(
     let assistant_snippet = notification
         .last_assistant_message
         .as_deref()
-        .map(|s| truncate_snippet(s, 140))
-        .unwrap_or_else(|| "turn complete".to_string());
+        .map_or_else(|| "turn complete".to_string(), |s| truncate_snippet(s, 140));
 
     let input_snippets = notification
         .input_messages
@@ -171,10 +170,9 @@ fn build_turn_record(
     let source = notification
         .thread_id
         .clone()
-        .map(|thread_id| {
+        .map_or(MemorySource::Manual, |thread_id| {
             MemorySource::agent_session(hyphae_core::SessionHost::Codex, thread_id, None)
-        })
-        .unwrap_or(MemorySource::Manual);
+        });
     let topic = format!("session/{project}");
 
     CodexMemoryRecord {
@@ -205,13 +203,11 @@ fn build_lifecycle_record(
 
     let summary = if lifecycle_snippet.is_empty() {
         format!(
-            "Codex lifecycle event {} in {project} ({turn_label}){}",
-            normalized_event_type, state_suffix
+            "Codex lifecycle event {normalized_event_type} in {project} ({turn_label}){state_suffix}"
         )
     } else {
         format!(
-            "Codex lifecycle event {} in {project} ({turn_label}): {lifecycle_snippet}{}",
-            normalized_event_type, state_suffix
+            "Codex lifecycle event {normalized_event_type} in {project} ({turn_label}): {lifecycle_snippet}{state_suffix}"
         )
     };
 
@@ -239,10 +235,9 @@ fn build_lifecycle_record(
     let source = notification
         .thread_id
         .clone()
-        .map(|thread_id| {
+        .map_or(MemorySource::Manual, |thread_id| {
             MemorySource::agent_session(hyphae_core::SessionHost::Codex, thread_id, None)
-        })
-        .unwrap_or(MemorySource::Manual);
+        });
     let topic = format!("session/{project}/codex-lifecycle");
 
     CodexMemoryRecord {
@@ -470,9 +465,10 @@ fn value_to_snippet(value: &serde_json::Value) -> String {
             if let Some(text) = map.get("content").and_then(|v| v.as_str()) {
                 return truncate_snippet(text, 120);
             }
-            serde_json::to_string(value)
-                .map(|s| truncate_snippet(&s, 120))
-                .unwrap_or_else(|_| "<unserializable>".to_string())
+            serde_json::to_string(value).map_or_else(
+                |_| "<unserializable>".to_string(),
+                |s| truncate_snippet(&s, 120),
+            )
         }
     }
 }

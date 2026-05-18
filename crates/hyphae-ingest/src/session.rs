@@ -62,46 +62,57 @@ impl NormalizedSession {
         }
     }
 
+    #[must_use]
     pub fn runtime(&self) -> SessionRuntime {
         self.runtime
     }
 
+    #[must_use]
     pub fn session_id(&self) -> Option<&str> {
         self.session_id.as_deref()
     }
 
+    #[must_use]
     pub fn project(&self) -> Option<&str> {
         self.project.as_deref()
     }
 
+    #[must_use]
     pub fn message_count(&self) -> usize {
         self.message_count
     }
 
+    #[must_use]
     pub fn files_modified(&self) -> &HashSet<String> {
         &self.files_modified
     }
 
+    #[must_use]
     pub fn commands_run(&self) -> &[String] {
         &self.commands_run
     }
 
+    #[must_use]
     pub fn errors(&self) -> &[String] {
         &self.errors
     }
 
+    #[must_use]
     pub fn highlights(&self) -> &[String] {
         &self.highlights
     }
 
+    #[must_use]
     pub fn lifecycle_events(&self) -> &[String] {
         &self.lifecycle_events
     }
 
+    #[must_use]
     pub fn codex_lifecycle_state(&self) -> Option<&CodexLifecycleState> {
         self.codex_lifecycle_state.as_ref()
     }
 
+    #[must_use]
     pub fn raw_excerpt(&self) -> &[String] {
         &self.raw_excerpt
     }
@@ -261,6 +272,7 @@ impl NormalizedSession {
     }
 }
 
+#[must_use]
 pub fn project_from_cwd(cwd: &str) -> Option<String> {
     std::path::Path::new(cwd)
         .file_name()
@@ -268,6 +280,7 @@ pub fn project_from_cwd(cwd: &str) -> Option<String> {
         .filter(|name| !name.is_empty())
 }
 
+#[must_use]
 pub fn truncate_snippet(text: &str, limit: usize) -> String {
     let trimmed = text.trim();
     let mut chars = trimmed.chars();
@@ -279,6 +292,7 @@ pub fn truncate_snippet(text: &str, limit: usize) -> String {
     }
 }
 
+#[must_use]
 pub fn normalize_codex_event_type(event_type: &str) -> String {
     let normalized = event_type
         .trim()
@@ -297,6 +311,7 @@ pub fn normalize_codex_event_type(event_type: &str) -> String {
     }
 }
 
+#[must_use]
 pub fn format_codex_lifecycle_note(event_type: &str, detail: &str) -> String {
     let event_type = normalize_codex_event_type(event_type);
     let detail = truncate_snippet(detail, 160);
@@ -307,6 +322,7 @@ pub fn format_codex_lifecycle_note(event_type: &str, detail: &str) -> String {
     }
 }
 
+#[must_use]
 pub fn summarize_codex_lifecycle_state(state: &CodexLifecycleState) -> String {
     let mut parts = Vec::new();
 
@@ -338,6 +354,7 @@ pub fn summarize_codex_lifecycle_state(state: &CodexLifecycleState) -> String {
     parts.join(" · ")
 }
 
+#[must_use]
 pub fn codex_lifecycle_phase(state: &CodexLifecycleState) -> Option<CodexLifecyclePhase> {
     if state.session_ended {
         return Some(CodexLifecyclePhase::SessionEnded);
@@ -352,12 +369,12 @@ pub fn codex_lifecycle_phase(state: &CodexLifecycleState) -> Option<CodexLifecyc
             Some(CodexLifecyclePhase::ApprovalResolved)
         }
         Some("agent-turn-complete") => Some(CodexLifecyclePhase::TurnComplete),
-        Some(_) if state.session_started => Some(CodexLifecyclePhase::SessionActive),
-        None if state.session_started => Some(CodexLifecyclePhase::SessionActive),
+        _ if state.session_started => Some(CodexLifecyclePhase::SessionActive),
         _ => None,
     }
 }
 
+#[must_use]
 pub fn phase_label(phase: CodexLifecyclePhase) -> &'static str {
     match phase {
         CodexLifecyclePhase::SessionActive => "session-active",
@@ -368,6 +385,7 @@ pub fn phase_label(phase: CodexLifecyclePhase) -> &'static str {
     }
 }
 
+#[must_use]
 pub fn codex_lifecycle_state_keyword(state: &CodexLifecycleState) -> Option<String> {
     codex_lifecycle_phase(state).map(|phase| format!("state:{}", phase_label(phase)))
 }

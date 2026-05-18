@@ -127,8 +127,8 @@ pub(crate) enum MemoirCommand {
         /// Target concept name
         #[arg(long)]
         to: String,
-        /// Relation type: part_of, depends_on, related_to, contradicts, refines,
-        /// alternative_to, caused_by, instance_of, superseded_by
+        /// Relation type: `part_of`, `depends_on`, `related_to`, contradicts, refines,
+        /// `alternative_to`, `caused_by`, `instance_of`, `superseded_by`
         #[arg(short, long, default_value = "related_to")]
         relation: String,
     },
@@ -143,8 +143,8 @@ pub(crate) enum MemoirCommand {
         /// Target concept name
         #[arg(long)]
         to: String,
-        /// Relation type to remove: part_of, depends_on, related_to, contradicts, refines,
-        /// alternative_to, caused_by, instance_of, superseded_by
+        /// Relation type to remove: `part_of`, `depends_on`, `related_to`, contradicts, refines,
+        /// `alternative_to`, `caused_by`, `instance_of`, `superseded_by`
         #[arg(short, long, default_value = "related_to")]
         relation: String,
         /// Emit structured JSON instead of human-readable text
@@ -412,7 +412,7 @@ pub(crate) fn cmd_memoir_inspect(
                 .concept
                 .labels
                 .iter()
-                .map(|l| l.to_string())
+                .map(std::string::ToString::to_string)
                 .collect::<Vec<_>>()
                 .join(", ");
             println!("Labels:     {label_str}");

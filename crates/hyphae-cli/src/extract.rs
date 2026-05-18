@@ -157,8 +157,8 @@ fn extract_facts(text: &str, project: &str) -> Vec<(String, String, Importance)>
             .skip(1)
             .filter(|w| {
                 w.len() > 1
-                    && w.chars().next().is_some_and(|c| c.is_uppercase())
-                    && !w.chars().all(|c| c.is_uppercase()) // skip ALL_CAPS
+                    && w.chars().next().is_some_and(char::is_uppercase)
+                    && !w.chars().all(char::is_uppercase) // skip ALL_CAPS
             })
             .count();
         if proper_nouns >= 2 {
@@ -524,8 +524,7 @@ mod tests {
             facts
                 .iter()
                 .all(|(_, content, _)| !content.contains("sk-ant-")),
-            "expected no facts containing API key: {:?}",
-            facts
+            "expected no facts containing API key: {facts:?}"
         );
     }
 

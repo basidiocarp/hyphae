@@ -12,6 +12,7 @@ use crate::memory::Weight;
 pub struct Confidence(f32);
 
 impl Confidence {
+    #[must_use]
     pub fn new(v: f32) -> Option<Self> {
         if v.is_nan() || !(0.0..=1.0).contains(&v) {
             None
@@ -20,6 +21,7 @@ impl Confidence {
         }
     }
 
+    #[must_use]
     pub fn new_clamped(v: f32) -> Self {
         if v.is_nan() {
             Self(0.5)
@@ -28,6 +30,7 @@ impl Confidence {
         }
     }
 
+    #[must_use]
     pub fn value(self) -> f32 {
         self.0
     }
@@ -127,8 +130,7 @@ impl FromStr for MemoirSource {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "compiled_artifact" => Ok(MemoirSource::CompiledArtifact),
-            "compiled artifact" => Ok(MemoirSource::CompiledArtifact),
+            "compiled_artifact" | "compiled artifact" => Ok(MemoirSource::CompiledArtifact),
             "agent" => Ok(MemoirSource::Agent),
             "import" => Ok(MemoirSource::Import),
             "system" => Ok(MemoirSource::System),
@@ -225,6 +227,7 @@ pub struct Memoir {
 }
 
 impl Memoir {
+    #[must_use]
     pub fn new(name: String, description: String) -> Self {
         let now = Utc::now();
         Self {
@@ -265,6 +268,11 @@ pub struct Label {
 }
 
 impl Label {
+    /// Create a new label with namespace and value.
+    ///
+    /// # Errors
+    /// Returns `HyphaeError::Validation` if namespace or value is empty, or if
+    /// namespace contains `':'`.
     pub fn new(namespace: impl Into<String>, value: impl Into<String>) -> HyphaeResult<Self> {
         let ns = namespace.into();
         let val = value.into();
@@ -365,6 +373,7 @@ pub struct Concept {
 }
 
 impl Concept {
+    #[must_use]
     pub fn new(memoir_id: MemoirId, name: String, definition: String) -> Self {
         let now = Utc::now();
         Self {
@@ -406,6 +415,7 @@ pub enum Relation {
 
 impl Relation {
     /// Returns `true` for symmetric relations (undirected), `false` for directional relations.
+    #[must_use]
     pub fn is_symmetric(&self) -> bool {
         matches!(
             self,
@@ -479,6 +489,7 @@ pub struct ConceptLink {
 }
 
 impl ConceptLink {
+    #[must_use]
     pub fn new(source_id: ConceptId, target_id: ConceptId, relation: Relation) -> Self {
         let now = Utc::now();
         Self {
@@ -627,8 +638,8 @@ mod tests {
         assert!(Confidence::new(1.0).is_some());
         assert!(Confidence::new(-0.1).is_none());
         assert!(Confidence::new(1.1).is_none());
-        assert_eq!(Confidence::new_clamped(2.0).value(), 1.0);
-        assert_eq!(Confidence::new_clamped(-1.0).value(), 0.0);
+        assert!((Confidence::new_clamped(2.0).value() - 1.0).abs() < f32::EPSILON);
+        assert!((Confidence::new_clamped(-1.0).value() - 0.0).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -639,7 +650,7 @@ mod tests {
     #[test]
     fn test_confidence_new_clamped_nan() {
         let result = Confidence::new_clamped(f32::NAN);
-        assert_eq!(result.value(), 0.5);
+        assert!((result.value() - 0.5).abs() < f32::EPSILON);
     }
 
     #[test]

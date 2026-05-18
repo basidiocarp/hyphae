@@ -16,6 +16,7 @@ use crate::chunker::{ChunkStrategy, chunk_text};
 use crate::readers::read_file;
 
 /// Compute SHA-256 hash of file content.
+#[must_use]
 pub fn compute_content_hash(content: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -24,6 +25,10 @@ pub fn compute_content_hash(content: &[u8]) -> String {
 }
 
 /// Ingest a single file: read, chunk, and optionally embed.
+///
+/// # Errors
+/// Returns an error if the file cannot be read, is binary, exceeds the size limit,
+/// or if embedding fails when an embedder is provided.
 pub fn ingest_file(
     path: &Path,
     embedder: Option<&dyn Embedder>,
@@ -85,6 +90,10 @@ const SKIP_DIRS: &[&str] = &["target", "node_modules", ".git"];
 ///
 /// Hidden files/directories (starting with `.`) and common build directories
 /// are skipped. Errors on individual files are logged and skipped.
+///
+/// # Errors
+/// Returns an error only if the walk itself fails catastrophically; per-file
+/// errors are logged and skipped.
 pub fn ingest_directory(
     path: &Path,
     embedder: Option<&dyn Embedder>,
@@ -142,6 +151,7 @@ fn is_skipped_dir(entry: &walkdir::DirEntry) -> bool {
 ///
 /// Skips paths that contain hidden components (starting with `.`) or known
 /// build/dependency directories (`target`, `node_modules`, `.git`).
+#[must_use]
 pub fn should_skip(path: &Path) -> bool {
     path.components().any(|c| {
         if let std::path::Component::Normal(name) = c {

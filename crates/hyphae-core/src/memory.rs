@@ -15,6 +15,7 @@ pub struct Weight(f32);
 pub const DEFAULT_CONSOLIDATION_THRESHOLD: usize = 15;
 
 impl Weight {
+    #[must_use]
     pub fn new(v: f32) -> Option<Self> {
         if v.is_nan() || !(0.0..=1.0).contains(&v) {
             None
@@ -23,6 +24,7 @@ impl Weight {
         }
     }
 
+    #[must_use]
     pub fn new_clamped(v: f32) -> Self {
         if v.is_nan() {
             Self(0.5)
@@ -31,6 +33,7 @@ impl Weight {
         }
     }
 
+    #[must_use]
     pub fn value(self) -> f32 {
         self.0
     }
@@ -81,6 +84,7 @@ pub struct Memory {
 }
 
 impl Memory {
+    #[must_use]
     pub fn new(topic: String, summary: String, importance: Importance) -> Self {
         Self::builder(topic, summary, importance).build()
     }
@@ -89,6 +93,7 @@ impl Memory {
         MemoryBuilder::new(topic, summary, importance)
     }
 
+    #[must_use]
     pub fn is_invalidated(&self) -> bool {
         self.invalidated_at.is_some()
     }
@@ -142,7 +147,7 @@ impl<'de> Deserialize<'de> for ConsolidationTopicRule {
     {
         struct ConsolidationTopicRuleVisitor;
 
-        impl<'de> Visitor<'de> for ConsolidationTopicRuleVisitor {
+        impl Visitor<'_> for ConsolidationTopicRuleVisitor {
             type Value = ConsolidationTopicRule;
 
             fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -156,7 +161,8 @@ impl<'de> Deserialize<'de> for ConsolidationTopicRule {
                 if value == 0 {
                     return Err(E::custom("consolidation threshold must be greater than 0"));
                 }
-                Ok(ConsolidationTopicRule::Threshold(value as usize))
+                let threshold = usize::try_from(value).map_err(E::custom)?;
+                Ok(ConsolidationTopicRule::Threshold(threshold))
             }
 
             fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
@@ -166,7 +172,10 @@ impl<'de> Deserialize<'de> for ConsolidationTopicRule {
                 if value <= 0 {
                     return Err(E::custom("consolidation threshold must be greater than 0"));
                 }
-                Ok(ConsolidationTopicRule::Threshold(value as usize))
+                // value > 0 is verified above, so the u64 cast is safe.
+                #[allow(clippy::cast_sign_loss)]
+                let threshold = usize::try_from(value as u64).map_err(E::custom)?;
+                Ok(ConsolidationTopicRule::Threshold(threshold))
             }
 
             fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
@@ -211,6 +220,7 @@ impl Default for ConsolidationConfig {
 }
 
 impl ConsolidationConfig {
+    #[must_use]
     pub fn threshold_for_topic(&self, topic: &str) -> Option<usize> {
         match self.topics.get(topic) {
             Some(ConsolidationTopicRule::Exempt) => None,
@@ -219,6 +229,7 @@ impl ConsolidationConfig {
         }
     }
 
+    #[must_use]
     pub fn is_exempt(&self, topic: &str) -> bool {
         matches!(self.topics.get(topic), Some(ConsolidationTopicRule::Exempt))
     }
@@ -329,6 +340,7 @@ impl MemoryBuilder {
         self
     }
 
+    #[must_use]
     pub fn build(self) -> Memory {
         let now = Utc::now();
         let expires_at = if self.importance == Importance::Ephemeral && self.expires_at.is_none() {
@@ -530,7 +542,7 @@ mod tests {
     #[test]
     fn test_memory_builder_defaults() {
         let m = Memory::builder("t".into(), "s".into(), Importance::Low).build();
-        assert_eq!(m.weight.value(), 1.0);
+        assert!((m.weight.value() - 1.0).abs() < f32::EPSILON);
         assert!(m.keywords.is_empty());
         assert!(m.raw_excerpt.is_none());
         assert!(m.embedding.is_none());
@@ -593,8 +605,8 @@ mod tests {
 
     #[test]
     fn test_weight_clamped() {
-        assert_eq!(Weight::new_clamped(2.0).value(), 1.0);
-        assert_eq!(Weight::new_clamped(-1.0).value(), 0.0);
+        assert!((Weight::new_clamped(2.0).value() - 1.0).abs() < f32::EPSILON);
+        assert!((Weight::new_clamped(-1.0).value() - 0.0).abs() < f32::EPSILON);
         assert!((Weight::new_clamped(0.5).value() - 0.5).abs() < f32::EPSILON);
     }
 
@@ -606,7 +618,7 @@ mod tests {
     #[test]
     fn test_weight_new_clamped_nan() {
         let result = Weight::new_clamped(f32::NAN);
-        assert_eq!(result.value(), 0.5);
+        assert!((result.value() - 0.5).abs() < f32::EPSILON);
     }
 
     #[test]
