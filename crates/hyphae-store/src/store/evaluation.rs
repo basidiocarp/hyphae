@@ -20,6 +20,7 @@ pub struct EvaluationWindow {
     pub total_session_length: usize,
     pub session_count: usize,
     pub recalled_memory_count: usize,
+    pub trend: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -111,6 +112,11 @@ impl EvaluationWindow {
             return 0.0;
         }
         (self.recalled_memory_count as f64 / (self.recalled_memory_count + 5) as f64) * 100.0
+    }
+
+    #[must_use]
+    pub fn trend_percentage(&self) -> f64 {
+        (self.trend - 1.0) * 100.0
     }
 }
 
@@ -620,6 +626,53 @@ pub fn collect_recall_effectiveness_window(
     })
 }
 
+fn compute_overall_score(window: &EvaluationWindow) -> f64 {
+    if window.session_count == 0 {
+        return 0.0;
+    }
+
+    let error_rate = window.error_rate();
+    let correction_rate = window.correction_rate();
+    let resolution_rate = window.resolution_rate();
+    let test_fix_rate = window.test_fix_rate();
+
+    (1.0 - error_rate.min(1.0)) * 0.25
+        + (1.0 - correction_rate.min(1.0)) * 0.25
+        + resolution_rate * 0.25
+        + test_fix_rate * 0.25
+}
+
+fn compute_trend_from_scores(recent_scores: &[f64]) -> f64 {
+    if recent_scores.len() < 2 {
+        return 1.0;
+    }
+
+    let avg = recent_scores.iter().sum::<f64>() / recent_scores.len() as f64;
+    if avg.abs() < f64::EPSILON {
+        return 1.0;
+    }
+
+    recent_scores[0] / avg.max(f64::EPSILON)
+}
+
+fn get_recent_evaluation_scores(store: &SqliteStore, project: Option<&str>) -> HyphaeResult<Vec<f64>> {
+    let evaluation_memories = store.get_by_topic("evaluation/score", project).unwrap_or_default();
+
+    let mut scores: Vec<(DateTime<Utc>, f64)> = evaluation_memories
+        .iter()
+        .filter_map(|mem| {
+            mem.summary
+                .parse::<f64>()
+                .ok()
+                .map(|score| (mem.created_at, score))
+        })
+        .collect();
+
+    scores.sort_by(|a, b| b.0.cmp(&a.0));
+
+    Ok(scores.into_iter().take(5).map(|(_, score)| score).collect())
+}
+
 pub fn collect_evaluation_window(
     store: &SqliteStore,
     days_ago_start: i64,
@@ -687,7 +740,7 @@ pub fn collect_evaluation_window(
         &structured_recall_events_in_window(store, project, days_ago_start, days_ago_end)?,
     );
 
-    Ok(EvaluationWindow {
+    let evaluation_window = EvaluationWindow {
         error_count,
         correction_count,
         resolved_count,
@@ -696,6 +749,23 @@ pub fn collect_evaluation_window(
         total_session_length,
         session_count,
         recalled_memory_count,
+        trend: 1.0,
+    };
+
+    let current_score = compute_overall_score(&evaluation_window);
+    let recent_scores = get_recent_evaluation_scores(store, project).unwrap_or_default();
+
+    let trend = if !recent_scores.is_empty() {
+        let mut all_scores = vec![current_score];
+        all_scores.extend(&recent_scores);
+        compute_trend_from_scores(&all_scores)
+    } else {
+        1.0
+    };
+
+    Ok(EvaluationWindow {
+        trend,
+        ..evaluation_window
     })
 }
 
@@ -1227,5 +1297,38 @@ mod tests {
         assert!((report.average_effectiveness() - 0.5).abs() < 1e-6);
         assert_eq!(report.top_recalled_memories[0].memory_id, repeated_id);
         assert_eq!(report.top_recalled_memories[0].effectiveness, 0.5);
+    }
+
+    #[test]
+    fn test_collect_evaluation_window_computes_trend_from_recent_scores() {
+        let store = test_store();
+
+        let (session_id, _) = store
+            .session_start("demo-project", Some("session"))
+            .unwrap();
+        store
+            .session_end(&session_id, Some("done"), None, Some("0"))
+            .unwrap();
+
+        let window = collect_evaluation_window(&store, 0, 1, Some("demo-project")).unwrap();
+
+        assert_eq!(window.trend, 1.0);
+    }
+
+    #[test]
+    fn test_trend_percentage_calculation() {
+        let window = EvaluationWindow {
+            error_count: 0,
+            correction_count: 0,
+            resolved_count: 0,
+            failed_test_count: 0,
+            resolved_test_count: 0,
+            total_session_length: 0,
+            session_count: 1,
+            recalled_memory_count: 0,
+            trend: 1.2,
+        };
+
+        assert!((window.trend_percentage() - 20.0).abs() < 0.001);
     }
 }
