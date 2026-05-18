@@ -390,6 +390,7 @@ pub(crate) fn tool_store_command_output(
         return ToolResult::error(format!("store error: {e}"));
     }
     if let Err(e) = store.store_chunks(chunks) {
+        let _ = store.delete_document(&doc_id); // best-effort cleanup to avoid orphaned document row
         return ToolResult::error(format!("store error: {e}"));
     }
 
