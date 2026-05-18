@@ -1,5 +1,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Secrets Detection Patterns
+//
+// Keep in sync with cortina/src/hooks/post_tool_use/secret_redaction.rs.
+// Cortina uses hand-rolled string matching; hyphae uses regex. When adding
+// or removing a pattern category, update both files.
 // ─────────────────────────────────────────────────────────────────────────────
 
 use regex::Regex;
@@ -20,6 +24,12 @@ const SECRET_PATTERNS: &[(&str, &str)] = &[
         "auth token",
     ),
     (r"-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----", "private key"),
+    // Stripe-style live/test secret keys — synced from cortina (SK_LIVE, SK_TEST).
+    (r"(?i)sk[_-](live|test)\s*[:=]\s*\S{8,}", "Stripe secret key"),
+    // Authorization header (non-Bearer form, e.g. Basic auth) — synced from cortina.
+    (r"(?i)^authorization\s*:.*$", "Authorization header"),
+    // URL-embedded credentials (https://user:pass@host) — synced from cortina.
+    (r"https?://[^@\s]+:[^@\s]+@", "URL credentials"),
 ];
 
 fn compiled_secret_patterns() -> &'static [(Regex, &'static str)] {
@@ -107,6 +117,38 @@ mod tests {
         let secrets = detect_secrets(content);
         assert!(!secrets.is_empty());
         assert!(secrets.iter().any(|s| s.contains("password")));
+    }
+
+    #[test]
+    fn test_detect_stripe_live_key() {
+        let content = "SK_LIVE=sk_live_abc123defghijklmnop";
+        let secrets = detect_secrets(content);
+        assert!(!secrets.is_empty());
+        assert!(secrets.iter().any(|s| s.contains("Stripe")));
+    }
+
+    #[test]
+    fn test_detect_stripe_test_key() {
+        let content = "sk_test: sk_test_xyz987uvwrstuvwxyz";
+        let secrets = detect_secrets(content);
+        assert!(!secrets.is_empty());
+        assert!(secrets.iter().any(|s| s.contains("Stripe")));
+    }
+
+    #[test]
+    fn test_detect_authorization_header() {
+        let content = "Authorization: Basic dXNlcm5hbWU6cGFzc3dvcmQ=";
+        let secrets = detect_secrets(content);
+        assert!(!secrets.is_empty());
+        assert!(secrets.iter().any(|s| s.contains("Authorization")));
+    }
+
+    #[test]
+    fn test_detect_url_credentials() {
+        let content = "Cloning from https://user:mypassword@github.com/org/repo.git";
+        let secrets = detect_secrets(content);
+        assert!(!secrets.is_empty());
+        assert!(secrets.iter().any(|s| s.contains("URL")));
     }
 
     #[test]
