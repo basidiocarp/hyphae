@@ -25,7 +25,10 @@ use std::path::Path;
 use std::sync::Once;
 
 use chrono::{DateTime, Utc};
-use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, ffi::sqlite3_auto_extension, params};
+use rusqlite::{
+    Connection, OptionalExtension, Transaction, TransactionBehavior, ffi::sqlite3_auto_extension,
+    params,
+};
 
 use hyphae_core::{HyphaeError, HyphaeResult, MemoryStore};
 

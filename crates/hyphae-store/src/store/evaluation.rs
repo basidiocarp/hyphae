@@ -655,8 +655,13 @@ fn compute_trend_from_scores(recent_scores: &[f64]) -> f64 {
     recent_scores[0] / avg.max(f64::EPSILON)
 }
 
-fn get_recent_evaluation_scores(store: &SqliteStore, project: Option<&str>) -> HyphaeResult<Vec<f64>> {
-    let evaluation_memories = store.get_by_topic("evaluation/score", project).unwrap_or_default();
+fn get_recent_evaluation_scores(
+    store: &SqliteStore,
+    project: Option<&str>,
+) -> HyphaeResult<Vec<f64>> {
+    let evaluation_memories = store
+        .get_by_topic("evaluation/score", project)
+        .unwrap_or_default();
 
     let mut scores: Vec<(DateTime<Utc>, f64)> = evaluation_memories
         .iter()

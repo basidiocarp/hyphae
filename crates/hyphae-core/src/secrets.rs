@@ -25,7 +25,10 @@ const SECRET_PATTERNS: &[(&str, &str)] = &[
     ),
     (r"-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----", "private key"),
     // Stripe-style live/test secret keys — synced from cortina (SK_LIVE, SK_TEST).
-    (r"(?i)sk[_-](live|test)\s*[:=]\s*\S{8,}", "Stripe secret key"),
+    (
+        r"(?i)sk[_-](live|test)\s*[:=]\s*\S{8,}",
+        "Stripe secret key",
+    ),
     // Authorization header (non-Bearer form, e.g. Basic auth) — synced from cortina.
     (r"(?i)^authorization\s*:.*$", "Authorization header"),
     // URL-embedded credentials (https://user:pass@host) — synced from cortina.

@@ -153,59 +153,59 @@ pub(crate) fn tool_store(
             }
         };
         if let Some((existing, score)) = similar.first() {
-                // Require explicit project match: (Some, Some) or (None, None).
-                // Reject (Some, None) and (None, Some) pairs.
-                let project_matches = match (&existing.project, &memory.project) {
-                    (Some(a), Some(b)) => a == b,
-                    (None, None) => true,
-                    _ => false,
-                };
-                if score > &0.85 && existing.topic == topic && project_matches {
-                    let mut updated = existing.clone();
-                    updated.summary = content.to_string();
-                    updated.updated_at = Utc::now();
-                    updated.weight = Weight::default();
-                    if let Some(raw) = get_str(args, "raw_excerpt") {
-                        updated.raw_excerpt = Some(raw.into());
-                    }
-                    if let Some(keywords_arr) = args.get("keywords").and_then(|v| v.as_array()) {
-                        updated.keywords = keywords_arr
-                            .iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect();
-                    }
-                    updated.importance = importance;
-                    updated.embedding = Some(query_emb);
-                    if let Err(e) = store.update(&updated) {
-                        return ToolResult::error(format!("failed to update: {e}"));
-                    }
+            // Require explicit project match: (Some, Some) or (None, None).
+            // Reject (Some, None) and (None, Some) pairs.
+            let project_matches = match (&existing.project, &memory.project) {
+                (Some(a), Some(b)) => a == b,
+                (None, None) => true,
+                _ => false,
+            };
+            if score > &0.85 && existing.topic == topic && project_matches {
+                let mut updated = existing.clone();
+                updated.summary = content.to_string();
+                updated.updated_at = Utc::now();
+                updated.weight = Weight::default();
+                if let Some(raw) = get_str(args, "raw_excerpt") {
+                    updated.raw_excerpt = Some(raw.into());
+                }
+                if let Some(keywords_arr) = args.get("keywords").and_then(|v| v.as_array()) {
+                    updated.keywords = keywords_arr
+                        .iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect();
+                }
+                updated.importance = importance;
+                updated.embedding = Some(query_emb);
+                if let Err(e) = store.update(&updated) {
+                    return ToolResult::error(format!("failed to update: {e}"));
+                }
 
-                    let warnings = detect_secrets(content);
-                    return if compact {
-                        if !warnings.is_empty() {
-                            ToolResult::text(format!(
-                                "ok:{}\n⚠️ Possible secrets detected: {}. Consider using hyphae_memory_forget to remove.",
-                                updated.id,
-                                warnings.join(", ")
-                            ))
-                        } else {
-                            ToolResult::text(format!("ok:{}", updated.id))
-                        }
+                let warnings = detect_secrets(content);
+                return if compact {
+                    if !warnings.is_empty() {
+                        ToolResult::text(format!(
+                            "ok:{}\n⚠️ Possible secrets detected: {}. Consider using hyphae_memory_forget to remove.",
+                            updated.id,
+                            warnings.join(", ")
+                        ))
                     } else {
-                        let mut msg = format!(
-                            "Updated existing memory (similarity {score:.2}): {}",
-                            updated.id
-                        );
-                        if !warnings.is_empty() {
-                            msg.push_str(&format!(
+                        ToolResult::text(format!("ok:{}", updated.id))
+                    }
+                } else {
+                    let mut msg = format!(
+                        "Updated existing memory (similarity {score:.2}): {}",
+                        updated.id
+                    );
+                    if !warnings.is_empty() {
+                        msg.push_str(&format!(
                                 "\n⚠️ [Hyphae: Possible secrets detected in stored memory: {}. \
                                  Consider using hyphae_memory_forget to remove if these are real credentials.]",
                                 warnings.join(", ")
                             ));
-                        }
-                        ToolResult::text(msg)
-                    };
-                }
+                    }
+                    ToolResult::text(msg)
+                };
+            }
         }
     }
 

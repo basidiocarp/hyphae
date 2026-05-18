@@ -1986,7 +1986,9 @@ mod tests {
 
         // Use distinct project names so session_start doesn't deduplicate them.
         let (old_id, _) = store.session_start("proj-old", Some("old work")).unwrap();
-        let (recent_id, _) = store.session_start("proj-new", Some("recent work")).unwrap();
+        let (recent_id, _) = store
+            .session_start("proj-new", Some("recent work"))
+            .unwrap();
 
         // Backdate the old session so it falls before the 2-hour cutoff.
         let old_started = (Utc::now() - chrono::Duration::hours(3)).to_rfc3339();
