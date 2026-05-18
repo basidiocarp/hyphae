@@ -345,44 +345,10 @@ pub fn dispatch_search(
             store.get_by_ids(&id_refs, query.project.as_deref())
         }
         SearchType::Summary => {
-            // Return one representative memory per matching topic
-            let topics = store.list_topics(query.project.as_deref())?;
-            let q_lower = query.query.to_lowercase();
-            let mut results = Vec::new();
-
-            for (topic, _) in topics
-                .iter()
-                .filter(|(t, _)| t.to_lowercase().contains(&q_lower))
-            {
-                let mut topic_memories = store.search_fts_in_topic(
-                    &query.query,
-                    topic,
-                    1,
-                    0,
-                    query.project.as_deref(),
-                )?;
-
-                if topic_memories.is_empty() {
-                    // Get most recent for this topic if FTS returns nothing
-                    topic_memories = store.search_fts_with_options(
-                        "",
-                        Some(topic),
-                        1,
-                        0,
-                        query.project.as_deref(),
-                        false,
-                        hyphae_core::SearchOrder::WeightDesc,
-                    )?;
-                }
-
-                if let Some(m) = topic_memories.into_iter().next() {
-                    results.push(m);
-                    if results.len() >= query.limit {
-                        break;
-                    }
-                }
-            }
-            Ok(results)
+            // Return one representative memory per matching topic.
+            // A single SQL query with a window function replaces the previous N+1 loop
+            // (list_topics + one query per matching topic).
+            store.search_summary(&query.query, query.limit, query.project.as_deref())
         }
         SearchType::Code => {
             // Keyword search for code topics. Use original query without appending noise tokens.

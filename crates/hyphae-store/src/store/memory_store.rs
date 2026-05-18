@@ -2206,6 +2206,55 @@ impl MemoryStore for SqliteStore {
 
 /// Additional methods on SqliteStore not part of the MemoryStore trait
 impl SqliteStore {
+    /// Return one representative memory per topic whose name contains `query_substr` (case-insensitive).
+    ///
+    /// Replaces the N+1 loop in the `Summary` search path: previously the caller fetched all
+    /// topics with `list_topics`, filtered by substring in Rust, then issued one
+    /// `search_fts_in_topic` query per matching topic.  This single query uses a window
+    /// function to pick the highest-weight active memory per matching topic in one round-trip.
+    ///
+    /// Ordering within each topic: weight DESC, created_at DESC — equivalent to the
+    /// `SearchOrder::WeightDesc` fallback that the old loop used when FTS returned nothing.
+    pub(crate) fn search_summary(
+        &self,
+        query_substr: &str,
+        limit: usize,
+        project: Option<&str>,
+    ) -> HyphaeResult<Vec<Memory>> {
+        let pattern = format!("%{}%", query_substr.to_lowercase());
+        let sql = format!(
+            "SELECT {SELECT_COLS}
+             FROM (
+                 SELECT {SELECT_COLS},
+                        ROW_NUMBER() OVER (
+                            PARTITION BY topic
+                            ORDER BY weight DESC, created_at DESC
+                        ) AS rn
+                 FROM memories
+                 WHERE {ACTIVE_MEMORY_CLAUSE}
+                   AND (project = ?1 OR ?1 IS NULL)
+                   AND LOWER(topic) LIKE ?2
+             )
+             WHERE rn = 1
+             LIMIT ?3"
+        );
+
+        let mut stmt = self
+            .conn
+            .prepare_cached(&sql)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![project, pattern, limit as i64], row_to_memory)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| HyphaeError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
     /// Get memories by topic with optional limit.
     pub fn get_by_topic_limited(
         &self,
