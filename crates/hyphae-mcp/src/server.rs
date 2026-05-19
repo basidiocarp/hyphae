@@ -149,7 +149,8 @@ pub fn run_server(
     let idle_timeout = std::time::Duration::from_secs(
         std::env::var("HYPHAE_IDLE_TIMEOUT_SECS")
             .ok()
-            .and_then(|v| v.parse().ok())
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|&v| v > 0)
             .unwrap_or(DEFAULT_IDLE_SECS),
     );
 
@@ -174,8 +175,10 @@ pub fn run_server(
 
     for line in stdin.lock().lines() {
         // Update last activity time before dispatching
-        let mut last = last_activity.lock().unwrap_or_else(|e| e.into_inner());
-        *last = std::time::Instant::now();
+        {
+            let mut last = last_activity.lock().unwrap_or_else(|e| e.into_inner());
+            *last = std::time::Instant::now();
+        }  // guard dropped here, before dispatch begins
 
         let line = match line {
             Ok(l) => l,
@@ -248,8 +251,10 @@ pub fn run_server(
         write_response(&mut stdout, &response)?;
 
         // Update last activity time after dispatching
-        let mut last = last_activity.lock().unwrap_or_else(|e| e.into_inner());
-        *last = std::time::Instant::now();
+        {
+            let mut last = last_activity.lock().unwrap_or_else(|e| e.into_inner());
+            *last = std::time::Instant::now();
+        }  // guard dropped here
     }
 
     Ok(())

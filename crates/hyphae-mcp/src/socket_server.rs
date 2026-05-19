@@ -83,13 +83,15 @@ impl Drop for PidFileGuard {
 }
 
 /// Check if a PID corresponds to a running process.
-/// On Unix, kill(pid, 0) returns 0 if the process exists.
+/// On Unix, kill(pid, 0) returns 0 if the process exists, or -1 with errno=EPERM if it exists but is owned by a different UID.
 #[cfg(unix)]
 #[allow(unsafe_code)]
 fn is_process_alive(pid: i32) -> bool {
     // SAFETY: kill(pid, 0) is a non-destructive signal check
     // that only tests process existence, no side effects.
-    unsafe { libc::kill(pid, 0) == 0 }
+    let rc = unsafe { libc::kill(pid, 0) };
+    let errno_val = std::io::Error::last_os_error().raw_os_error();
+    rc == 0 || (rc == -1 && errno_val == Some(libc::EPERM))
 }
 
 #[cfg(not(unix))]
