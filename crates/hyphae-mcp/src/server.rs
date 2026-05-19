@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 use spore::logging::{SpanContext, request_span, root_span, tool_span, workflow_span};
 use std::io::{self, BufRead, Write};
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 use hyphae_core::{ConsolidationConfig, Embedder, MemoryStore};
 use hyphae_store::SqliteStore;
@@ -21,6 +21,7 @@ const CONTEXT_RESOURCE_URI: &str = "hyphae://context/current";
 const COMPACT_RESOURCE_URI: &str = "hyphae://artifacts/compact/current";
 const COUNCIL_RESOURCE_URI: &str = "hyphae://artifacts/council/current";
 const UNDERSTANDING_RESOURCE_URI: &str = "hyphae://artifacts/project-understanding/current";
+const DEFAULT_IDLE_SECS: u64 = 600;
 
 /// Escalating nudge thresholds for store reminders.
 const NUDGE_HINT: u32 = 10;
@@ -125,7 +126,7 @@ fn initial_context(store: &SqliteStore, project: Option<&str>) -> String {
     ctx
 }
 
-/// Run the MCP server on stdio. Blocks until stdin is closed.
+/// Run the MCP server on stdio. Blocks until stdin is closed or idle timeout expires.
 pub fn run_server(
     store: &SqliteStore,
     embedder: Option<&dyn Embedder>,
@@ -145,11 +146,37 @@ pub fn run_server(
     let root_context = base_span_context(workspace_root.clone());
     let _runtime_span = root_span(&root_context).entered();
 
+    let idle_timeout = std::time::Duration::from_secs(
+        std::env::var("HYPHAE_IDLE_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_IDLE_SECS),
+    );
+
     let stdin = io::stdin();
     let mut stdout = io::stdout();
     let mut calls_since_store: u32 = 0;
+    let last_activity = std::sync::Arc::new(std::sync::Mutex::new(std::time::Instant::now()));
+    let last_activity_clone = std::sync::Arc::clone(&last_activity);
+
+    // Spawn a timeout monitor thread
+    // Detached — monitor calls process::exit(0) directly; joining is unnecessary.
+    let _monitor_handle = std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            let last = last_activity_clone.lock().unwrap_or_else(|e| e.into_inner());
+            if last.elapsed() > idle_timeout {
+                info!("hyphae: idle timeout — exiting");
+                std::process::exit(0);
+            }
+        }
+    });
 
     for line in stdin.lock().lines() {
+        // Update last activity time before dispatching
+        let mut last = last_activity.lock().unwrap_or_else(|e| e.into_inner());
+        *last = std::time::Instant::now();
+
         let line = match line {
             Ok(l) => l,
             Err(e) => {
@@ -219,6 +246,10 @@ pub fn run_server(
         };
 
         write_response(&mut stdout, &response)?;
+
+        // Update last activity time after dispatching
+        let mut last = last_activity.lock().unwrap_or_else(|e| e.into_inner());
+        *last = std::time::Instant::now();
     }
 
     Ok(())

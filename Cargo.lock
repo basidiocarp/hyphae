@@ -1443,6 +1443,7 @@ dependencies = [
  "hyphae-core",
  "hyphae-ingest",
  "hyphae-store",
+ "libc",
  "regex",
  "serde",
  "serde_json",

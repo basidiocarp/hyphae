@@ -65,6 +65,39 @@ fn remove_stale_socket(socket_path: &Path) {
     }
 }
 
+/// Guard that cleans up the PID file on drop.
+struct PidFileGuard {
+    pid_path: PathBuf,
+}
+
+impl PidFileGuard {
+    fn new(pid_path: PathBuf) -> Self {
+        PidFileGuard { pid_path }
+    }
+}
+
+impl Drop for PidFileGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.pid_path);
+    }
+}
+
+/// Check if a PID corresponds to a running process.
+/// On Unix, kill(pid, 0) returns 0 if the process exists.
+#[cfg(unix)]
+#[allow(unsafe_code)]
+fn is_process_alive(pid: i32) -> bool {
+    // SAFETY: kill(pid, 0) is a non-destructive signal check
+    // that only tests process existence, no side effects.
+    unsafe { libc::kill(pid, 0) == 0 }
+}
+
+#[cfg(not(unix))]
+fn is_process_alive(_pid: i32) -> bool {
+    // Non-Unix platforms: assume process may be alive
+    true
+}
+
 fn write_response(
     writer: &mut (impl Write + ?Sized),
     resp: &JsonRpcResponse,
@@ -226,6 +259,30 @@ pub fn run_socket_server(
     if let Some(parent) = socket_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
+
+    // Check for existing singleton process before removing socket
+    let pid_path = socket_path.with_extension("pid");
+    if pid_path.exists() {
+        if let Ok(pid_str) = std::fs::read_to_string(&pid_path) {
+            if let Ok(pid) = pid_str.trim().parse::<u32>() {
+                let pid_i32 = pid as i32;
+                if is_process_alive(pid_i32) {
+                    tracing::error!(
+                        pid = pid_i32,
+                        "hyphae socket server is already running (PID {}) — exiting", pid_i32
+                    );
+                    return Err(anyhow::anyhow!(
+                        "hyphae socket server already running as PID {}",
+                        pid_i32
+                    ));
+                }
+            }
+        }
+        // Stale PID file — clean it up
+        let _ = std::fs::remove_file(&pid_path);
+    }
+
+    // Now safe to remove stale socket and bind
     remove_stale_socket(&socket_path);
 
     let listener = std::os::unix::net::UnixListener::bind(&socket_path).map_err(|e| {
@@ -234,6 +291,11 @@ pub fn run_socket_server(
             socket_path.display()
         )
     })?;
+
+    // Write PID file and create guard to clean it up on exit
+    let current_pid = std::process::id();
+    std::fs::write(&pid_path, format!("{}\n", current_pid))?;
+    let _pid_guard = PidFileGuard::new(pid_path);
 
     // Initialize event bus and start SSE server.
     crate::memoir_events::init_bus();
@@ -252,6 +314,7 @@ pub fn run_socket_server(
 
     tracing::info!(
         socket = %socket_path.display(),
+        pid = current_pid,
         "hyphae socket endpoint ready"
     );
 
