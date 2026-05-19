@@ -271,7 +271,8 @@ pub fn run_socket_server(
                 if is_process_alive(pid_i32) {
                     tracing::error!(
                         pid = pid_i32,
-                        "hyphae socket server is already running (PID {}) — exiting", pid_i32
+                        "hyphae socket server is already running (PID {}) — exiting",
+                        pid_i32
                     );
                     return Err(anyhow::anyhow!(
                         "hyphae socket server already running as PID {}",

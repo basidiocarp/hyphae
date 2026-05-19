@@ -165,7 +165,9 @@ pub fn run_server(
     let _monitor_handle = std::thread::spawn(move || {
         loop {
             std::thread::sleep(std::time::Duration::from_secs(1));
-            let last = last_activity_clone.lock().unwrap_or_else(|e| e.into_inner());
+            let last = last_activity_clone
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             if last.elapsed() > idle_timeout {
                 info!("hyphae: idle timeout — exiting");
                 std::process::exit(0);
@@ -178,7 +180,7 @@ pub fn run_server(
         {
             let mut last = last_activity.lock().unwrap_or_else(|e| e.into_inner());
             *last = std::time::Instant::now();
-        }  // guard dropped here, before dispatch begins
+        } // guard dropped here, before dispatch begins
 
         let line = match line {
             Ok(l) => l,
@@ -254,7 +256,7 @@ pub fn run_server(
         {
             let mut last = last_activity.lock().unwrap_or_else(|e| e.into_inner());
             *last = std::time::Instant::now();
-        }  // guard dropped here
+        } // guard dropped here
     }
 
     Ok(())
