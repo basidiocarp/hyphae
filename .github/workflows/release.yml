@@ -292,3 +292,4 @@ jobs:
         with:
           body_path: /tmp/release-notes.md
           files: release/*
+          make_latest: false
