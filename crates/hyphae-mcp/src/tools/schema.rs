@@ -7,6 +7,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         // Constitution policy tool
         json!({
             "name": "hyphae_constitution_store",
+            "title": "Store Constitution",
             "description": "Store a permanent governance policy that never decays and is excluded from consolidation. Use for rules that must persist indefinitely across all sessions, such as security policies or architectural constraints.",
             "inputSchema": {
                 "type": "object",
@@ -42,6 +43,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         // Memory tools
         json!({
             "name": "hyphae_memory_store",
+            "title": "Store Memory",
             "description": "Store important information in Hyphae long-term memory. Use to save decisions, preferences, project context, resolved errors — anything that should persist between sessions.",
             "inputSchema": {
                 "type": "object",
@@ -90,6 +92,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }),
         json!({
             "name": "hyphae_memory_recall",
+            "title": "Recall Memories",
             "description": "Search Hyphae long-term memory with context-aware recall. Use to find past decisions, project context, preferences, or solutions to previously encountered problems. Session-shaped queries boost session memories first, code-shaped queries can expand through code memoirs, and project-scoped recall merges the globally visible '_shared' knowledge pool after those context-specific hits.",
             "inputSchema": {
                 "type": "object",
@@ -172,6 +175,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }),
         json!({
             "name": "hyphae_memory_forget",
+            "title": "Forget Memory",
             "description": "Delete a specific memory by its ID. Use when information is obsolete or incorrect.",
             "inputSchema": {
                 "type": "object",
@@ -191,6 +195,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }),
         json!({
             "name": "hyphae_memory_invalidate",
+            "title": "Invalidate Memory",
             "description": "Invalidate a specific memory without deleting it. Invalidated memories are hidden from normal recall by default but remain available for review.",
             "inputSchema": {
                 "type": "object",
@@ -219,6 +224,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }),
         json!({
             "name": "hyphae_memory_list_invalidated",
+            "title": "List Invalidated Memories",
             "description": "List invalidated memories for review. Use to audit stale or replaced memories that are hidden from normal recall.",
             "inputSchema": {
                 "type": "object",
@@ -246,6 +252,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }),
         json!({
             "name": "hyphae_memory_consolidate",
+            "title": "Consolidate Memories",
             "description": "Consolidate all memories of a topic into a single summary. Useful when a topic accumulates too many entries.",
             "inputSchema": {
                 "type": "object",
@@ -270,6 +277,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }),
         json!({
             "name": "hyphae_memory_list_topics",
+            "title": "List Memory Topics",
             "description": "List all available topics in memory with their counts.",
             "inputSchema": {
                 "type": "object",
@@ -283,6 +291,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }),
         json!({
             "name": "hyphae_memory_stats",
+            "title": "Memory Stats",
             "description": "Get global Hyphae memory statistics.",
             "inputSchema": {
                 "type": "object",
@@ -296,6 +305,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }),
         json!({
             "name": "hyphae_memory_update",
+            "title": "Update Memory",
             "description": "Update an existing memory in-place. Use to correct, refresh, or extend a memory without creating a duplicate.",
             "inputSchema": {
                 "type": "object",
@@ -330,6 +340,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }),
         json!({
             "name": "hyphae_memory_health",
+            "title": "Memory Health",
             "description": "Get health stats for all topics: entry count, staleness, consolidation needs. Use to audit memory hygiene.",
             "inputSchema": {
                 "type": "object",
@@ -348,6 +359,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }),
         json!({
             "name": "hyphae_evaluate",
+            "title": "Evaluate Memories",
             "description": "Evaluate agent improvement over time by comparing error rates, correction frequency, and resolution rates across time windows. Compares two equal time periods to show trends.",
             "inputSchema": {
                 "type": "object",
@@ -370,6 +382,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         // Cross-project tools
         json!({
             "name": "hyphae_recall_global",
+            "title": "Recall Global Memories",
             "description": "Search memories across linked projects and shared knowledge. Returns results grouped by project. By default, searches the _shared project, the caller's own project, and any projects linked to it. Use when knowledge may exist in linked projects, or to find cross-cutting patterns. Set unrestricted=true to search all projects without filtering (requires explicit intent).",
             "inputSchema": {
                 "type": "object",
@@ -401,6 +414,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }),
         json!({
             "name": "hyphae_promote_to_memoir",
+            "title": "Promote to Memoir",
             "description": "Analyze a memory topic for promotion to a structured memoir. Lists memories, suggests concepts from keywords, and provides step-by-step instructions. Use when a topic has accumulated 15+ memories that should be organized into a knowledge graph.",
             "inputSchema": {
                 "type": "object",
@@ -421,6 +435,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         // Memoir tools
         json!({
             "name": "hyphae_memoir_create",
+            "title": "Create Memoir",
             "description": "Create a new memoir — a permanent knowledge container. Memoirs hold concepts that never decay.",
             "inputSchema": {
                 "type": "object",
@@ -444,6 +459,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }),
         json!({
             "name": "hyphae_memoir_list",
+            "title": "List Memoirs",
             "description": "List all memoirs with their concept counts.",
             "inputSchema": {
                 "type": "object",
@@ -457,6 +473,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }),
         json!({
             "name": "hyphae_memoir_show",
+            "title": "Show Memoir",
             "description": "Show a memoir's stats, labels, and all its concepts.",
             "inputSchema": {
                 "type": "object",
@@ -476,6 +493,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }),
         json!({
             "name": "hyphae_memoir_add_concept",
+            "title": "Add Concept to Memoir",
             "description": "Add a permanent concept to a memoir. Concepts are knowledge nodes that get refined, never decayed.",
             "inputSchema": {
                 "type": "object",
@@ -523,6 +541,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }),
         json!({
             "name": "hyphae_memoir_refine",
+            "title": "Refine Memoir Concept",
             "description": "Refine an existing concept with a new, improved definition. Bumps revision and boosts confidence.",
             "inputSchema": {
                 "type": "object",
@@ -561,6 +580,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }),
         json!({
             "name": "hyphae_memoir_search",
+            "title": "Search Memoir",
             "description": "Full-text search concepts within a memoir.",
             "inputSchema": {
                 "type": "object",
@@ -598,6 +618,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }),
         json!({
             "name": "hyphae_memoir_link",
+            "title": "Link Memoir Concepts",
             "description": "Create a directed, typed edge between two concepts in the same memoir.",
             "inputSchema": {
                 "type": "object",
@@ -630,6 +651,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }),
         json!({
             "name": "hyphae_memoir_unlink",
+            "title": "Unlink Memoir Concepts",
             "description": "Remove a specific directed edge between two concepts in a memoir.",
             "inputSchema": {
                 "type": "object",
@@ -662,6 +684,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }),
         json!({
             "name": "hyphae_memoir_inspect",
+            "title": "Inspect Memoir",
             "description": "Inspect a concept and its graph neighborhood using Breadth-First Search (BFS).",
             "inputSchema": {
                 "type": "object",
@@ -690,6 +713,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }),
         json!({
             "name": "hyphae_memoir_search_all",
+            "title": "Search All Memoirs",
             "description": "Full-text search concepts across all memoirs.",
             "inputSchema": {
                 "type": "object",
@@ -714,6 +738,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }),
         json!({
             "name": "hyphae_memoir_history",
+            "title": "Memoir History",
             "description": "View the version history of a memoir. Shows recent changes with author, git hash, and summary.",
             "inputSchema": {
                 "type": "object",
@@ -740,6 +765,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }),
         json!({
             "name": "hyphae_import_code_graph",
+            "title": "Import Code Graph",
             "description": "Import a code symbol graph from Rhizome (or similar tools) into Hyphae as a memoir. Creates or updates the memoir 'code:{project}' with concepts (symbols) and links (relationships). Idempotent — safe to re-import after incremental changes.",
             "inputSchema": {
                 "type": "object",
@@ -833,6 +859,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         }),
         json!({
             "name": "hyphae_code_query",
+            "title": "Query Code Graph",
             "description": "Query a code symbol graph stored in a memoir. Supports symbol listing, call graph analysis, and neighborhood exploration.",
             "inputSchema": {
                 "type": "object",
@@ -869,6 +896,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
     // Context gathering
     tools.push(json!({
         "name": "hyphae_gather_context",
+        "title": "Gather Context",
         "description": "Gather relevant context for a task from across all Hyphae stores (memories, errors, sessions, code). Returns ranked results within a token budget together with a scoped_identity envelope so downstream tools can tell which project/worktree/scope produced the context.",
         "inputSchema": {
             "type": "object",
@@ -921,6 +949,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
     // Shared context tools
     tools.push(json!({
         "name": "hyphae_context_put",
+        "title": "Put Context",
         "description": "Write or overwrite a value in shared cross-agent context. Returns the entry_id of the stored entry.",
         "inputSchema": {
             "type": "object",
@@ -952,6 +981,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
 
     tools.push(json!({
         "name": "hyphae_context_get",
+        "title": "Get Context",
         "description": "Retrieve the most recent value for a key from shared cross-agent context. Returns the entry or {found: false} if the key has never been written.",
         "inputSchema": {
             "type": "object",
@@ -977,6 +1007,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
     // RAG tools
     tools.push(json!({
         "name": "hyphae_ingest_file",
+        "title": "Ingest File",
         "description": "Ingest a file or directory into Hyphae's document store for RAG search. Chunks the content and stores it for later retrieval.",
         "inputSchema": {
             "type": "object",
@@ -1001,6 +1032,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
     }));
     tools.push(json!({
         "name": "hyphae_search_docs",
+        "title": "Search Documents",
         "description": "Search ingested documents using hybrid (vector + FTS) or Full-text Search (FTS) search. Returns ranked chunks with source paths and scores.",
         "inputSchema": {
             "type": "object",
@@ -1033,6 +1065,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
     }));
     tools.push(json!({
         "name": "hyphae_list_sources",
+        "title": "List Sources",
         "description": "List all ingested document sources with their type, chunk count, and ingestion date.",
         "inputSchema": {
             "type": "object",
@@ -1046,6 +1079,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
     }));
     tools.push(json!({
         "name": "hyphae_forget_source",
+        "title": "Forget Source",
         "description": "Remove an ingested document source and all its chunks from the store.",
         "inputSchema": {
             "type": "object",
@@ -1065,6 +1099,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
     }));
     tools.push(json!({
         "name": "hyphae_search_all",
+        "title": "Search All",
         "description": "Unified cross-store search across memories and ingested documents. Returns ranked results using Reciprocal Rank Fusion. When project_root and worktree_id are supplied together, memory results are scoped to the active worktree and _shared memories are still included. Document chunks remain project-scoped.",
         "inputSchema": {
             "type": "object",
@@ -1112,6 +1147,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
     // Command output tools
     tools.push(json!({
         "name": "hyphae_store_command_output",
+        "title": "Store Command Output",
         "description": "Store command output as chunked documents with ephemeral importance. Automatically detects output type (test results, build errors, diffs, logs) and chunks accordingly.",
         "inputSchema": {
             "type": "object",
@@ -1163,6 +1199,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
     }));
     tools.push(json!({
         "name": "hyphae_get_command_chunks",
+        "title": "Get Command Chunks",
         "description": "Retrieve chunks from a stored command output document by document_id with pagination.",
         "inputSchema": {
             "type": "object",
@@ -1197,6 +1234,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
     // Session lifecycle tools
     tools.push(json!({
         "name": "hyphae_session_start",
+        "title": "Start Session",
         "description": "Start a new coding session. Creates a session record that tracks project work. Call at the beginning of a task to enable session lifecycle tracking. Returns a session_id plus a scoped_identity envelope for downstream coordination.",
         "inputSchema": {
             "type": "object",
@@ -1237,6 +1275,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
 
     tools.push(json!({
         "name": "hyphae_session_end",
+        "title": "End Session",
         "description": "End a coding session and store a summary in the session record. Updates the session with completion data. Call when finishing a task.",
         "inputSchema": {
             "type": "object",
@@ -1271,6 +1310,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
 
     tools.push(json!({
         "name": "hyphae_session_context",
+        "title": "Get Session Context",
         "description": "Get recent session history for a project. Returns the last N sessions with their summaries, tasks, and status, plus a scoped_identity envelope that makes the queried identity explicit.",
         "inputSchema": {
             "type": "object",
@@ -1311,6 +1351,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
     // Artifact tools
     tools.push(json!({
         "name": "hyphae_artifact_store",
+        "title": "Store Artifact",
         "description": "Store a typed artifact (compact summary, council record, project understanding) into persistent artifact storage",
         "inputSchema": {
             "type": "object",
@@ -1343,6 +1384,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
     }));
     tools.push(json!({
         "name": "hyphae_artifact_query",
+        "title": "Query Artifacts",
         "description": "Query stored artifacts by type and project",
         "inputSchema": {
             "type": "object",
@@ -1375,6 +1417,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
     // Onboarding tool
     tools.push(json!({
         "name": "hyphae_onboard",
+        "title": "Onboard Hyphae",
         "description": "Get a quick overview of the Hyphae memory system for onboarding. Returns total memories, memoirs, topics, available tools, and a quick-start guide. No parameters required.",
         "inputSchema": {
             "type": "object",
@@ -1390,6 +1433,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
     if has_embedder {
         tools.push(json!({
             "name": "hyphae_memory_embed_all",
+            "title": "Embed All Memories",
             "description": "Generate embeddings for all memories that don't have one yet. Use this to backfill vector search capability.",
             "inputSchema": {
                 "type": "object",
@@ -1410,6 +1454,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
 
     tools.push(json!({
         "name": "hyphae_extract_lessons",
+        "title": "Extract Lessons",
         "description": "Extract actionable lessons from accumulated corrections, error resolutions, and test fixes. Returns patterns that help avoid repeating past mistakes.",
         "inputSchema": {
             "type": "object",
@@ -1432,6 +1477,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
 
     tools.push(json!({
         "name": "hyphae_reflexion_record",
+        "title": "Record Reflexion",
         "description": "Store a structured reflexion entry capturing error type, root cause, fix applied, and abstract pattern for future recall.",
         "inputSchema": {
             "type": "object",
@@ -1474,6 +1520,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
 
     tools.push(json!({
         "name": "hyphae_reflexion_search",
+        "title": "Search Reflexion",
         "description": "Search reflexion records by query, returning structured entries sorted by confidence then recency.",
         "inputSchema": {
             "type": "object",
@@ -1506,6 +1553,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
     // Knowledge domain tools
     tools.push(json!({
         "name": "hyphae_domain_upsert",
+        "title": "Upsert Domain",
         "description": "Create or update a knowledge domain that describes when and how to recall information with specific applicability rules and required inputs",
         "inputSchema": {
             "type": "object",
@@ -1577,6 +1625,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
 
     tools.push(json!({
         "name": "hyphae_domain_list",
+        "title": "List Domains",
         "description": "List all defined knowledge domains",
         "inputSchema": {
             "type": "object",
