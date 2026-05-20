@@ -198,6 +198,7 @@ fn init_embedder(model: &str) -> Option<Box<dyn Embedder>> {
 
 fn main() -> Result<()> {
     spore::logging::init_app("hyphae", tracing::Level::WARN);
+    spore::logging::install_panic_hook("hyphae");
 
     // Initialize OTel tracer — no-op when OTEL_EXPORTER_OTLP_ENDPOINT is not set
     let _telemetry = spore::telemetry::init_tracer("hyphae").unwrap_or_else(|e| {
