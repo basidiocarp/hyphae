@@ -1373,7 +1373,7 @@ dependencies = [
 
 [[package]]
 name = "hyphae-cli"
-version = "0.15.0"
+version = "0.15.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1401,7 +1401,7 @@ dependencies = [
 
 [[package]]
 name = "hyphae-core"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "chrono",
  "directories",
@@ -1417,7 +1417,7 @@ dependencies = [
 
 [[package]]
 name = "hyphae-ingest"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1434,7 +1434,7 @@ dependencies = [
 
 [[package]]
 name = "hyphae-mcp"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -1456,7 +1456,7 @@ dependencies = [
 
 [[package]]
 name = "hyphae-store"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "chrono",
  "criterion",
@@ -3161,14 +3161,16 @@ dependencies = [
 [[package]]
 name = "spore"
 version = "0.6.0"
-source = "git+https://github.com/basidiocarp/spore?rev=967e10c43a1052c9e57e226227621a83e6ac20e4#967e10c43a1052c9e57e226227621a83e6ac20e4"
+source = "git+https://github.com/basidiocarp/spore?rev=960f5aeb1d479149b3cdbeb2f850912c52521214#960f5aeb1d479149b3cdbeb2f850912c52521214"
 dependencies = [
  "anyhow",
  "chrono",
  "dirs",
+ "libc",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",

@@ -7,11 +7,15 @@ pub(crate) fn resolve_db_path(cli_db: Option<PathBuf>, configured_db: Option<&st
 }
 
 pub(crate) fn default_db_path() -> PathBuf {
-    spore::paths::data_dir("basidiocarp").join("hyphae/hyphae.db")
+    spore::paths::data_dir("basidiocarp")
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("hyphae/hyphae.db")
 }
 
 pub(crate) fn backup_dir() -> PathBuf {
-    spore::paths::data_dir("basidiocarp").join("hyphae/backups")
+    spore::paths::data_dir("basidiocarp")
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("hyphae/backups")
 }
 
 /// Move the legacy `~/.local/share/hyphae/` directory to the shared basidiocarp
@@ -19,8 +23,10 @@ pub(crate) fn backup_dir() -> PathBuf {
 /// change. No-op if the new location already exists or if the old location is
 /// absent (fresh install). Falls back silently if the rename fails.
 pub(crate) fn migrate_legacy_data_dir() {
-    let new_base = spore::paths::data_dir("basidiocarp").join("hyphae");
-    let old_base = spore::paths::data_dir("hyphae");
+    let new_base = spore::paths::data_dir("basidiocarp")
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("hyphae");
+    let old_base = spore::paths::data_dir("hyphae").unwrap_or_else(|_| PathBuf::from("."));
 
     if new_base.exists() || !old_base.exists() {
         return;
@@ -48,10 +54,10 @@ pub(crate) fn migrate_legacy_data_dir() {
 }
 
 pub(crate) fn default_config_path() -> Option<PathBuf> {
-    Some(spore::paths::config_path_with_env(
+    spore::paths::config_path_with_env(
         "hyphae",
         "HYPHAE_CONFIG",
-    ))
+    ).ok()
 }
 
 #[cfg(test)]

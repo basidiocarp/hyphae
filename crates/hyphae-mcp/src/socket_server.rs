@@ -38,7 +38,7 @@ const PING_METHOD: &str = "PING";
 
 /// Write the `local-service-endpoint-v1` descriptor to the hyphae config dir.
 fn write_endpoint_descriptor(socket_path: &Path, events_url: Option<&str>) -> anyhow::Result<()> {
-    let config_dir = spore::paths::config_dir("hyphae");
+    let config_dir = spore::paths::config_dir("hyphae")?;
     std::fs::create_dir_all(&config_dir)?;
     let descriptor_path = config_dir.join("hyphae.endpoint.json");
     let mut descriptor = json!({
@@ -254,7 +254,7 @@ pub fn run_socket_server(
     compact: bool,
     reject_secrets: bool,
 ) -> anyhow::Result<()> {
-    let socket_path: PathBuf = spore::paths::data_dir("basidiocarp")
+    let socket_path: PathBuf = spore::paths::data_dir("basidiocarp")?
         .join("hyphae")
         .join("hyphae.sock");
 
@@ -371,7 +371,7 @@ mod tests {
 
         write_endpoint_descriptor(&socket_path, None).expect("descriptor should write");
 
-        let descriptor_path = spore::paths::config_dir("hyphae").join("hyphae.endpoint.json");
+        let descriptor_path = spore::paths::config_dir("hyphae").unwrap().join("hyphae.endpoint.json");
         assert!(descriptor_path.exists(), "descriptor file should exist");
 
         let content = std::fs::read_to_string(&descriptor_path).unwrap();

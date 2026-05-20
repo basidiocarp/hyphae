@@ -98,4 +98,4 @@ clap = { version = "4", features = ["derive"] }
 directories = "6"
 
 # Ecosystem
-spore = { git = "https://github.com/basidiocarp/spore", rev = "967e10c43a1052c9e57e226227621a83e6ac20e4", features = ["otel"] }
+spore = { git = "https://github.com/basidiocarp/spore", rev = "960f5aeb1d479149b3cdbeb2f850912c52521214", features = ["otel"] }
