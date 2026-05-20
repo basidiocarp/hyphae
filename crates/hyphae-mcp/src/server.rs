@@ -259,6 +259,7 @@ pub fn run_server(
         } // guard dropped here
     }
 
+    info!("hyphae: MCP transport closed — stdin EOF");
     Ok(())
 }
 
