@@ -371,7 +371,9 @@ mod tests {
 
         write_endpoint_descriptor(&socket_path, None).expect("descriptor should write");
 
-        let descriptor_path = spore::paths::config_dir("hyphae").unwrap().join("hyphae.endpoint.json");
+        let descriptor_path = spore::paths::config_dir("hyphae")
+            .unwrap()
+            .join("hyphae.endpoint.json");
         assert!(descriptor_path.exists(), "descriptor file should exist");
 
         let content = std::fs::read_to_string(&descriptor_path).unwrap();

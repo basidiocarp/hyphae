@@ -54,10 +54,7 @@ pub(crate) fn migrate_legacy_data_dir() {
 }
 
 pub(crate) fn default_config_path() -> Option<PathBuf> {
-    spore::paths::config_path_with_env(
-        "hyphae",
-        "HYPHAE_CONFIG",
-    ).ok()
+    spore::paths::config_path_with_env("hyphae", "HYPHAE_CONFIG").ok()
 }
 
 #[cfg(test)]
