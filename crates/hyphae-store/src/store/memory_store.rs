@@ -2296,6 +2296,40 @@ impl SqliteStore {
 
         Ok(results)
     }
+
+    /// Returns IDs of memories that are candidates for automatic consolidation.
+    ///
+    /// A memory is stale when it has been rarely recalled (access_count < 3),
+    /// not accessed in the last 60 days, and has low importance weight (< 0.5).
+    /// The `project` parameter scopes the search; pass `None` for global search.
+    ///
+    /// Results are ordered by access count (ascending) then by last_accessed (ascending),
+    /// with the least-active memories first.
+    pub fn find_stale_memory_candidates(
+        &self,
+        project: Option<&str>,
+        limit: usize,
+    ) -> HyphaeResult<Vec<String>> {
+        let sql = "SELECT id FROM memories
+                   WHERE access_count < 3
+                     AND (last_accessed IS NULL
+                          OR julianday('now') - julianday(last_accessed) > 60)
+                     AND weight < 0.5
+                     AND invalidated_at IS NULL
+                     AND (project = ?1 OR ?1 IS NULL)
+                   ORDER BY access_count ASC, last_accessed ASC
+                   LIMIT ?2";
+        let mut stmt = self
+            .conn
+            .prepare_cached(sql)
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        let ids = stmt
+            .query_map(params![project, limit as i64], |row| row.get(0))
+            .map_err(|e| HyphaeError::Database(e.to_string()))?
+            .collect::<Result<Vec<String>, _>>()
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        Ok(ids)
+    }
 }
 
 #[cfg(test)]
@@ -2697,6 +2731,299 @@ mod decay_floor_tests {
         assert!(
             !critical_mem.is_empty(),
             "critical memory should never be decayed"
+        );
+    }
+}
+
+#[cfg(test)]
+mod stale_candidates_tests {
+    use super::*;
+    use hyphae_core::{Importance, Memory, MemoryId, MemorySource, Weight};
+
+    fn make_store() -> SqliteStore {
+        SqliteStore::in_memory().unwrap()
+    }
+
+    fn make_memory_with_params(
+        topic: &str,
+        summary: &str,
+        access_count: u32,
+        weight: f32,
+        last_accessed: chrono::DateTime<chrono::Utc>,
+    ) -> Memory {
+        // Clamp weight to valid range [0.0, 1.0]
+        let clamped_weight = weight.max(0.0).min(1.0);
+        Memory {
+            id: MemoryId::new(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            last_accessed,
+            access_count,
+            weight: Weight::new(clamped_weight).unwrap(),
+            topic: topic.to_string(),
+            summary: summary.to_string(),
+            raw_excerpt: None,
+            keywords: vec![],
+            importance: Importance::Low,
+            source: MemorySource::Manual,
+            related_ids: vec![],
+            embedding: None,
+            project: None,
+            branch: None,
+            worktree: None,
+            agent_id: None,
+            expires_at: None,
+            invalidated_at: None,
+            invalidation_reason: None,
+            superseded_by: None,
+            tier: Default::default(),
+            entities: vec![],
+        }
+    }
+
+    #[test]
+    fn find_stale_candidates_returns_low_access_old_memories() {
+        let store = make_store();
+        let now = chrono::Utc::now();
+
+        // Create a memory with access_count=0, last_accessed 70 days ago, weight < 0.5
+        let old_accessed = now - chrono::Duration::days(70);
+        let stale_mem =
+            make_memory_with_params("test/stale", "stale memory candidate", 0, 0.3, old_accessed);
+        let stale_id = stale_mem.id.clone();
+        store.store(stale_mem).unwrap();
+
+        let candidates = store.find_stale_memory_candidates(None, 10).unwrap();
+        assert!(
+            candidates.contains(&stale_id.to_string()),
+            "stale memory with access_count=0 and age>60 days should be a candidate"
+        );
+    }
+
+    #[test]
+    fn find_stale_candidates_excludes_active_memories() {
+        let store = make_store();
+        let now = chrono::Utc::now();
+
+        // Create a memory with high access_count
+        let active_mem = make_memory_with_params(
+            "test/active",
+            "active memory",
+            10,
+            0.3,
+            now - chrono::Duration::days(70),
+        );
+        let active_id = active_mem.id.clone();
+        store.store(active_mem).unwrap();
+
+        // Create a memory with recent last_accessed
+        let recent_mem = make_memory_with_params(
+            "test/recent",
+            "recent memory",
+            0,
+            0.3,
+            now - chrono::Duration::days(30),
+        );
+        let recent_id = recent_mem.id.clone();
+        store.store(recent_mem).unwrap();
+
+        let candidates = store.find_stale_memory_candidates(None, 10).unwrap();
+        assert!(
+            !candidates.contains(&active_id.to_string()),
+            "memory with access_count >= 3 should not be a candidate"
+        );
+        assert!(
+            !candidates.contains(&recent_id.to_string()),
+            "memory with recent last_accessed should not be a candidate"
+        );
+    }
+
+    #[test]
+    fn find_stale_candidates_excludes_invalidated() {
+        let store = make_store();
+        let now = chrono::Utc::now();
+        let old_accessed = now - chrono::Duration::days(70);
+
+        // Create a stale but invalidated memory
+        let mut stale_mem = make_memory_with_params(
+            "test/invalidated",
+            "invalidated stale memory",
+            0,
+            0.3,
+            old_accessed,
+        );
+        stale_mem.invalidated_at = Some(chrono::Utc::now());
+        let stale_id = stale_mem.id.clone();
+        store.store(stale_mem).unwrap();
+
+        let candidates = store.find_stale_memory_candidates(None, 10).unwrap();
+        assert!(
+            !candidates.contains(&stale_id.to_string()),
+            "invalidated memory should not be a candidate even if otherwise stale"
+        );
+    }
+
+    #[test]
+    fn find_stale_candidates_respects_weight_threshold() {
+        let store = make_store();
+        let now = chrono::Utc::now();
+        let old_accessed = now - chrono::Duration::days(70);
+
+        // Create a stale memory with weight >= 0.5
+        let high_weight_mem = make_memory_with_params(
+            "test/high_weight",
+            "high weight memory",
+            0,
+            0.5,
+            old_accessed,
+        );
+        let high_weight_id = high_weight_mem.id.clone();
+        store.store(high_weight_mem).unwrap();
+
+        let candidates = store.find_stale_memory_candidates(None, 10).unwrap();
+        assert!(
+            !candidates.contains(&high_weight_id.to_string()),
+            "memory with weight >= 0.5 should not be a candidate"
+        );
+    }
+
+    #[test]
+    fn find_stale_candidates_respects_limit() {
+        let store = make_store();
+        let now = chrono::Utc::now();
+        let old_accessed = now - chrono::Duration::days(70);
+
+        // Create 10 stale memories
+        for i in 0..10 {
+            let mem = make_memory_with_params(
+                "test/batch",
+                &format!("batch stale memory {}", i),
+                i as u32,
+                0.3,
+                old_accessed - chrono::Duration::seconds(i as i64),
+            );
+            store.store(mem).unwrap();
+        }
+
+        let candidates = store.find_stale_memory_candidates(None, 3).unwrap();
+        assert_eq!(
+            candidates.len(),
+            3,
+            "find_stale_memory_candidates should respect limit"
+        );
+    }
+
+    #[test]
+    fn find_stale_candidates_scoped_to_project() {
+        let store = make_store();
+        let now = chrono::Utc::now();
+        let old_accessed = now - chrono::Duration::days(70);
+
+        // Create stale memory with project="proj1"
+        let mut stale_proj1 =
+            make_memory_with_params("test/scoped", "stale in proj1", 0, 0.3, old_accessed);
+        stale_proj1.project = Some("proj1".to_string());
+        let proj1_id = stale_proj1.id.clone();
+        store.store(stale_proj1).unwrap();
+
+        // Create stale memory with project="proj2"
+        let mut stale_proj2 =
+            make_memory_with_params("test/scoped", "stale in proj2", 0, 0.3, old_accessed);
+        stale_proj2.project = Some("proj2".to_string());
+        let proj2_id = stale_proj2.id.clone();
+        store.store(stale_proj2).unwrap();
+
+        let candidates_proj1 = store
+            .find_stale_memory_candidates(Some("proj1"), 10)
+            .unwrap();
+        assert!(
+            candidates_proj1.contains(&proj1_id.to_string()),
+            "proj1 scoped query should find stale proj1 memory"
+        );
+        assert!(
+            !candidates_proj1.contains(&proj2_id.to_string()),
+            "proj1 scoped query should not find stale proj2 memory"
+        );
+
+        let candidates_proj2 = store
+            .find_stale_memory_candidates(Some("proj2"), 10)
+            .unwrap();
+        assert!(
+            candidates_proj2.contains(&proj2_id.to_string()),
+            "proj2 scoped query should find stale proj2 memory"
+        );
+        assert!(
+            !candidates_proj2.contains(&proj1_id.to_string()),
+            "proj2 scoped query should not find stale proj1 memory"
+        );
+    }
+
+    #[test]
+    fn find_stale_candidates_orders_by_access_count_then_age() {
+        let store = make_store();
+        let now = chrono::Utc::now();
+
+        // Create three stale memories with different access counts and ages
+        let mem_count_2_old = make_memory_with_params(
+            "test/order",
+            "access_count=2, very old",
+            2,
+            0.3,
+            now - chrono::Duration::days(90),
+        );
+        let id_2_old = mem_count_2_old.id.clone();
+        store.store(mem_count_2_old).unwrap();
+
+        let mem_count_1_newer = make_memory_with_params(
+            "test/order",
+            "access_count=1, newer",
+            1,
+            0.3,
+            now - chrono::Duration::days(75),
+        );
+        let id_1_newer = mem_count_1_newer.id.clone();
+        store.store(mem_count_1_newer).unwrap();
+
+        let mem_count_0_old = make_memory_with_params(
+            "test/order",
+            "access_count=0, very old",
+            0,
+            0.3,
+            now - chrono::Duration::days(95),
+        );
+        let id_0_old = mem_count_0_old.id.clone();
+        store.store(mem_count_0_old).unwrap();
+
+        let candidates = store.find_stale_memory_candidates(None, 10).unwrap();
+
+        // Should be ordered by access_count ASC, then last_accessed ASC
+        // So: access_count=0 (oldest first), then access_count=1, then access_count=2
+        let pos_0 = candidates.iter().position(|id| *id == id_0_old.to_string());
+        let pos_1 = candidates
+            .iter()
+            .position(|id| *id == id_1_newer.to_string());
+        let pos_2 = candidates.iter().position(|id| *id == id_2_old.to_string());
+
+        assert!(
+            pos_0.is_some(),
+            "mem with access_count=0 should be in candidates"
+        );
+        assert!(
+            pos_1.is_some(),
+            "mem with access_count=1 should be in candidates"
+        );
+        assert!(
+            pos_2.is_some(),
+            "mem with access_count=2 should be in candidates"
+        );
+
+        assert!(
+            pos_0.unwrap() < pos_1.unwrap(),
+            "access_count=0 should come before access_count=1"
+        );
+        assert!(
+            pos_1.unwrap() < pos_2.unwrap(),
+            "access_count=1 should come before access_count=2"
         );
     }
 }
