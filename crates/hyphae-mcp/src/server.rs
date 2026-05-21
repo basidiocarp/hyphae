@@ -159,6 +159,8 @@ pub fn run_server(
     let mut calls_since_store: u32 = 0;
     let last_activity = std::sync::Arc::new(std::sync::Mutex::new(std::time::Instant::now()));
     let last_activity_clone = std::sync::Arc::clone(&last_activity);
+    let is_busy = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let is_busy_monitor = std::sync::Arc::clone(&is_busy);
 
     // Spawn a timeout monitor thread
     // Detached — monitor calls process::exit(0) directly; joining is unnecessary.
@@ -168,7 +170,9 @@ pub fn run_server(
             let last = last_activity_clone
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
-            if last.elapsed() > idle_timeout {
+            if last.elapsed() > idle_timeout
+                && !is_busy_monitor.load(std::sync::atomic::Ordering::Relaxed)
+            {
                 info!("hyphae: idle timeout — exiting");
                 std::process::exit(0);
             }
@@ -224,6 +228,12 @@ pub fn run_server(
             }
         };
 
+        // All early-continue/return paths above this line exit before is_busy is raised,
+        // so the flag is never leaked. write_result? below clears the flag before propagating.
+        // Relaxed ordering is sufficient: the monitor sleeps 1s between checks (a full
+        // hardware barrier), and there is no data dependency between this flag and any
+        // other shared memory.
+        is_busy.store(true, std::sync::atomic::Ordering::Relaxed);
         let response = match method {
             "initialize" => handle_initialize(id, store, project.as_deref()),
             "ping" => JsonRpcResponse::ok(id, json!({})),
@@ -250,13 +260,16 @@ pub fn run_server(
             other => JsonRpcResponse::method_not_found(id, other),
         };
 
-        write_response(&mut stdout, &response)?;
+        let write_result = write_response(&mut stdout, &response);
+        is_busy.store(false, std::sync::atomic::Ordering::Relaxed);
 
         // Update last activity time after dispatching
         {
             let mut last = last_activity.lock().unwrap_or_else(|e| e.into_inner());
             *last = std::time::Instant::now();
         } // guard dropped here
+
+        write_result?;
     }
 
     info!("hyphae: MCP transport closed — stdin EOF");
