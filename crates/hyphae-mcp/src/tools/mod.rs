@@ -1915,7 +1915,7 @@ mod tests {
             &store,
             None,
             "hyphae_ingest_file",
-            &json!({"path": path.to_str().unwrap()}),
+            &json!({"path": path.to_str().unwrap(), "project_root": dir.path().to_str().unwrap()}),
             false,
             None,
             false,
@@ -1949,7 +1949,7 @@ mod tests {
             &store,
             None,
             "hyphae_ingest_file",
-            &json!({"path": path.to_str().unwrap()}),
+            &json!({"path": path.to_str().unwrap(), "project_root": dir.path().to_str().unwrap()}),
             false,
             None,
             false,
@@ -1989,7 +1989,7 @@ mod tests {
             &store,
             None,
             "hyphae_ingest_file",
-            &json!({"path": path.to_str().unwrap()}),
+            &json!({"path": path.to_str().unwrap(), "project_root": dir.path().to_str().unwrap()}),
             false,
             None,
             false,
@@ -2026,12 +2026,13 @@ mod tests {
         fs::write(&path, "Content that will be forgotten.").unwrap();
 
         let path_str = path.to_str().unwrap();
+        let project_root = dir.path().to_str().unwrap();
 
         call_tool(
             &store,
             None,
             "hyphae_ingest_file",
-            &json!({"path": path_str}),
+            &json!({"path": path_str, "project_root": project_root}),
             false,
             None,
             false,
@@ -2147,7 +2148,7 @@ mod tests {
             &store,
             None,
             "hyphae_ingest_file",
-            &json!({"path": path.to_str().unwrap()}),
+            &json!({"path": path.to_str().unwrap(), "project_root": dir.path().to_str().unwrap()}),
             false,
             None,
             false,
@@ -2215,7 +2216,7 @@ mod tests {
             &store,
             None,
             "hyphae_ingest_file",
-            &json!({"path": path.to_str().unwrap()}),
+            &json!({"path": path.to_str().unwrap(), "project_root": dir.path().to_str().unwrap()}),
             false,
             None,
             false,
@@ -2256,5 +2257,84 @@ mod tests {
         assert!(!memory::is_session_query("authentication flow"));
         assert!(!memory::is_session_query("database schema design"));
         assert!(!memory::is_session_query("show me previous changes"));
+    }
+
+    // === Ingest path traversal regression tests ===
+
+    #[test]
+    fn test_ingest_file_requires_project_root() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let store = test_store();
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test.md");
+        fs::write(&path, "# Test").unwrap();
+
+        // Call hyphae_ingest_file without project_root
+        let result = call_tool(
+            &store,
+            None,
+            "hyphae_ingest_file",
+            &json!({"path": path.to_str().unwrap()}),
+            false,
+            None,
+            false,
+        );
+
+        assert!(result.is_error);
+        assert!(result.content[0].text.contains("project_root is required"));
+    }
+
+    #[test]
+    fn test_ingest_file_rejects_path_outside_project_root() {
+        use tempfile::TempDir;
+
+        let store = test_store();
+        let project_dir = TempDir::new().unwrap();
+
+        // Try to ingest a path outside the project root (e.g., /etc/hosts on Unix)
+        let result = call_tool(
+            &store,
+            None,
+            "hyphae_ingest_file",
+            &json!({
+                "path": "/etc/hosts",
+                "project_root": project_dir.path().to_str().unwrap()
+            }),
+            false,
+            None,
+            false,
+        );
+
+        assert!(result.is_error);
+        assert!(result.content[0].text.contains("outside the project root"));
+    }
+
+    #[test]
+    fn test_ingest_file_rejects_empty_project_root() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let store = test_store();
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test.md");
+        fs::write(&path, "# Test").unwrap();
+
+        let result = call_tool(
+            &store,
+            None,
+            "hyphae_ingest_file",
+            &json!({
+                "path": path.to_str().unwrap(),
+                "project_root": ""
+            }),
+            false,
+            None,
+            false,
+        );
+
+        assert!(result.is_error);
+        assert!(result.content[0].text.contains("project_root is required"));
     }
 }

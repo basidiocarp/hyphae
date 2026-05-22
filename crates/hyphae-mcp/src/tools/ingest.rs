@@ -41,27 +41,31 @@ pub(crate) fn tool_ingest_file(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    // Step 4: Path confinement check — only when project_root is provided.
-    // Canonicalization already resolves `..` segments, so no separate `..` string
-    // check is needed outside this block (and such a check would reject valid absolute
-    // paths that happen to contain `..`).
-    if let Some(project_root_str) = get_str(args, "project_root") {
-        // Only enforce confinement when the path already exists on disk.
-        // Non-existent paths are passed through to the ingestion layer, which
-        // produces a clearer error if the file is truly missing.
-        if let Ok(canonical_path) = std::fs::canonicalize(path_str) {
-            let canonical_root = match std::fs::canonicalize(project_root_str) {
-                Ok(p) => p,
-                Err(_) => {
-                    // If root can't be canonicalized, fail safely
-                    return ToolResult::error(format!(
-                        "Cannot resolve project root: {project_root_str}"
-                    ));
-                }
-            };
-            if !canonical_path.starts_with(&canonical_root) {
-                return ToolResult::error("Path is outside the project root".to_string());
+    // Step 4: Path confinement check — required for file ingest to prevent path traversal.
+    let project_root_str = match get_str(args, "project_root") {
+        Some(root) if !root.trim().is_empty() => root,
+        _ => {
+            return ToolResult::error(
+                "project_root is required for file ingest to prevent path traversal".to_string(),
+            );
+        }
+    };
+
+    // Only enforce confinement when the path already exists on disk.
+    // Non-existent paths are passed through to the ingestion layer, which
+    // produces a clearer error if the file is truly missing.
+    if let Ok(canonical_path) = std::fs::canonicalize(path_str) {
+        let canonical_root = match std::fs::canonicalize(project_root_str) {
+            Ok(p) => p,
+            Err(_) => {
+                // If root can't be canonicalized, fail safely
+                return ToolResult::error(format!(
+                    "Cannot resolve project root: {project_root_str}"
+                ));
             }
+        };
+        if !canonical_path.starts_with(&canonical_root) {
+            return ToolResult::error("Path is outside the project root".to_string());
         }
     }
 
@@ -1027,6 +1031,11 @@ mod tests {
         temp_file.write_all(b"original content").unwrap();
         temp_file.flush().unwrap();
         let temp_path = temp_file.path().to_str().unwrap();
+        let project_root = std::path::Path::new(temp_path)
+            .parent()
+            .unwrap()
+            .to_str()
+            .unwrap();
 
         // First ingest with original content
         let first_result = tool_ingest_file(
@@ -1034,6 +1043,7 @@ mod tests {
             None,
             &json!({
                 "path": temp_path,
+                "project_root": project_root,
             }),
             false,
             Some("test"),
@@ -1049,6 +1059,7 @@ mod tests {
             None,
             &json!({
                 "path": temp_path,
+                "project_root": project_root,
             }),
             false,
             Some("test"),
@@ -1073,6 +1084,7 @@ mod tests {
             None,
             &json!({
                 "path": temp_path_modified,
+                "project_root": project_root,
             }),
             false,
             Some("test"),
