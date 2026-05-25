@@ -8,13 +8,23 @@ pub(crate) fn resolve_db_path(cli_db: Option<PathBuf>, configured_db: Option<&st
 
 pub(crate) fn default_db_path() -> PathBuf {
     spore::paths::data_dir("basidiocarp")
-        .unwrap_or_else(|_| PathBuf::from("."))
+        .unwrap_or_else(|_| {
+            tracing::warn!(
+                "hyphae: data_dir lookup failed, using current directory as DB path — writes may not persist across sessions"
+            );
+            PathBuf::from(".")
+        })
         .join("hyphae/hyphae.db")
 }
 
 pub(crate) fn backup_dir() -> PathBuf {
     spore::paths::data_dir("basidiocarp")
-        .unwrap_or_else(|_| PathBuf::from("."))
+        .unwrap_or_else(|_| {
+            tracing::warn!(
+                "hyphae: data_dir lookup failed, using current directory as backup path — backups may not persist across sessions"
+            );
+            PathBuf::from(".")
+        })
         .join("hyphae/backups")
 }
 
