@@ -48,17 +48,17 @@ For things that happen: decisions, errors, configurations, preferences. Organize
 
 ```bash
 # Store a decision
-hyphae store -t "project-api" -c "Chose REST over GraphQL for v1 simplicity" -i high
+hyphae store -t "decisions/api" -c "Chose REST over GraphQL for v1 simplicity" -i high
 
 # Store an error resolution
-hyphae store -t "errors-resolved" -c "CORS issue fixed by adding origin header in nginx" -i medium
+hyphae store -t "errors/resolved" -c "CORS issue fixed by adding origin header in nginx" -i medium
 
 # Store a critical fact (never forgotten)
 hyphae store -t "credentials" -c "Production DB is on port 5433, not 5432" -i critical
 
 # Search for relevant context
 hyphae search -q "API design choices"
-hyphae search -q "nginx" --topic "errors-resolved"
+hyphae search -q "nginx" --topic "errors/resolved"
 hyphae search -q "database" --limit 10
 ```
 
@@ -119,12 +119,14 @@ Good topic naming helps recall. Suggested patterns:
 
 | Pattern | Example | Use for |
 |---------|---------|---------|
-| `decisions-{project}` | `decisions-api` | Architecture and design choices |
-| `errors-resolved` | `errors-resolved` | Bug fixes with their solutions |
+| `decisions/{project}` | `decisions/api` | Architecture and design choices |
+| `errors/resolved` | `errors/resolved` | Bug fixes with their solutions |
 | `preferences` | `preferences` | User coding style, tool preferences |
-| `context-{project}` | `context-frontend` | Project-specific knowledge |
-| `conventions-{project}` | `conventions-api` | Code style, naming, file structure |
+| `context/{project}` | `context/frontend` | Project-specific knowledge |
+| `conventions/{project}` | `conventions/api` | Code style, naming, file structure |
 | `credentials` | `credentials` | Ports, URLs, service names (use `critical`) |
+
+> **Migration note:** If you have memories stored with hyphen-style topics (e.g., `errors-resolved`, `decisions-myapp`), they are still stored but won't surface when filtering by slash-style topics. Rename them with `hyphae store -t "errors/resolved" -c "<original content>"` to re-store under the correct topic, or use `hyphae doctor` (coming soon) for bulk migration.
 
 ## Memory Lifecycle
 
@@ -134,10 +136,10 @@ When a topic accumulates many entries, consolidate them into a dense summary:
 
 ```bash
 # Consolidate a topic (replaces all entries with one summary)
-hyphae consolidate --topic "errors-resolved"
+hyphae consolidate --topic "errors/resolved"
 
 # Consolidate without the automatic pre-write backup
-hyphae consolidate --topic "errors-resolved" --no-backup
+hyphae consolidate --topic "errors/resolved" --no-backup
 ```
 
 Hyphae automatically creates a backup before the first destructive write unless `--no-backup` is set.
@@ -160,7 +162,7 @@ hyphae prune --threshold 0.1
 hyphae stats                          # Global overview (counts, avg weight, date range)
 hyphae topics                         # List all topics with entry counts
 hyphae health                         # Per-topic hygiene report
-hyphae health --topic "decisions-api" # Single topic
+hyphae health --topic "decisions/api" # Single topic
 ```
 
 The health report flags:
