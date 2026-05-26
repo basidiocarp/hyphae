@@ -624,12 +624,12 @@ impl SqliteStore {
         }
 
         let id = memory.id.clone();
-        // Audit inside the transaction: only records if the commit succeeds.
-        if let Err(e) = self.audit_memory(super::audit::AuditOperation::Update, &memory) {
-            tracing::warn!("audit log write failed, replace proceeding: {e}");
-        }
         tx.commit()
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        // Audit only after commit — the change is now durable.
+        if let Err(e) = self.audit_memory(super::audit::AuditOperation::Update, &memory) {
+            tracing::warn!("audit log write failed after replace commit: {e}");
+        }
         Ok(id)
     }
 
