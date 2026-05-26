@@ -710,11 +710,12 @@ fn main() -> Result<()> {
             }
         }
 
-        Commands::AuditSecrets { topic, detailed } => {
+        Commands::AuditSecrets { topic, detailed, show_secrets } => {
             commands::audit_secrets::cmd_audit_secrets(
                 &store,
                 topic.clone(),
                 detailed,
+                show_secrets,
                 resolved_project,
             )?;
         }

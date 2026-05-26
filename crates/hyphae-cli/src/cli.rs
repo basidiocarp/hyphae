@@ -522,9 +522,12 @@ pub(crate) enum Commands {
         /// Only check memories in this topic
         #[arg(short, long)]
         topic: Option<String>,
-        /// Show details for each finding
+        /// Show details for each finding (displays [REDACTED] by default)
         #[arg(long)]
         detailed: bool,
+        /// Print full secret values instead of [REDACTED] (requires --detailed and an interactive terminal)
+        #[arg(long, requires = "detailed", help = "Print full secret values instead of [REDACTED] (requires --detailed and an interactive terminal)")]
+        show_secrets: bool,
     },
 
     /// Manage permanent governance policy memories (constitution layer)

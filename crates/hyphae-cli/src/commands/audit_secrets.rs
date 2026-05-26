@@ -1,12 +1,18 @@
 use hyphae_core::{MemoryStore, detect_secrets};
 use hyphae_store::SqliteStore;
+use std::io::IsTerminal;
 
 pub fn cmd_audit_secrets(
     store: &SqliteStore,
     topic: Option<String>,
     detailed: bool,
+    show_secrets: bool,
     project: Option<String>,
 ) -> anyhow::Result<()> {
+    // If show_secrets is requested, ensure we have a TTY
+    if show_secrets && !std::io::stdout().is_terminal() {
+        anyhow::bail!("--show-secrets requires an interactive terminal. Refusing to print credentials to a non-interactive output stream.");
+    }
     let mut total = 0;
     let mut with_secrets = 0;
     let mut all_findings = Vec::new();
@@ -49,7 +55,11 @@ pub fn cmd_audit_secrets(
             println!("  - {id} ({topic_name}):");
             if detailed {
                 for secret in secrets {
-                    println!("    * {secret}");
+                    if show_secrets {
+                        println!("    * {secret}");
+                    } else {
+                        println!("    * [REDACTED]");
+                    }
                 }
             } else {
                 println!("    * {} found", secrets.len());
@@ -71,7 +81,7 @@ mod tests {
     fn test_audit_secrets_empty_store() -> anyhow::Result<()> {
         let store = SqliteStore::in_memory()?;
         // Should complete without error
-        cmd_audit_secrets(&store, None, false, None)?;
+        cmd_audit_secrets(&store, None, false, false, None)?;
         Ok(())
     }
 
@@ -89,7 +99,7 @@ mod tests {
         let _id = store.store(memory)?;
 
         // Run audit - should detect the secret
-        cmd_audit_secrets(&store, None, false, None)?;
+        cmd_audit_secrets(&store, None, false, false, None)?;
         Ok(())
     }
 
@@ -115,7 +125,7 @@ mod tests {
         store.store(mem_clean)?;
 
         // Audit only credentials topic
-        cmd_audit_secrets(&store, Some("credentials".into()), false, None)?;
+        cmd_audit_secrets(&store, Some("credentials".into()), false, false, None)?;
         Ok(())
     }
 }
