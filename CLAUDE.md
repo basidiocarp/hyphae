@@ -115,6 +115,18 @@ pub trait MemoryStore {
 
 ---
 
+## CLI vs MCP Behavioral Difference
+
+**`hyphae search` (CLI) is a lower-fidelity fallback** compared to `mcp__hyphae__hyphae_memory_recall`. The CLI path skips:
+- **Auto-decay**: MCP `recall` calls `maybe_auto_decay`; CLI does not
+- **Shared-project merging**: MCP merges results across shared-project memories; CLI does not
+- **Context-aware ranking**: MCP applies heuristics based on session context; CLI does FTS only
+- **Recall event logging**: MCP logs the recall for telemetry and pattern extraction; CLI does not
+
+Use the MCP tools when available. Treat `hyphae search` as a debugging and offline aid — expect lower-quality and fewer results.
+
+---
+
 ## MCP Tools
 
 The following `mcp__hyphae__*` tools are available for Claude Code:

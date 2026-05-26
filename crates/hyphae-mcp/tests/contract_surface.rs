@@ -164,7 +164,7 @@ fn search_all_keeps_identity_scoping_and_shared_results() {
         &store,
         None,
         "hyphae_ingest_file",
-        &json!({"path": path.to_str().unwrap()}),
+        &json!({"path": path.to_str().unwrap(), "project_root": dir.path().to_str().unwrap()}),
         false,
         Some("demo"),
         false,
@@ -251,12 +251,14 @@ fn ingest_file_skips_unchanged_content_on_second_call() {
     .unwrap();
     let path_str = path.to_str().unwrap();
 
+    let project_root = dir.path().to_str().unwrap();
+
     // First ingest: should succeed and report at least one document ingested.
     let first = call_tool(
         &store,
         None,
         "hyphae_ingest_file",
-        &json!({"path": path_str}),
+        &json!({"path": path_str, "project_root": project_root}),
         false,
         Some("project"),
         false,
@@ -277,7 +279,7 @@ fn ingest_file_skips_unchanged_content_on_second_call() {
         &store,
         None,
         "hyphae_ingest_file",
-        &json!({"path": path_str}),
+        &json!({"path": path_str, "project_root": project_root}),
         false,
         Some("project"),
         false,
