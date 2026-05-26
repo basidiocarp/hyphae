@@ -78,6 +78,10 @@ fn log_recall_results(
         })
     });
 
+    if session_id.is_none() {
+        tracing::warn!("recall event logged without active session; session_id will be NULL in storage");
+    }
+
     if let Err(e) = store.log_recall_event(session_id.as_deref(), query, memory_ids, project) {
         tracing::warn!("log_recall_event failed: {e}");
     }

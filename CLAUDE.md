@@ -25,6 +25,7 @@ Hyphae is a persistent memory system for AI coding agents. It is a five-crate Ru
 - **Embedding model unavailable**: vector-backed search cannot initialize until the model is available.
 - **Database corruption**: storage commands fail until repaired.
 - **Out of disk space**: writes fail even though reads may continue.
+- **Recall without active session**: If `hyphae_session_start` is not called before `hyphae_memory_recall`, recall events are logged with `session_id = NULL`. This breaks Cap session timeline attribution. Fix: call `hyphae_session_start` at the beginning of each session.
 
 ---
 
