@@ -163,6 +163,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                                 "description": "Minimum confidence threshold for results"
                             }
                         }
+                    },
+                    "json": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "When true, return a machine-parseable JSON envelope instead of human-readable text. Empty results return {result_count: 0, status: \"empty\", memories: []}; non-empty results return {result_count: N, status: \"ok\", memories: [...]}. Default false preserves the existing human-readable format."
                     }
                 },
                 "required": ["query"]

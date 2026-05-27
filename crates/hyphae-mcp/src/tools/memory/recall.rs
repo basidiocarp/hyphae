@@ -412,6 +412,20 @@ fn merge_shared_hybrid(
     scored_results
 }
 
+fn memory_to_json(mem: &Memory) -> Value {
+    serde_json::json!({
+        "id": mem.id.to_string(),
+        "topic": mem.topic,
+        "importance": mem.importance.to_string(),
+        "weight": mem.weight.value(),
+        "summary": mem.summary,
+        "keywords": mem.keywords,
+        "project": mem.project,
+        "branch": mem.branch,
+        "worktree": mem.worktree,
+    })
+}
+
 pub(crate) fn tool_recall(
     store: &SqliteStore,
     embedder: Option<&dyn Embedder>,
@@ -428,6 +442,8 @@ pub(crate) fn tool_recall(
         Some(q) => q,
         None => return ToolResult::error("missing required field: query".into()),
     };
+
+    let json_mode = args.get("json").and_then(|v| v.as_bool()).unwrap_or(false);
 
     // Optional QueryContext for domain-scoped recall
     let query_context: Option<QueryContext> = args
@@ -600,7 +616,23 @@ pub(crate) fn tool_recall(
         log_recall_results(store, query, &memory_ids, session_id, project);
 
         if results.is_empty() {
+            if json_mode {
+                let envelope = serde_json::json!({"result_count": 0, "status": "empty", "memories": []});
+                return match serde_json::to_string(&envelope) {
+                    Ok(json) => ToolResult::text(json),
+                    Err(e) => ToolResult::error(format!("serialization error: {e}")),
+                };
+            }
             return ToolResult::text("No memories found.".into());
+        }
+
+        if json_mode {
+            let memories: Vec<Value> = results.iter().map(memory_to_json).collect();
+            let envelope = serde_json::json!({"result_count": memories.len(), "status": "ok", "memories": memories});
+            return match serde_json::to_string(&envelope) {
+                Ok(json) => ToolResult::text(json),
+                Err(e) => ToolResult::error(format!("serialization error: {e}")),
+            };
         }
 
         let search_mode = format!("{:?}", search_type).to_lowercase();
@@ -721,7 +753,23 @@ pub(crate) fn tool_recall(
                 log_recall_results(store, query, &memory_ids, session_id, project);
 
                 if scored_results.is_empty() {
+                    if json_mode {
+                        let envelope = serde_json::json!({"result_count": 0, "status": "empty", "memories": []});
+                        return match serde_json::to_string(&envelope) {
+                            Ok(json) => ToolResult::text(json),
+                            Err(e) => ToolResult::error(format!("serialization error: {e}")),
+                        };
+                    }
                     return ToolResult::text("No memories found.".into());
+                }
+
+                if json_mode {
+                    let memories: Vec<Value> = scored_results.iter().map(|(m, _)| memory_to_json(m)).collect();
+                    let envelope = serde_json::json!({"result_count": memories.len(), "status": "ok", "memories": memories});
+                    return match serde_json::to_string(&envelope) {
+                        Ok(json) => ToolResult::text(json),
+                        Err(e) => ToolResult::error(format!("serialization error: {e}")),
+                    };
                 }
 
                 let mut output = transparency_header(&sanitized, scored_results.len(), "hybrid");
@@ -818,7 +866,23 @@ pub(crate) fn tool_recall(
     log_recall_results(store, query, &memory_ids, session_id, project);
 
     if results.is_empty() {
+        if json_mode {
+            let envelope = serde_json::json!({"result_count": 0, "status": "empty", "memories": []});
+            return match serde_json::to_string(&envelope) {
+                Ok(json) => ToolResult::text(json),
+                Err(e) => ToolResult::error(format!("serialization error: {e}")),
+            };
+        }
         return ToolResult::text("No memories found.".into());
+    }
+
+    if json_mode {
+        let memories: Vec<Value> = results.iter().map(memory_to_json).collect();
+        let envelope = serde_json::json!({"result_count": memories.len(), "status": "ok", "memories": memories});
+        return match serde_json::to_string(&envelope) {
+            Ok(json) => ToolResult::text(json),
+            Err(e) => ToolResult::error(format!("serialization error: {e}")),
+        };
     }
 
     let mut output = transparency_header(
