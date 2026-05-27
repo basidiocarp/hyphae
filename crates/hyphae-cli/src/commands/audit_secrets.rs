@@ -11,7 +11,9 @@ pub fn cmd_audit_secrets(
 ) -> anyhow::Result<()> {
     // If show_secrets is requested, ensure we have a TTY
     if show_secrets && !std::io::stdout().is_terminal() {
-        anyhow::bail!("--show-secrets requires an interactive terminal. Refusing to print credentials to a non-interactive output stream.");
+        anyhow::bail!(
+            "--show-secrets requires an interactive terminal. Refusing to print credentials to a non-interactive output stream."
+        );
     }
     let mut total = 0;
     let mut with_secrets = 0;

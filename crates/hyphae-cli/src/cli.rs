@@ -526,7 +526,11 @@ pub(crate) enum Commands {
         #[arg(long)]
         detailed: bool,
         /// Print full secret values instead of [REDACTED] (requires --detailed and an interactive terminal)
-        #[arg(long, requires = "detailed", help = "Print full secret values instead of [REDACTED] (requires --detailed and an interactive terminal)")]
+        #[arg(
+            long,
+            requires = "detailed",
+            help = "Print full secret values instead of [REDACTED] (requires --detailed and an interactive terminal)"
+        )]
         show_secrets: bool,
     },
 

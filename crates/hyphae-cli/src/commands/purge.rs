@@ -73,12 +73,16 @@ fn cleanup_recall_seen_files() {
     let entries = match std::fs::read_dir(&hyphae_dir) {
         Ok(e) => e,
         Err(e) => {
-            tracing::debug!("cleanup_recall_seen_files: could not read dir {}: {e}", hyphae_dir.display());
+            tracing::debug!(
+                "cleanup_recall_seen_files: could not read dir {}: {e}",
+                hyphae_dir.display()
+            );
             return;
         }
     };
 
-    let cutoff = SystemTime::now().checked_sub(Duration::from_secs(7 * 24 * 60 * 60))
+    let cutoff = SystemTime::now()
+        .checked_sub(Duration::from_secs(7 * 24 * 60 * 60))
         .unwrap_or(SystemTime::UNIX_EPOCH);
     let mut removed = 0usize;
 
@@ -96,7 +100,10 @@ fn cleanup_recall_seen_files() {
         let mtime = match entry.metadata().and_then(|m| m.modified()) {
             Ok(t) => t,
             Err(e) => {
-                tracing::debug!("cleanup_recall_seen_files: could not stat {}: {e}", path.display());
+                tracing::debug!(
+                    "cleanup_recall_seen_files: could not stat {}: {e}",
+                    path.display()
+                );
                 continue;
             }
         };
@@ -104,7 +111,10 @@ fn cleanup_recall_seen_files() {
         if mtime < cutoff {
             match std::fs::remove_file(&path) {
                 Ok(()) => removed += 1,
-                Err(e) => tracing::debug!("cleanup_recall_seen_files: failed to remove {}: {e}", path.display()),
+                Err(e) => tracing::debug!(
+                    "cleanup_recall_seen_files: failed to remove {}: {e}",
+                    path.display()
+                ),
             }
         }
     }

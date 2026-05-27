@@ -1037,9 +1037,7 @@ mod tests {
 
         assert!(result.is_error);
         assert!(
-            result.content[0]
-                .text
-                .contains("project_root is required"),
+            result.content[0].text.contains("project_root is required"),
             "expected project_root-required error, got: {}",
             result.content[0].text
         );
@@ -1063,9 +1061,7 @@ mod tests {
 
         assert!(result.is_error);
         assert!(
-            result.content[0]
-                .text
-                .contains("project_root is required"),
+            result.content[0].text.contains("project_root is required"),
             "expected project_root-required error, got: {}",
             result.content[0].text
         );

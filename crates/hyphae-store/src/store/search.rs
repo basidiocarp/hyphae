@@ -1106,7 +1106,10 @@ mod tests {
         // Verify all scores are positive and finite
         for result in &results {
             let score = result.score();
-            assert!(score > 0.0 && score.is_finite(), "scores must be positive and finite");
+            assert!(
+                score > 0.0 && score.is_finite(),
+                "scores must be positive and finite"
+            );
         }
     }
 }
