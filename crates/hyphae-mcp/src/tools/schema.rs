@@ -61,7 +61,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                         "type": "string",
                         "enum": ["critical", "high", "medium", "low"],
                         "default": "medium",
-                        "description": "critical=never forgotten, high=slow decay, medium=normal, low=fast decay"
+                        "description": "critical=never auto-pruned (explicit forget/invalidate only), high=never auto-pruned (explicit forget/invalidate only), medium=normal decay, low=fast decay"
                     },
                     "keywords": {
                         "type": "array",
