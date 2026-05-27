@@ -1,6 +1,7 @@
 use chrono::DateTime;
 use std::io::{self, Write};
 use std::path::Path;
+use std::time::{Duration, SystemTime};
 
 use hyphae_store::SqliteStore;
 
@@ -52,6 +53,66 @@ fn prompt_confirmation(stats: &PurgeStats, force: bool) -> anyhow::Result<bool> 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Recall-seen file cleanup
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Delete orphaned `recall-seen-*.json` files older than 7 days.
+///
+/// These accumulate in the hyphae data directory when sessions end without
+/// triggering per-session cleanup (e.g. killed processes or crashed agents).
+fn cleanup_recall_seen_files() {
+    let data_dir = match spore::paths::data_dir("basidiocarp") {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::debug!("cleanup_recall_seen_files: could not resolve data dir: {e}");
+            return;
+        }
+    };
+
+    let hyphae_dir = data_dir.join("hyphae");
+    let entries = match std::fs::read_dir(&hyphae_dir) {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::debug!("cleanup_recall_seen_files: could not read dir {}: {e}", hyphae_dir.display());
+            return;
+        }
+    };
+
+    let cutoff = SystemTime::now().checked_sub(Duration::from_secs(7 * 24 * 60 * 60))
+        .unwrap_or(SystemTime::UNIX_EPOCH);
+    let mut removed = 0usize;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if !name.starts_with("recall-seen-")
+            || !std::path::Path::new(name)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+        {
+            continue;
+        }
+
+        let mtime = match entry.metadata().and_then(|m| m.modified()) {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::debug!("cleanup_recall_seen_files: could not stat {}: {e}", path.display());
+                continue;
+            }
+        };
+
+        if mtime < cutoff {
+            match std::fs::remove_file(&path) {
+                Ok(()) => removed += 1,
+                Err(e) => tracing::debug!("cleanup_recall_seen_files: failed to remove {}: {e}", path.display()),
+            }
+        }
+    }
+
+    tracing::debug!("cleanup_recall_seen_files: removed {removed} orphaned recall-seen file(s)");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Purge by Project
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -66,6 +127,11 @@ pub fn cmd_purge(
 ) -> anyhow::Result<()> {
     if project.is_none() && before.is_none() {
         anyhow::bail!("must specify either --project or --before");
+    }
+
+    // Always clean up orphaned recall-seen files, regardless of purge mode.
+    if !dry_run {
+        cleanup_recall_seen_files();
     }
 
     if let Some(proj) = project {

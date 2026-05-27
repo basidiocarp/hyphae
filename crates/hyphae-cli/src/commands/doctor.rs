@@ -150,6 +150,8 @@ pub fn run(fix: bool, cli_db_path: Option<PathBuf>) -> Result<()> {
         warn("Run: hyphae store --topic test --content \"init\" to create it");
     }
 
+    check_db_process_count(&db_path, &mut warnings);
+
     // ─────────────────────────────────────────────────────────────────────────
     // MCP Server
     // ─────────────────────────────────────────────────────────────────────────
@@ -729,6 +731,41 @@ fn check_ecosystem(warnings: &mut u32) {
     } else {
         warn("Rhizome not installed (optional: code intelligence)");
         *warnings += 1;
+    }
+}
+
+/// Check whether multiple hyphae processes have the database file open.
+///
+/// Uses `lsof` to count file descriptors pointing at `db_path`. If `lsof` is
+/// not available the check is skipped gracefully. If more than one process has
+/// the file open a warning is emitted — running multiple hyphae instances
+/// against the same database causes silent write-lock contention.
+fn check_db_process_count(db_path: &std::path::Path, warnings: &mut u32) {
+    let db_str = db_path.to_string_lossy();
+
+    // lsof is available on macOS and most Linux distributions.
+    let output = std::process::Command::new("lsof")
+        .args(["-t", db_str.as_ref()])
+        .output();
+
+    match output {
+        Err(_) => {
+            // lsof not available — skip silently.
+        }
+        Ok(result) => {
+            let stdout = String::from_utf8_lossy(&result.stdout);
+            let pid_count = stdout.lines().filter(|l| !l.trim().is_empty()).count();
+            if pid_count > 1 {
+                warn(&format!(
+                    "Multiple processes ({pid_count}) have the database open at {}. \
+                     Run only one hyphae instance per DB path to avoid write-lock contention.",
+                    db_path.display()
+                ));
+                *warnings += 1;
+            } else {
+                pass("Database not held open by multiple processes");
+            }
+        }
     }
 }
 

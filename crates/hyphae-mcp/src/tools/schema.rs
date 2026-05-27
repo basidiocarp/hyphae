@@ -44,7 +44,7 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
         json!({
             "name": "hyphae_memory_store",
             "title": "Store Memory",
-            "description": "Store important information in Hyphae long-term memory. Use to save decisions, preferences, project context, resolved errors — anything that should persist between sessions.",
+            "description": "Store important information in Hyphae long-term memory. Use to save decisions, preferences, project context, resolved errors — anything that should persist between sessions. Note: deduplication (cosine similarity > 0.85) is only performed when an active embedder is configured. Without an embedder, duplicate content creates separate memory records.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -75,11 +75,11 @@ pub(super) fn tool_definitions_json(has_embedder: bool) -> Vec<Value> {
                     },
                     "branch": {
                         "type": "string",
-                        "description": "Optional git branch for the memory. If omitted, Hyphae will try to detect it from the current working tree."
+                        "description": "Optional git branch for the memory. If omitted, the git context captured at MCP server startup is used. In multi-project workflows, pass this explicitly to avoid wrong metadata."
                     },
                     "worktree": {
                         "type": "string",
-                        "description": "Optional git worktree root for the memory. If omitted, Hyphae will try to detect it from the current working tree."
+                        "description": "Optional git worktree root for the memory. If omitted, the git context captured at MCP server startup is used. In multi-project workflows, pass this explicitly to avoid wrong metadata."
                     }
                 },
                 "required": ["topic", "content"]

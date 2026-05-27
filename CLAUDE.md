@@ -27,6 +27,23 @@ Hyphae is a persistent memory system for AI coding agents. It is a five-crate Ru
 - **Out of disk space**: writes fail even though reads may continue.
 - **Recall without active session**: If `hyphae_session_start` is not called before `hyphae_memory_recall`, recall events are logged with `session_id = NULL`. This breaks Cap session timeline attribution. Fix: call `hyphae_session_start` at the beginning of each session.
 
+## Embedder Behavior
+
+- Configuring an embedder does not guarantee all stored memories have embeddings. Memories stored before the embedder was configured have no vector; they fall back to FTS-only ranking during recall.
+- If the model download fails at first use, the embedder initialization returns an error and vector similarity recall returns 0 results for that request. Subsequent calls retry the download.
+- Check `tracing::warn` log output (stderr, controlled by `HYPHAE_LOG`) for download failures — the warning includes the model name and the error cause.
+- Deduplication (cosine similarity > 0.85) is only performed when an active embedder is configured. Without an embedder, repeated stores accumulate separate memory records. Operators should configure an embedder or run `hyphae_memory_consolidate` periodically to merge duplicates.
+
+## Concurrency Model
+
+- SQLite WAL mode is enabled with a 5-second busy timeout. Concurrent reads succeed; concurrent writes serialize via SQLite's write lock.
+- Session-end hook timeouts return `HyphaeError::Database`. These are logged at `tracing::warn` and swallowed so the hook does not block the agent lifecycle signal. No data is lost, but the session record may be incomplete.
+- Run only one hyphae process per DB path. Running multiple processes against the same database causes silent write-lock contention and intermittent store failures. `hyphae doctor` checks for this condition and emits a warning when multiple processes are detected.
+
+## Git Context and Multi-Project Workflows
+
+`GIT_CONTEXT_CACHE` in `crates/hyphae-mcp/src/tools/memory/store.rs` is a `OnceLock<GitContext>` populated on the first `hyphae_memory_store` call. It stays fixed for the lifetime of the MCP server process. This is correct for single-project CLI use, but can attach wrong branch or worktree metadata when the server is shared across multiple projects. In multi-project workflows, always pass `branch` and `worktree` explicitly to `hyphae_memory_store` to override the cached context.
+
 ---
 
 ## State Locations

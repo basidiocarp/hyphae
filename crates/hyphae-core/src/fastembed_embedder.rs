@@ -94,7 +94,11 @@ impl FastEmbedder {
         if let Some(m) = self.model.get() {
             return Ok(m);
         }
-        eprintln!("Downloading embedding model ({})...", self.model_name);
+        tracing::warn!(
+            model = %self.model_name,
+            "embedding model not yet cached — downloading now; \
+             if this download fails, vector similarity recall will return 0 results"
+        );
         let (emb_model, _) = resolve_model(&self.model_name)?;
         let cache_dir = cache_directory();
         let mut opts = InitOptions::new(emb_model).with_show_download_progress(true);
@@ -102,8 +106,15 @@ impl FastEmbedder {
             let _ = std::fs::create_dir_all(dir);
             opts = opts.with_cache_dir(dir.clone());
         }
-        let model = TextEmbedding::try_new(opts)
-            .map_err(|e| HyphaeError::Embedding(format!("failed to init model: {e}")))?;
+        let model = TextEmbedding::try_new(opts).map_err(|e| {
+            tracing::warn!(
+                model = %self.model_name,
+                error = %e,
+                "embedding model download or initialization failed; \
+                 vector similarity recall will return 0 results until the model is available"
+            );
+            HyphaeError::Embedding(format!("failed to init model: {e}"))
+        })?;
         let _ = self.model.set(model);
         self.model
             .get()
