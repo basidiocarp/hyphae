@@ -1020,6 +1020,58 @@ mod tests {
     }
 
     #[test]
+    fn test_ingest_file_rejects_absent_project_root() {
+        let store = test_store();
+
+        // No project_root supplied — should be rejected immediately, regardless of path.
+        let result = tool_ingest_file(
+            &store,
+            None,
+            &json!({
+                "path": "/etc/passwd",
+            }),
+            false,
+            None,
+            &ToolTraceContext::default(),
+        );
+
+        assert!(result.is_error);
+        assert!(
+            result.content[0]
+                .text
+                .contains("project_root is required"),
+            "expected project_root-required error, got: {}",
+            result.content[0].text
+        );
+    }
+
+    #[test]
+    fn test_ingest_file_rejects_traversal_path_without_project_root() {
+        let store = test_store();
+
+        // Traversal-style path with no project_root — same guard, same error.
+        let result = tool_ingest_file(
+            &store,
+            None,
+            &json!({
+                "path": "../../.ssh/id_rsa",
+            }),
+            false,
+            None,
+            &ToolTraceContext::default(),
+        );
+
+        assert!(result.is_error);
+        assert!(
+            result.content[0]
+                .text
+                .contains("project_root is required"),
+            "expected project_root-required error, got: {}",
+            result.content[0].text
+        );
+    }
+
+    #[test]
     fn test_ingest_file_skips_unchanged_content_hash() {
         use std::io::Write;
         use tempfile::NamedTempFile;
