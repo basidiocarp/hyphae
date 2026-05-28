@@ -340,7 +340,7 @@ mod tests {
         let session_id = "sess-stale-test";
         let _ = std::fs::remove_file(recall_seen_state_path(session_id));
 
-        let args = AutoRecallArgs {
+        let _args = AutoRecallArgs {
             query: "important context".to_string(),
             session_id: session_id.to_string(),
             project: None,
@@ -358,7 +358,7 @@ mod tests {
         );
         let content = "important context from long ago";
         let now = chrono::Utc::now();
-        let created_at = now - chrono::Duration::days(8);
+        let _created_at = now - chrono::Duration::days(8);
 
         // Manually emit for an 8-day-old memory to test the output format.
         if let Some(warning) = memory_staleness_warning(age_days) {
@@ -382,8 +382,7 @@ mod tests {
         // Assert we have at least 2 lines.
         assert!(
             lines.len() >= 2,
-            "Expected at least 2 lines, got: {:?}",
-            lines
+            "Expected at least 2 lines, got: {lines:?}"
         );
 
         // First line should be the staleness warning.

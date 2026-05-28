@@ -2752,7 +2752,7 @@ mod stale_candidates_tests {
         last_accessed: chrono::DateTime<chrono::Utc>,
     ) -> Memory {
         // Clamp weight to valid range [0.0, 1.0]
-        let clamped_weight = weight.max(0.0).min(1.0);
+        let clamped_weight = weight.clamp(0.0, 1.0);
         Memory {
             id: MemoryId::new(),
             created_at: chrono::Utc::now(),
