@@ -2287,7 +2287,10 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(windows, ignore = "uses Unix path /etc/hosts which does not exist on Windows")]
+    #[cfg_attr(
+        windows,
+        ignore = "uses Unix path /etc/hosts which does not exist on Windows"
+    )]
     fn test_ingest_file_rejects_path_outside_project_root() {
         use tempfile::TempDir;
 
