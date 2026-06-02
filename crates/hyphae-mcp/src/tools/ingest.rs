@@ -12,7 +12,7 @@ use hyphae_store::SqliteStore;
 use spore::logging::workflow_span;
 
 use crate::protocol::ToolResult;
-use crate::text::truncate_str;
+use crate::text::{render_with_line_numbers, truncate_str};
 
 use super::{
     ToolTraceContext, get_bounded_i64, get_str, normalize_identity, resolve_workspace_root,
@@ -200,11 +200,14 @@ pub(crate) fn tool_search_docs(
             (Some(s), None) => format!(" (line {s})"),
             _ => String::new(),
         };
-        let snippet = if chunk.content.len() > max_content {
+        let mut snippet = if chunk.content.len() > max_content {
             format!("{}…", truncate_str(&chunk.content, max_content))
         } else {
             chunk.content.clone()
         };
+        if let Some(s) = meta.line_start {
+            snippet = render_with_line_numbers(&snippet, s);
+        }
         out.push_str(&format!(
             "{}. [score={:.3}] {}{}\n{}\n\n",
             i + 1,
@@ -611,13 +614,18 @@ pub(crate) fn tool_search_all(
                         snippet.replace('\n', " "),
                     ));
                 } else {
+                    let rendered_snippet = if let Some(s) = meta.line_start {
+                        render_with_line_numbers(&snippet, s)
+                    } else {
+                        snippet
+                    };
                     out.push_str(&format!(
                         "{}. [doc: {}{}] [score={:.3}]\n  {}\n\n",
                         i + 1,
                         meta.source_path,
                         lines,
                         score,
-                        snippet,
+                        rendered_snippet,
                     ));
                 }
             }
