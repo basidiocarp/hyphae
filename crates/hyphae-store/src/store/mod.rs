@@ -1052,6 +1052,80 @@ mod tests {
     }
 
     #[test]
+    fn test_memoir_stats_excludes_malformed_labels() {
+        use hyphae_core::ids::ConceptId;
+        use rusqlite::params;
+
+        let store = test_store();
+        let memoir = make_memoir("Test");
+        let memoir_id = memoir.id.clone();
+        store.create_memoir(memoir).unwrap();
+
+        // Add a well-formed concept with a valid label
+        let mut concept1 = make_concept(&memoir_id, "ValidConcept", "has good labels");
+        concept1.labels = vec![
+            hyphae_core::memoir::Label::new("tag".to_string(), "important".to_string()).unwrap(),
+        ];
+        store.add_concept(concept1).unwrap();
+
+        // Insert a second concept with a malformed label directly via SQL
+        // The malformed label has missing '$.namespace'
+        let concept_id = ConceptId::new();
+        store.conn.execute(
+            "INSERT INTO concepts (id, memoir_id, name, definition, labels, confidence,
+             revision, created_at, updated_at, source_memory_ids, abstract_text, overview_text, block_type)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![
+                concept_id.as_ref(),
+                memoir_id.as_ref(),
+                "MalformedConcept",
+                "has bad labels",
+                r#"[{"value": "orphaned"}]"#,  // missing "namespace" key
+                0.5,
+                0,
+                chrono::Utc::now().to_rfc3339(),
+                chrono::Utc::now().to_rfc3339(),
+                "[]",
+                None::<String>,
+                None::<String>,
+                None::<String>,
+            ],
+        ).unwrap();
+
+        // Insert a third concept with explicit JSON null in namespace
+        // This tests the case where json_type returns 'null' (not SQL NULL)
+        let concept_id_explicit_null = ConceptId::new();
+        store.conn.execute(
+            "INSERT INTO concepts (id, memoir_id, name, definition, labels, confidence,
+             revision, created_at, updated_at, source_memory_ids, abstract_text, overview_text, block_type)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![
+                concept_id_explicit_null.as_ref(),
+                memoir_id.as_ref(),
+                "ExplicitNullConcept",
+                "has explicit null labels",
+                r#"[{"namespace": null, "value": "x"}]"#,  // explicit JSON null
+                0.5,
+                0,
+                chrono::Utc::now().to_rfc3339(),
+                chrono::Utc::now().to_rfc3339(),
+                "[]",
+                None::<String>,
+                None::<String>,
+                None::<String>,
+            ],
+        ).unwrap();
+
+        // memoir_stats should succeed and only count the well-formed label
+        let stats = store.memoir_stats(&memoir_id).unwrap();
+        assert_eq!(stats.total_concepts, 3);
+        // The label_counts should only include the well-formed label, not the malformed ones
+        assert_eq!(stats.label_counts.len(), 1);
+        assert_eq!(stats.label_counts[0].0, "tag:important");
+        assert_eq!(stats.label_counts[0].1, 1);
+    }
+
+    #[test]
     fn test_auto_decay() {
         let store = test_store();
         store.store(make_memory("test", "decay test")).unwrap();

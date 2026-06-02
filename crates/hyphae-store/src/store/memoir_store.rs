@@ -455,6 +455,10 @@ impl MemoirStore for SqliteStore {
                    SELECT 1 FROM json_each(labels) AS j
                    WHERE json_extract(j.value, '$.namespace') = ?2
                      AND json_extract(j.value, '$.value') = ?3
+                     -- defensive/no-op: the equality predicates above already exclude SQL NULL;
+                     -- these keep the same json_type guard shape as memoir_stats
+                     AND json_type(j.value, '$.namespace') = 'text'
+                     AND json_type(j.value, '$.value') = 'text'
                )
              ORDER BY confidence DESC
              LIMIT ?4"
@@ -1076,6 +1080,8 @@ impl MemoirStore for SqliteStore {
                         COUNT(*)
                  FROM concepts, json_each(concepts.labels) AS j
                  WHERE memoir_id = ?1
+                   AND json_type(j.value, '$.namespace') = 'text'
+                   AND json_type(j.value, '$.value') = 'text'
                  GROUP BY 1
                  ORDER BY 2 DESC",
             )
