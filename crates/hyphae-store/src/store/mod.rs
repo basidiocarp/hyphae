@@ -70,10 +70,29 @@ impl SqliteStore {
         let mut conn = Connection::open(path)
             .map_err(|e| HyphaeError::Database(format!("cannot open database: {e}")))?;
         conn.execute_batch(
-            "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;",
+            "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON; PRAGMA auto_vacuum=INCREMENTAL;",
         )
         .map_err(|e| HyphaeError::Database(e.to_string()))?;
         init_db_with_dims(&mut conn, embedding_dims)?;
+
+        // Promote existing DBs to INCREMENTAL and reclaim freelist pages.
+        // PRAGMA auto_vacuum is a no-op once tables exist, so existing pre-INCREMENTAL DBs
+        // must be explicitly converted via VACUUM. Existing INCREMENTAL DBs reclaim freelist
+        // pages accumulated since last open via incremental_vacuum.
+        let auto_vacuum: i64 = conn
+            .query_row("PRAGMA auto_vacuum;", [], |r| r.get(0))
+            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        if auto_vacuum == 0 {
+            // Existing DB without auto_vacuum; convert and compact.
+            conn.execute_batch("PRAGMA auto_vacuum=INCREMENTAL; VACUUM;")
+                .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        } else {
+            // Already INCREMENTAL (2) or FULL (1): INCREMENTAL reclaims the freelist here;
+            // FULL keeps the freelist empty automatically, so this call is a harmless no-op.
+            conn.execute_batch("PRAGMA incremental_vacuum;")
+                .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        }
+
         let store = Self { conn };
         // Expire sessions that were never ended (crash recovery). Ignoring the error here
         // is intentional: startup cleanup is best-effort and should not block store init.
@@ -329,6 +348,20 @@ mod tests {
         assert_eq!(journal_mode.to_lowercase(), "wal");
         assert_eq!(busy_timeout, 5000);
         assert_eq!(foreign_keys, 1);
+    }
+
+    #[test]
+    fn test_with_dims_sets_incremental_auto_vacuum() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("hyphae-store-auto-vacuum.db");
+        let store = SqliteStore::with_dims(&db_path, 384).unwrap();
+
+        let auto_vacuum: i64 = store
+            .conn
+            .query_row("PRAGMA auto_vacuum;", [], |row| row.get(0))
+            .unwrap();
+
+        assert_eq!(auto_vacuum, 2);
     }
 
     #[test]
