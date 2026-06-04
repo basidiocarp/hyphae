@@ -43,65 +43,129 @@ impl ChunkStore for SqliteStore {
             return Ok(0);
         }
 
+        const CHUNK_TX_BATCH: usize = 64;
+
         // SAFETY: No nested transactions — this method does not call other &self methods
         // that open transactions. The &self receiver is required by the ChunkStore trait.
-        let tx = self
+        let mut tx = self
             .conn
             .unchecked_transaction()
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
-        let count = chunks.len();
-        for chunk in chunks {
-            let now = chunk.created_at.to_rfc3339();
-            tx.prepare_cached(&format!(
-                "INSERT OR REPLACE INTO chunks ({CHUNK_COLS}) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"
-            ))
-            .map_err(|e| HyphaeError::Database(e.to_string()))?
-            .execute(params![
-                chunk.id.to_string(),
-                chunk.document_id.to_string(),
-                chunk.chunk_index,
-                chunk.content,
-                chunk.metadata.source_path,
-                chunk.metadata.source_type.to_string(),
-                chunk.metadata.language,
-                chunk.metadata.heading,
-                chunk.metadata.line_start,
-                chunk.metadata.line_end,
-                now,
-                chunk.metadata.chunk_strategy,
-            ])
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        let mut successfully_stored = 0;
 
-            tx.prepare_cached(
-                "INSERT OR REPLACE INTO chunks_fts (id, content, source_path, heading) \
-                 VALUES (?1, ?2, ?3, ?4)",
-            )
-            .map_err(|e| HyphaeError::Database(e.to_string()))?
-            .execute(params![
-                chunk.id.to_string(),
-                chunk.content,
-                chunk.metadata.source_path,
-                chunk.metadata.heading,
-            ])
-            .map_err(|e| HyphaeError::Database(e.to_string()))?;
+        for (chunk_idx, chunk) in chunks.into_iter().enumerate() {
+            // Begin a new transaction batch if needed
+            if chunk_idx > 0 && chunk_idx % CHUNK_TX_BATCH == 0 {
+                tx.commit()
+                    .map_err(|e| HyphaeError::Database(e.to_string()))?;
+                tx = self
+                    .conn
+                    .unchecked_transaction()
+                    .map_err(|e| HyphaeError::Database(e.to_string()))?;
+            }
 
-            if let Some(embedding) = &chunk.embedding {
-                let blob = embedding_to_blob(embedding);
-                tx.prepare_cached(
-                    "INSERT OR REPLACE INTO vec_chunks (chunk_id, embedding) VALUES (?1, ?2)",
-                )
-                .map_err(|e| HyphaeError::Database(e.to_string()))?
-                .execute(params![chunk.id.to_string(), blob])
+            // Create a SAVEPOINT for this chunk
+            let savepoint_name = format!("chunk_{}", chunk_idx);
+            tx.execute(&format!("SAVEPOINT {}", savepoint_name), [])
                 .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+            let now = chunk.created_at.to_rfc3339();
+            let mut chunk_succeeded = true;
+
+            // INSERT into chunks table
+            if let Err(e) = tx
+                .prepare_cached(&format!(
+                    "INSERT OR REPLACE INTO chunks ({CHUNK_COLS}) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"
+                ))
+                .and_then(|mut stmt| {
+                    stmt.execute(params![
+                        chunk.id.to_string(),
+                        chunk.document_id.to_string(),
+                        chunk.chunk_index,
+                        chunk.content.clone(),
+                        chunk.metadata.source_path.clone(),
+                        chunk.metadata.source_type.to_string(),
+                        chunk.metadata.language.clone(),
+                        chunk.metadata.heading.clone(),
+                        chunk.metadata.line_start,
+                        chunk.metadata.line_end,
+                        now.clone(),
+                        chunk.metadata.chunk_strategy.clone(),
+                    ])
+                    .map(|_| ())
+                })
+            {
+                tracing::warn!("Failed to insert chunk {}: {}", chunk.id, e);
+                chunk_succeeded = false;
+            }
+
+            // INSERT into chunks_fts table
+            if chunk_succeeded {
+                if let Err(e) = tx
+                    .prepare_cached(
+                        "INSERT OR REPLACE INTO chunks_fts (id, content, source_path, heading) \
+                         VALUES (?1, ?2, ?3, ?4)",
+                    )
+                    .and_then(|mut stmt| {
+                        stmt.execute(params![
+                            chunk.id.to_string(),
+                            chunk.content.clone(),
+                            chunk.metadata.source_path.clone(),
+                            chunk.metadata.heading.clone(),
+                        ])
+                        .map(|_| ())
+                    })
+                {
+                    tracing::warn!(
+                        "Failed to insert into chunks_fts for chunk {}: {}",
+                        chunk.id,
+                        e
+                    );
+                    chunk_succeeded = false;
+                }
+            }
+
+            // INSERT into vec_chunks if embedding is present
+            if chunk_succeeded {
+                if let Some(embedding) = &chunk.embedding {
+                    let blob = embedding_to_blob(embedding);
+                    if let Err(e) = tx
+                        .prepare_cached(
+                            "INSERT OR REPLACE INTO vec_chunks (chunk_id, embedding) VALUES (?1, ?2)",
+                        )
+                        .and_then(|mut stmt| {
+                            stmt.execute(params![chunk.id.to_string(), blob])
+                                .map(|_| ())
+                        })
+                    {
+                        tracing::warn!("Failed to insert into vec_chunks for chunk {}: {}", chunk.id, e);
+                        chunk_succeeded = false;
+                    }
+                }
+            }
+
+            // ROLLBACK or RELEASE the savepoint
+            if chunk_succeeded {
+                tx.execute(&format!("RELEASE {}", savepoint_name), [])
+                    .map_err(|e| HyphaeError::Database(e.to_string()))?;
+                successfully_stored += 1;
+            } else {
+                // ROLLBACK TO undoes the chunk's writes but leaves the savepoint
+                // on the stack; RELEASE pops it so the per-transaction savepoint
+                // stack stays bounded across a 64-chunk batch.
+                tx.execute(&format!("ROLLBACK TO {}", savepoint_name), [])
+                    .map_err(|e| HyphaeError::Database(e.to_string()))?;
+                tx.execute(&format!("RELEASE {}", savepoint_name), [])
+                    .map_err(|e| HyphaeError::Database(e.to_string()))?;
             }
         }
 
         tx.commit()
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
-        Ok(count)
+        Ok(successfully_stored)
     }
 
     fn get_document(&self, id: &DocumentId) -> HyphaeResult<Option<Document>> {
@@ -581,6 +645,164 @@ pub(crate) mod test_helpers {
             },
             embedding: None,
             created_at: Utc::now(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_helpers::{make_chunk, make_document};
+    use super::*;
+    use crate::store::{SqliteStore, test_helpers::ensure_vec_init};
+
+    fn make_store() -> SqliteStore {
+        SqliteStore::in_memory().unwrap()
+    }
+
+    #[test]
+    fn test_store_chunks_partial_failure_resilience() {
+        // Test that when one chunk fails to insert (due to wrong embedding dimension),
+        // the batch returns Ok(good_count) and good chunks are persisted while the bad one is skipped.
+        ensure_vec_init();
+        let store = make_store();
+
+        let doc = make_document("test.md");
+        store.store_document(doc.clone()).unwrap();
+
+        // Create a batch of 5 chunks: 0, 1, 2(BAD), 3, 4
+        let chunk_0 = make_chunk(&doc.id, 0, "good chunk 0");
+        let chunk_1 = make_chunk(&doc.id, 1, "good chunk 1");
+
+        let mut chunk_2_bad = make_chunk(&doc.id, 2, "bad chunk with wrong embedding dimension");
+        // Create an embedding with wrong dimension (100 instead of expected 384)
+        chunk_2_bad.embedding = Some(vec![0.5; 100]);
+        let chunk_2_bad_id = chunk_2_bad.id.clone();
+
+        let chunk_3 = make_chunk(&doc.id, 3, "good chunk 3");
+        let chunk_4 = make_chunk(&doc.id, 4, "good chunk 4");
+
+        let chunks = vec![
+            chunk_0.clone(),
+            chunk_1.clone(),
+            chunk_2_bad,
+            chunk_3.clone(),
+            chunk_4.clone(),
+        ];
+
+        // store_chunks should return Ok(4) since one chunk fails
+        let result = store.store_chunks(chunks).unwrap();
+        assert_eq!(
+            result, 4,
+            "Expected 4 chunks stored (1 skipped due to embedding dimension mismatch)"
+        );
+
+        // Verify that the good chunks were persisted
+        let persisted = store.get_chunks(&doc.id).unwrap();
+        assert_eq!(persisted.len(), 4, "Expected 4 persisted chunks");
+
+        // Check that chunk 0, 1, 3, 4 are present and chunk 2 is absent
+        let persisted_ids: Vec<String> = persisted.iter().map(|c| c.id.to_string()).collect();
+        assert!(persisted_ids.contains(&chunk_0.id.to_string()));
+        assert!(persisted_ids.contains(&chunk_1.id.to_string()));
+        assert!(
+            !persisted_ids.contains(&chunk_2_bad_id.to_string()),
+            "Bad chunk should not be persisted"
+        );
+        assert!(persisted_ids.contains(&chunk_3.id.to_string()));
+        assert!(persisted_ids.contains(&chunk_4.id.to_string()));
+
+        // Verify the content is correct
+        let persisted_contents: Vec<String> = persisted.iter().map(|c| c.content.clone()).collect();
+        assert!(persisted_contents.contains(&"good chunk 0".to_string()));
+        assert!(persisted_contents.contains(&"good chunk 1".to_string()));
+        assert!(persisted_contents.contains(&"good chunk 3".to_string()));
+        assert!(persisted_contents.contains(&"good chunk 4".to_string()));
+        assert!(
+            !persisted_contents.contains(&"bad chunk with wrong embedding dimension".to_string())
+        );
+    }
+
+    #[test]
+    fn test_store_chunks_all_success_returns_full_count() {
+        ensure_vec_init();
+        let store = make_store();
+
+        let doc = make_document("test.md");
+        store.store_document(doc.clone()).unwrap();
+
+        let chunks = vec![
+            make_chunk(&doc.id, 0, "chunk 0"),
+            make_chunk(&doc.id, 1, "chunk 1"),
+            make_chunk(&doc.id, 2, "chunk 2"),
+        ];
+        let expected_count = chunks.len();
+
+        let result = store.store_chunks(chunks).unwrap();
+        assert_eq!(
+            result, expected_count,
+            "All chunks should be stored successfully"
+        );
+
+        let persisted = store.get_chunks(&doc.id).unwrap();
+        assert_eq!(persisted.len(), expected_count);
+    }
+
+    #[test]
+    fn test_store_chunks_empty_batch() {
+        ensure_vec_init();
+        let store = make_store();
+
+        let result = store.store_chunks(vec![]).unwrap();
+        assert_eq!(result, 0, "Empty batch should return 0");
+    }
+
+    #[test]
+    fn test_store_chunks_crosses_commit_boundary_with_failures() {
+        // CHUNK_TX_BATCH is 64, so a 130-chunk batch spans three transactions
+        // (commits at indices 64 and 128). Plant failures in each transaction —
+        // before the first boundary (10), just after it (70), and in the tail
+        // transaction (129) — to prove the savepoint-skip path survives the
+        // commit/reopen cycle and the success count is correct across boundaries.
+        ensure_vec_init();
+        let store = make_store();
+
+        let doc = make_document("boundary.md");
+        store.store_document(doc.clone()).unwrap();
+
+        let bad_indices = [10usize, 70, 129];
+        let total = 130usize;
+        let mut bad_ids = Vec::new();
+        let mut chunks = Vec::with_capacity(total);
+        for idx in 0..total {
+            let mut chunk = make_chunk(&doc.id, idx as u32, &format!("chunk {idx}"));
+            if bad_indices.contains(&idx) {
+                // Wrong embedding dimension → deterministic vec_chunks INSERT failure.
+                chunk.embedding = Some(vec![0.5; 100]);
+                bad_ids.push(chunk.id.to_string());
+            }
+            chunks.push(chunk);
+        }
+
+        let expected_good = total - bad_indices.len();
+        let result = store.store_chunks(chunks).unwrap();
+        assert_eq!(
+            result, expected_good,
+            "Expected {expected_good} chunks stored across the commit boundary (3 skipped)"
+        );
+
+        let persisted = store.get_chunks(&doc.id).unwrap();
+        assert_eq!(
+            persisted.len(),
+            expected_good,
+            "Persisted count must match success count"
+        );
+
+        let persisted_ids: Vec<String> = persisted.iter().map(|c| c.id.to_string()).collect();
+        for bad_id in &bad_ids {
+            assert!(
+                !persisted_ids.contains(bad_id),
+                "Bad chunk {bad_id} must not be persisted"
+            );
         }
     }
 }
