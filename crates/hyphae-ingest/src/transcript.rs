@@ -344,26 +344,76 @@ fn project_from_path(path: &Path) -> Option<String> {
     }
 }
 
-fn capture_text(value: &serde_json::Value, normalized: &mut NormalizedSession) {
+/// Keyword signals used to rank highlight candidates. A larger keyword count
+/// promotes a candidate into the (capped) highlight slots ahead of chattier but
+/// less informative prose. Substring match, mirroring the source extract-metadata
+/// heuristic — intentionally lightweight, not word-boundary aware.
+const HIGHLIGHT_KEYWORDS: [&str; 8] = [
+    "error",
+    "fix",
+    "implement",
+    "refactor",
+    "decision",
+    "summary",
+    "found",
+    "resolved",
+];
+
+fn highlight_score(text: &str) -> usize {
+    let lower = text.to_lowercase();
+    HIGHLIGHT_KEYWORDS
+        .iter()
+        .filter(|kw| lower.contains(**kw))
+        .count()
+}
+
+/// Collect prose candidates from a transcript content value, skipping any block
+/// whose `type` is `tool_use`, `tool_result`, or `thinking`. Tool blocks carry
+/// no user-facing prose — their file paths, commands, and errors are captured
+/// separately by `capture_claude_tool_context` — so they must never leak into
+/// highlights. Mirrors the original traversal (string fast path, object
+/// `text`+`content`, array recursion) but accumulates instead of emitting.
+fn collect_highlight_candidates(value: &serde_json::Value, out: &mut Vec<String>) {
     if let Some(text) = value.as_str() {
-        normalized.note_highlight(text);
+        out.push(text.to_string());
         return;
     }
 
     if let Some(obj) = value.as_object() {
+        if let Some(block_type) = obj.get("type").and_then(|t| t.as_str()) {
+            if matches!(block_type, "tool_use" | "tool_result" | "thinking") {
+                return;
+            }
+        }
         if let Some(text) = obj.get("text").and_then(|t| t.as_str()) {
-            normalized.note_highlight(text);
+            out.push(text.to_string());
         }
         if let Some(content) = obj.get("content") {
-            capture_text(content, normalized);
+            collect_highlight_candidates(content, out);
         }
         return;
     }
 
     if let Some(items) = value.as_array() {
         for item in items {
-            capture_text(item, normalized);
+            collect_highlight_candidates(item, out);
         }
+    }
+}
+
+fn capture_text(value: &serde_json::Value, normalized: &mut NormalizedSession) {
+    // Pass 1: gather prose candidates, dropping tool/thinking blocks.
+    let mut candidates: Vec<String> = Vec::new();
+    collect_highlight_candidates(value, &mut candidates);
+
+    // Pass 2: keyword-score, then fill highlight slots in descending score.
+    // `sort_by_key` is stable, so equal-score candidates keep traversal order — a
+    // transcript with no keyword hits preserves today's first-seen-wins fill.
+    // note_highlight enforces the cap of 5 and skips empties, so scoring only
+    // reorders which ≤5 slots fill; it never raises the cap.
+    candidates.sort_by_key(|c| std::cmp::Reverse(highlight_score(c)));
+    for text in &candidates {
+        normalized.note_highlight(text);
     }
 }
 
@@ -539,6 +589,54 @@ mod tests {
         assert_eq!(summary.project, "myapp");
         assert!(summary.highlights.iter().any(|s| s.contains("hello")));
         assert!(summary.highlights.iter().any(|s| s.contains("hi")));
+    }
+
+    #[test]
+    fn test_capture_text_skips_tool_blocks() {
+        // Regression guard: tool_use / tool_result / thinking content must never
+        // reach note_highlight. Only assistant prose and user text do. The
+        // tool_result string-content case is the meaningful guard — the old
+        // recursive capture_text descended into obj["content"] with no type
+        // filter and leaked tool output into highlights.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.jsonl");
+        let mut f = std::fs::File::create(&path).unwrap();
+        // Cover both tool_result content shapes: a raw string, and the
+        // real-world array-of-text-blocks form. The array form is the shape that
+        // actually leaked under the old recursive design — the type guard must
+        // fire before descending into the nested content array.
+        writeln!(
+            f,
+            r#"{{"type":"assistant","message":{{"role":"assistant","content":[{{"type":"text","text":"resolved the bug"}},{{"type":"tool_use","name":"Bash","input":{{"command":"SECRET_TOOL_INPUT_MARKER"}}}},{{"type":"tool_result","content":"SECRET_TOOL_RESULT_MARKER"}},{{"type":"tool_result","content":[{{"type":"text","text":"SECRET_NESTED_TOOL_RESULT"}}]}}]}}}}"#
+        )
+        .unwrap();
+
+        let summary = parse_transcript(&path).unwrap();
+        assert!(
+            summary.highlights.iter().any(|s| s.contains("resolved")),
+            "assistant prose should be highlighted"
+        );
+        assert!(
+            !summary
+                .highlights
+                .iter()
+                .any(|s| s.contains("SECRET_TOOL_INPUT_MARKER")),
+            "tool_use input must not be highlighted"
+        );
+        assert!(
+            !summary
+                .highlights
+                .iter()
+                .any(|s| s.contains("SECRET_TOOL_RESULT_MARKER")),
+            "tool_result string content must not be highlighted"
+        );
+        assert!(
+            !summary
+                .highlights
+                .iter()
+                .any(|s| s.contains("SECRET_NESTED_TOOL_RESULT")),
+            "tool_result array-of-blocks content must not be highlighted"
+        );
     }
 
     #[test]
