@@ -1504,6 +1504,51 @@ impl MemoryStore for SqliteStore {
         for row in rows {
             results.push(row.map_err(|e| HyphaeError::Database(e.to_string()))?);
         }
+
+        // Opt-in recall-effectiveness ranking bias, mirroring the hybrid path's
+        // `0.12 * learned_score` blend (see search_hybrid above). Only relevance
+        // (RankAsc) results are biased; WeightDesc preserves its explicit weight
+        // order untouched. Base relevance is taken from the SQL rank *position*
+        // rather than the raw bm25 magnitude, so memories with no recall history
+        // (which carry no entry, hence learned_score 0.0) keep today's exact
+        // order — the re-rank never reorders an un-recalled result set and never
+        // filters candidates. learned_score is the *signed* aggregate from
+        // recall_effectiveness (range [-1.0, 1.0], same as the hybrid path):
+        // recalls judged effective promote a memory, recalls judged ineffective
+        // demote it, both bounded by the 0.12 weight so a top-ranked result can
+        // never be displaced by recall signal alone. The lookup returns entries
+        // only for ids with at least one recall-effectiveness row, so when no
+        // candidate has been recalled the empty map short-circuits the sort.
+        if matches!(order, SearchOrder::RankAsc) && results.len() > 1 {
+            let candidate_ids: Vec<String> = results.iter().map(|m| m.id.to_string()).collect();
+            let learned_scores = match self.recall_effectiveness_for_memory_ids(&candidate_ids) {
+                Ok(scores) => scores,
+                Err(e) => {
+                    tracing::warn!("recall_effectiveness lookup failed: {e}");
+                    HashMap::new()
+                }
+            };
+            if !learned_scores.is_empty() {
+                let mut scored: Vec<(usize, Memory)> = results.drain(..).enumerate().collect();
+                // Base relevance mirrors the hybrid path's `1.0/(1.0+x)` shape
+                // (search_hybrid above) but keyed on the SQL rank *position*: top
+                // results are sticky (large gaps), the tail is malleable (small
+                // gaps), and the function is strictly decreasing in position, so
+                // a zero-learned set keeps its exact SQL order. Stable sort then
+                // preserves SQL tiebreakers when blended scores tie.
+                scored.sort_by(|(ai, am), (bi, bm)| {
+                    let score = |idx: usize, mem: &Memory| {
+                        1.0 / (1.0 + idx as f32)
+                            + 0.12 * learned_scores.get(mem.id.as_ref()).copied().unwrap_or(0.0)
+                    };
+                    score(*bi, bm)
+                        .partial_cmp(&score(*ai, am))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+                results = scored.into_iter().map(|(_, m)| m).collect();
+            }
+        }
+
         Ok(results)
     }
 
@@ -3024,6 +3069,300 @@ mod stale_candidates_tests {
         assert!(
             pos_1.unwrap() < pos_2.unwrap(),
             "access_count=1 should come before access_count=2"
+        );
+    }
+}
+
+#[cfg(test)]
+mod recall_bias_tests {
+    use super::*;
+    use hyphae_core::{Importance, Memory, MemorySource, Weight};
+
+    fn make_store() -> SqliteStore {
+        SqliteStore::in_memory().unwrap()
+    }
+
+    /// Store a memory whose summary matches the FTS query term. Weight controls
+    /// the WeightDesc ordering; all other fields are neutral.
+    fn store_match(store: &SqliteStore, summary: &str, weight: f32) -> MemoryId {
+        let mem = Memory {
+            id: MemoryId::new(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            last_accessed: chrono::Utc::now(),
+            access_count: 0,
+            weight: Weight::new(weight.clamp(0.0, 1.0)).unwrap(),
+            topic: "test/recall_bias".to_string(),
+            summary: summary.to_string(),
+            raw_excerpt: None,
+            keywords: vec![],
+            importance: Importance::Low,
+            source: MemorySource::Manual,
+            related_ids: vec![],
+            embedding: None,
+            project: None,
+            branch: None,
+            worktree: None,
+            agent_id: None,
+            expires_at: None,
+            invalidated_at: None,
+            invalidation_reason: None,
+            superseded_by: None,
+            tier: Default::default(),
+            entities: vec![],
+        };
+        let id = mem.id.clone();
+        store.store(mem).unwrap();
+        id
+    }
+
+    /// Store a memory whose bm25 relevance for `term` is controlled by how many
+    /// times `term` appears. More repeats => stronger match => earlier in RankAsc.
+    /// `tag` keeps each summary textually distinct so no two rows tie on bm25,
+    /// giving a fully deterministic baseline order (no rowid-tiebreak ambiguity).
+    fn store_relevance(store: &SqliteStore, term: &str, repeats: usize, tag: &str) -> MemoryId {
+        let body = std::iter::repeat_n(term, repeats)
+            .collect::<Vec<_>>()
+            .join(" ");
+        store_match(store, &format!("{tag} {body}"), 0.5)
+    }
+
+    /// Insert a recall_effectiveness row dated `now` so the recency-weighted
+    /// aggregate stays near `effectiveness` (mirrors feedback.rs test inserts).
+    fn add_recall_effectiveness(store: &SqliteStore, memory_id: &MemoryId, effectiveness: f32) {
+        let now = chrono::Utc::now().to_rfc3339();
+        store
+            .conn
+            .execute(
+                "INSERT INTO recall_effectiveness
+                    (memory_id, recall_event_id, effectiveness, signal_count, computed_at)
+                 VALUES (?1, ?2, ?3, 3, ?4)",
+                params![
+                    memory_id.as_ref().to_string(),
+                    format!("rec_{}", memory_id.as_ref()),
+                    effectiveness,
+                    now
+                ],
+            )
+            .unwrap();
+    }
+
+    // Invariant 1: a RankAsc result set with NO recall data returns in exactly
+    // today's order — the blend short-circuits and never reorders.
+    #[test]
+    fn rankasc_without_recall_data_preserves_order() {
+        let store = make_store();
+        for i in 0..6 {
+            store_match(&store, &format!("alpha relevance probe number {i}"), 0.5);
+        }
+
+        let first = store
+            .search_fts_with_options("alpha", None, 10, 0, None, false, SearchOrder::RankAsc)
+            .unwrap();
+        let second = store
+            .search_fts_with_options("alpha", None, 10, 0, None, false, SearchOrder::RankAsc)
+            .unwrap();
+
+        let order_a: Vec<_> = first.iter().map(|m| m.id.to_string()).collect();
+        let order_b: Vec<_> = second.iter().map(|m| m.id.to_string()).collect();
+        assert!(
+            !order_a.is_empty(),
+            "query should match the stored memories"
+        );
+        assert_eq!(
+            order_a, order_b,
+            "RankAsc order with no recall data must be deterministic and unchanged"
+        );
+    }
+
+    // Active path: a bm25-tail memory with strong recall effectiveness is
+    // promoted above where its rank alone would place it, without dropping or
+    // duplicating any candidate (invariant 3). The fixture is tie-free (distinct
+    // term frequencies) so the baseline order is fully deterministic.
+    #[test]
+    fn rankasc_recall_bias_promotes_effective_tail_memory() {
+        let store = make_store();
+        // Distinct repeat counts => distinct bm25 => no tie ambiguity.
+        for (n, repeats) in [10usize, 7, 4, 1].into_iter().enumerate() {
+            store_relevance(&store, "beta", repeats, &format!("doc{n}"));
+        }
+
+        let baseline = store
+            .search_fts_with_options("beta", None, 10, 0, None, false, SearchOrder::RankAsc)
+            .unwrap();
+        assert_eq!(
+            baseline.len(),
+            4,
+            "all four distinct-relevance docs should match"
+        );
+        let baseline_ids: Vec<String> = baseline.iter().map(|m| m.id.to_string()).collect();
+
+        // Boost the observed bm25 tail; tail position gaps are smallest, so
+        // 0.12 * (~0.9 aggregate) clears at least one step.
+        let tail_id = baseline.last().unwrap().id.clone();
+        let baseline_pos = baseline_ids.len() - 1;
+        add_recall_effectiveness(&store, &tail_id, 0.95);
+
+        let reranked = store
+            .search_fts_with_options("beta", None, 10, 0, None, false, SearchOrder::RankAsc)
+            .unwrap();
+        let reranked_ids: Vec<String> = reranked.iter().map(|m| m.id.to_string()).collect();
+
+        // Invariant 3: same set, same length — reorder only.
+        assert_eq!(
+            reranked_ids.len(),
+            baseline_ids.len(),
+            "re-rank must not change the result count"
+        );
+        let mut sorted_baseline = baseline_ids.clone();
+        sorted_baseline.sort();
+        let mut sorted_reranked = reranked_ids.clone();
+        sorted_reranked.sort();
+        assert_eq!(
+            sorted_baseline, sorted_reranked,
+            "re-rank must return the same candidate set"
+        );
+
+        let new_pos = reranked_ids
+            .iter()
+            .position(|id| *id == tail_id.to_string())
+            .expect("boosted memory must still be present");
+        assert!(
+            new_pos < baseline_pos,
+            "recall-effective memory should move up (was {baseline_pos}, now {new_pos})"
+        );
+    }
+
+    // Invariant 1 on the ACTIVE sort path: with mixed recall coverage (the sort
+    // runs because the learned map is non-empty), the memories that carry NO
+    // recall data must keep their relative order among themselves. Boosting the
+    // bm25 tail makes it jump; the three un-recalled docs must stay in their
+    // original relative order. This exercises the re-rank code that the
+    // empty-map short-circuit test never reaches.
+    #[test]
+    fn rankasc_mixed_recall_preserves_unrecalled_relative_order() {
+        let store = make_store();
+        for (n, repeats) in [10usize, 7, 4, 1].into_iter().enumerate() {
+            store_relevance(&store, "delta", repeats, &format!("doc{n}"));
+        }
+
+        let baseline = store
+            .search_fts_with_options("delta", None, 10, 0, None, false, SearchOrder::RankAsc)
+            .unwrap();
+        let baseline_ids: Vec<String> = baseline.iter().map(|m| m.id.to_string()).collect();
+        assert_eq!(baseline_ids.len(), 4);
+
+        // Boost only the tail; the other three carry no recall data (learned 0.0).
+        let boosted = baseline_ids.last().unwrap().clone();
+        add_recall_effectiveness(&store, &baseline.last().unwrap().id.clone(), 0.95);
+
+        let reranked = store
+            .search_fts_with_options("delta", None, 10, 0, None, false, SearchOrder::RankAsc)
+            .unwrap();
+        let reranked_ids: Vec<String> = reranked.iter().map(|m| m.id.to_string()).collect();
+
+        // The un-recalled docs, in their baseline relative order...
+        let unrecalled_baseline: Vec<&String> =
+            baseline_ids.iter().filter(|id| **id != boosted).collect();
+        // ...must appear in the same relative order after the re-rank.
+        let unrecalled_reranked: Vec<&String> =
+            reranked_ids.iter().filter(|id| **id != boosted).collect();
+        assert_eq!(
+            unrecalled_baseline, unrecalled_reranked,
+            "un-recalled memories must retain their relative order through the re-rank"
+        );
+
+        // And the sort actually ran (boosted memory moved off the tail).
+        let new_pos = reranked_ids.iter().position(|id| *id == boosted).unwrap();
+        assert!(
+            new_pos < baseline_ids.len() - 1,
+            "boosted memory should have moved up, proving the sort path executed"
+        );
+    }
+
+    // Invariant 2: WeightDesc callers are untouched — recall data on the
+    // lowest-weight memory must not pull it up; order stays strictly by weight.
+    #[test]
+    fn weightdesc_ignores_recall_bias() {
+        let store = make_store();
+        let high = store_match(&store, "gamma relevance probe high weight", 0.9);
+        let mid = store_match(&store, "gamma relevance probe mid weight", 0.6);
+        let low = store_match(&store, "gamma relevance probe low weight", 0.2);
+
+        // Strong recall signal on the lowest-weight memory — must be ignored.
+        add_recall_effectiveness(&store, &low, 0.95);
+
+        let results = store
+            .search_fts_with_options("gamma", None, 10, 0, None, false, SearchOrder::WeightDesc)
+            .unwrap();
+        let ids: Vec<String> = results.iter().map(|m| m.id.to_string()).collect();
+
+        let pos = |target: &MemoryId| ids.iter().position(|id| *id == target.to_string()).unwrap();
+        assert!(
+            pos(&high) < pos(&mid) && pos(&mid) < pos(&low),
+            "WeightDesc must stay ordered by weight (high<mid<low), recall ignored; got {ids:?}"
+        );
+    }
+
+    // Signed-range coverage: aggregate effectiveness is [-1.0, 1.0], so a memory
+    // whose recalls were judged ineffective carries a NEGATIVE learned_score and
+    // must be demoted. The harmonic base makes head gaps large (rank0->rank1 is
+    // 0.5, far beyond the 0.12 max shift) and tail gaps small (rank2->rank3 is
+    // ~0.083), so the observable demotion is at the tail: negatively boosting the
+    // rank-2 memory (base 0.333 - 0.95*0.12 = 0.219) sinks it below rank 3 (0.25)
+    // without disturbing the sticky head — proving negative signal demotes and is
+    // bounded (invariants 1 + 3 still hold under negative signal).
+    #[test]
+    fn rankasc_negative_recall_demotes_tail_adjacent_memory() {
+        let store = make_store();
+        for (n, repeats) in [10usize, 7, 4, 1].into_iter().enumerate() {
+            store_relevance(&store, "epsilon", repeats, &format!("doc{n}"));
+        }
+
+        let baseline = store
+            .search_fts_with_options("epsilon", None, 10, 0, None, false, SearchOrder::RankAsc)
+            .unwrap();
+        let baseline_ids: Vec<String> = baseline.iter().map(|m| m.id.to_string()).collect();
+        assert_eq!(baseline_ids.len(), 4);
+
+        // Demote the rank-2 memory; its gap to rank 3 (~0.083) is within the 0.12
+        // signal bound, so a strong negative aggregate sinks it one step.
+        let demoted = baseline[2].id.clone();
+        add_recall_effectiveness(&store, &demoted, -0.95);
+
+        let reranked = store
+            .search_fts_with_options("epsilon", None, 10, 0, None, false, SearchOrder::RankAsc)
+            .unwrap();
+        let reranked_ids: Vec<String> = reranked.iter().map(|m| m.id.to_string()).collect();
+
+        // Invariant 3: same set, same length — reorder only.
+        let mut sorted_baseline = baseline_ids.clone();
+        sorted_baseline.sort();
+        let mut sorted_reranked = reranked_ids.clone();
+        sorted_reranked.sort();
+        assert_eq!(
+            sorted_baseline, sorted_reranked,
+            "negative-signal re-rank must return the same candidate set"
+        );
+
+        // The demoted memory sank to the tail; the original rank-3 memory rose.
+        let new_pos = reranked_ids
+            .iter()
+            .position(|id| *id == demoted.to_string())
+            .expect("demoted memory must still be present");
+        assert_eq!(
+            new_pos, 3,
+            "negative recall must sink the rank-2 memory to the tail (now {new_pos})"
+        );
+        assert_eq!(
+            reranked_ids[2], baseline_ids[3],
+            "the original rank-3 memory should rise into the vacated slot"
+        );
+        // Invariant 1 on the head: the sticky top two are untouched.
+        assert_eq!(
+            &reranked_ids[..2],
+            &baseline_ids[..2],
+            "negative signal must not disturb the large-gap head"
         );
     }
 }
