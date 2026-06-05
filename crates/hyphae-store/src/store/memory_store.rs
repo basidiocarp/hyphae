@@ -582,9 +582,9 @@ impl SqliteStore {
         tx.execute(
             "INSERT INTO memories (id, created_at, updated_at, last_accessed, access_count, weight,
              topic, summary, raw_excerpt, keywords,
-             importance, source_type, source_data, related_ids, embedding, project, branch, worktree,
+             importance, source_type, source_data, related_ids, embedding, project, branch, worktree, agent_id,
              expires_at, invalidated_at, invalidation_reason, superseded_by, tier, entities)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
             params![
                 memory.id.as_ref(),
                 memory.created_at.to_rfc3339(),
@@ -604,6 +604,7 @@ impl SqliteStore {
                 memory.project.as_deref(),
                 memory.branch.as_deref(),
                 memory.worktree.as_deref(),
+                memory.agent_id.as_deref(),
                 memory.expires_at.map(|dt| dt.to_rfc3339()),
                 memory.invalidated_at.map(|dt| dt.to_rfc3339()),
                 memory.invalidation_reason.as_deref(),
@@ -3069,6 +3070,64 @@ mod stale_candidates_tests {
         assert!(
             pos_1.unwrap() < pos_2.unwrap(),
             "access_count=1 should come before access_count=2"
+        );
+    }
+
+    #[test]
+    fn test_replace_memory_preserves_agent_id() {
+        let store = make_store();
+        let now = chrono::Utc::now();
+
+        // Create a memory with agent_id set
+        let mut memory = make_memory_with_params(
+            "test/agent_id",
+            "memory with agent attribution",
+            5,
+            0.6,
+            now,
+        );
+        memory.agent_id = Some("agent-x".to_string());
+        let mem_id = memory.id.clone();
+
+        // Store it first using regular store
+        store.store(memory.clone()).unwrap();
+
+        // Verify it was stored correctly with agent_id
+        let retrieved = store.get(&mem_id).unwrap().expect("memory should exist");
+        assert_eq!(
+            retrieved.agent_id,
+            Some("agent-x".to_string()),
+            "initial store should preserve agent_id"
+        );
+
+        // Now test replace_memory preserves agent_id across replace
+        let mut replaced_memory = memory.clone();
+        replaced_memory.updated_at = chrono::Utc::now();
+        replaced_memory.summary = "modified summary after replace".to_string();
+        store.replace_memory(replaced_memory).unwrap();
+
+        let final_retrieved = store
+            .get(&mem_id)
+            .unwrap()
+            .expect("memory should exist after replace");
+
+        // The core bug: agent_id should survive replace_memory
+        assert_eq!(
+            final_retrieved.agent_id,
+            Some("agent-x".to_string()),
+            "replace_memory should preserve agent_id (not NULL it out)"
+        );
+
+        // Also verify the summary was actually replaced
+        assert_eq!(
+            final_retrieved.summary, "modified summary after replace",
+            "replace_memory should actually replace the summary"
+        );
+
+        // Verify topic also round-trips unchanged
+        assert_eq!(
+            final_retrieved.topic, "test/agent_id",
+            "replace_memory should preserve topic field"
         );
     }
 }
