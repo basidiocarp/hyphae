@@ -2,6 +2,7 @@ use anyhow::Result;
 use hyphae_core::ChunkStore;
 use hyphae_store::SqliteStore;
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use spore::sensitive_paths::is_api_unsafe_path;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -93,6 +94,15 @@ fn process_event(
 }
 
 fn reingest_file(path: &Path, opts: &WatchOptions, store: &SqliteStore) {
+    // Pre-filter sensitive/API-unsafe files. `ingest_file` rejects these with a
+    // validation error, which the watcher would otherwise frame as "Failed to
+    // ingest" on every change event. The skip is intended, so surface it at a
+    // calm, non-alarming level instead.
+    if is_api_unsafe_path(path) {
+        eprintln!("[watch] Skipping sensitive file: {}", path.display());
+        return;
+    }
+
     let path_str = path.to_string_lossy();
     match hyphae_ingest::ingest_file(path, None) {
         Ok((doc, chunks)) => {
@@ -176,5 +186,52 @@ mod tests {
         assert!(hyphae_ingest::should_skip(in_target));
         assert!(hyphae_ingest::should_skip(in_node_modules));
         assert!(hyphae_ingest::should_skip(in_git));
+    }
+
+    #[test]
+    fn test_reingest_skips_sensitive_and_stores_normal() {
+        // Exercise reingest_file end-to-end against a real store, not just the
+        // predicate. The *discriminating* assertion is the normal file: if the
+        // pre-filter were inverted (skip non-sensitive instead of sensitive),
+        // the normal file would never be stored and this test would fail.
+        //
+        // For the sensitive arm, an absent store record is also enforced by the
+        // #74 gate inside `ingest_file` (it returns a validation error), so that
+        // arm alone does not prove the pre-filter fired — it confirms reingest_file
+        // neither panics nor stores on sensitive input.
+        let dir = TempDir::new().unwrap();
+        let store = SqliteStore::new(&dir.path().join("watch-test.db")).unwrap();
+
+        let opts = WatchOptions {
+            path: dir.path().to_path_buf(),
+            recursive: false,
+            debounce_ms: 0,
+            project: None,
+        };
+
+        // Sensitive basename — the pre-filter must skip it; nothing stored.
+        let sensitive = dir.path().join("credentials.json");
+        std::fs::write(&sensitive, "token = abc123").unwrap();
+        reingest_file(&sensitive, &opts, &store);
+        let sensitive_doc = store
+            .get_document_by_path(&sensitive.to_string_lossy(), None)
+            .unwrap();
+        assert!(
+            sensitive_doc.is_none(),
+            "sensitive file must not be ingested into the store"
+        );
+
+        // Normal file — must still re-ingest exactly as before. A missing record
+        // here signals an inverted pre-filter skipping ordinary files.
+        let normal = dir.path().join("notes.md");
+        std::fs::write(&normal, "# Notes\n\nsome ordinary content to chunk.").unwrap();
+        reingest_file(&normal, &opts, &store);
+        let normal_doc = store
+            .get_document_by_path(&normal.to_string_lossy(), None)
+            .unwrap();
+        assert!(
+            normal_doc.is_some(),
+            "normal file must be ingested; absence signals an inverted pre-filter"
+        );
     }
 }
