@@ -14,6 +14,8 @@ use walkdir::WalkDir;
 
 use crate::chunker::{ChunkStrategy, chunk_text};
 use crate::readers::read_file;
+use hyphae_core::error::HyphaeError;
+use spore::sensitive_paths::is_api_unsafe_path;
 
 /// Compute SHA-256 hash of file content.
 #[must_use]
@@ -33,6 +35,13 @@ pub fn ingest_file(
     path: &Path,
     embedder: Option<&dyn Embedder>,
 ) -> HyphaeResult<(Document, Vec<Chunk>)> {
+    if is_api_unsafe_path(path) {
+        return Err(HyphaeError::Validation(format!(
+            "refused to ingest sensitive/API-unsafe file: {}",
+            path.display()
+        )));
+    }
+
     let (content, source_type) = read_file(path)?;
 
     let metadata = ChunkMetadata {
@@ -121,6 +130,15 @@ pub fn ingest_directory(
             if name.starts_with('.') {
                 continue;
             }
+        }
+
+        // Skip sensitive/API-unsafe files
+        if is_api_unsafe_path(entry.path()) {
+            tracing::warn!(
+                path = %entry.path().display(),
+                "skipping sensitive/API-unsafe file during directory ingestion"
+            );
+            continue;
         }
 
         match ingest_file(entry.path(), embedder) {
@@ -326,5 +344,67 @@ mod tests {
             hash1, hash2,
             "different content should produce different hashes"
         );
+    }
+
+    #[test]
+    fn test_ingest_file_rejects_sensitive_path() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("id_rsa");
+        fs::write(&path, "PRIVATE KEY DATA").unwrap();
+
+        let result = ingest_file(&path, None);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("sensitive/API-unsafe"));
+        assert!(err.to_string().contains("id_rsa"));
+    }
+
+    #[test]
+    fn test_ingest_file_accepts_normal_files() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("README.md");
+        fs::write(&path, "# Normal Documentation").unwrap();
+
+        let result = ingest_file(&path, None);
+
+        assert!(result.is_ok());
+        let (doc, _chunks) = result.unwrap();
+        assert_eq!(doc.source_type, SourceType::Markdown);
+    }
+
+    #[test]
+    fn test_ingest_file_accepts_cargo_toml() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("Cargo.toml");
+        fs::write(&path, "[package]\nname = \"test\"\nversion = \"0.1.0\"").unwrap();
+
+        let result = ingest_file(&path, None);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_ingest_directory_skips_sensitive_files_but_ingests_normal_ones() {
+        let dir = TempDir::new().unwrap();
+
+        // Normal markdown file
+        fs::write(dir.path().join("readme.md"), "# Documentation").unwrap();
+
+        // Sensitive file (id_rsa is flagged by is_api_unsafe_path)
+        fs::write(dir.path().join("id_rsa"), "PRIVATE KEY").unwrap();
+
+        let results = ingest_directory(dir.path(), None, false).unwrap();
+
+        // Should only get the normal markdown file
+        assert_eq!(
+            results.len(),
+            1,
+            "expected 1 file (id_rsa skipped), got {}",
+            results.len()
+        );
+        let (doc, _) = &results[0];
+        assert!(doc.source_path.contains("readme.md"));
+        assert!(!doc.source_path.contains("id_rsa"));
     }
 }
