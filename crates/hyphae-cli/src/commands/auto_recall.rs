@@ -24,6 +24,7 @@ pub(crate) struct AutoRecallArgs {
     pub project: Option<String>,
     pub budget: usize,
     pub limit: usize,
+    pub post_compaction: bool,
 }
 
 fn memory_staleness_warning(age_days: i64) -> Option<String> {
@@ -67,7 +68,7 @@ pub(crate) fn cmd_auto_recall(store: &dyn MemoryStore, args: AutoRecallArgs) -> 
     // Filter already-seen memories.
     let fresh: Vec<_> = results
         .into_iter()
-        .filter(|m| !seen.contains(&m.id.to_string()))
+        .filter(|m| args.post_compaction || !seen.contains(&m.id.to_string()))
         .collect();
 
     if fresh.is_empty() {
@@ -199,6 +200,7 @@ mod tests {
             project: None,
             budget: DEFAULT_CHAR_BUDGET,
             limit: DEFAULT_LIMIT,
+            post_compaction: false,
         };
         assert!(!cmd_auto_recall(&store, args).unwrap());
     }
@@ -212,6 +214,7 @@ mod tests {
             project: None,
             budget: DEFAULT_CHAR_BUDGET,
             limit: DEFAULT_LIMIT,
+            post_compaction: false,
         };
         assert!(!cmd_auto_recall(&store, args).unwrap());
     }
@@ -232,6 +235,7 @@ mod tests {
             project: None,
             budget: DEFAULT_CHAR_BUDGET,
             limit: DEFAULT_LIMIT,
+            post_compaction: false,
         };
         assert!(cmd_auto_recall(&store, args).unwrap());
     }
@@ -256,6 +260,7 @@ mod tests {
             project: None,
             budget: DEFAULT_CHAR_BUDGET,
             limit: DEFAULT_LIMIT,
+            post_compaction: false,
         };
 
         // First call should succeed.
@@ -288,6 +293,7 @@ mod tests {
             project: None,
             budget: tiny_budget,
             limit: DEFAULT_LIMIT,
+            post_compaction: false,
         };
         // Should still return true — first memory gets truncated, not dropped.
         assert!(cmd_auto_recall(&store, args).unwrap());
@@ -346,6 +352,7 @@ mod tests {
             project: None,
             budget: DEFAULT_CHAR_BUDGET,
             limit: DEFAULT_LIMIT,
+            post_compaction: false,
         };
 
         // Capture output using a string buffer.
@@ -410,6 +417,55 @@ mod tests {
         );
 
         // Clean up.
+        let _ = std::fs::remove_file(recall_seen_state_path(session_id));
+    }
+
+    #[test]
+    fn post_compaction_bypasses_seen_set() {
+        let store = make_store();
+        store_memory(
+            &store,
+            "test/topic",
+            "rust borrow checker lifetime rules",
+            None,
+        );
+
+        let session_id = "sess-postcompact-unique";
+        let _ = std::fs::remove_file(recall_seen_state_path(session_id));
+
+        let normal_args = || AutoRecallArgs {
+            query: "rust borrow checker".to_string(),
+            session_id: session_id.to_string(),
+            project: None,
+            budget: DEFAULT_CHAR_BUDGET,
+            limit: DEFAULT_LIMIT,
+            post_compaction: false,
+        };
+        let post_compaction_args = || AutoRecallArgs {
+            query: "rust borrow checker".to_string(),
+            session_id: session_id.to_string(),
+            project: None,
+            budget: DEFAULT_CHAR_BUDGET,
+            limit: DEFAULT_LIMIT,
+            post_compaction: true,
+        };
+
+        // First normal call emits and records the memory in the seen-set.
+        assert!(cmd_auto_recall(&store, normal_args()).unwrap());
+        // A second normal call would dedup to nothing.
+        assert!(!cmd_auto_recall(&store, normal_args()).unwrap());
+        // But a post-compaction call re-surfaces it despite the seen-set.
+        assert!(cmd_auto_recall(&store, post_compaction_args()).unwrap());
+        // Directly verify the on-disk seen-set was not clobbered (union, not replace).
+        let persisted = load_seen(&recall_seen_state_path(session_id));
+        assert_eq!(
+            persisted.len(),
+            1,
+            "seen-set should retain exactly the one id"
+        );
+        // And the seen-set is NOT clobbered: a subsequent normal call still dedups.
+        assert!(!cmd_auto_recall(&store, normal_args()).unwrap());
+
         let _ = std::fs::remove_file(recall_seen_state_path(session_id));
     }
 }

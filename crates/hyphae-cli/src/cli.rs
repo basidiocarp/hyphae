@@ -563,6 +563,10 @@ pub(crate) enum Commands {
         /// Maximum memories to fetch from the store (default 10)
         #[arg(long, default_value = "10")]
         limit: usize,
+        /// Re-surface memories even if already shown this session (bypasses the
+        /// dedup seen-set; used after a context compaction)
+        #[arg(long)]
+        post_compaction: bool,
     },
 
     /// Assemble a budget-aware session-start context bundle

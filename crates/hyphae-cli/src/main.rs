@@ -752,6 +752,7 @@ fn main() -> Result<()> {
             project,
             budget,
             limit,
+            post_compaction,
         } => {
             // The command's own --project overrides any globally resolved project.
             let effective_project = project.or(resolved_project);
@@ -761,6 +762,7 @@ fn main() -> Result<()> {
                 project: effective_project,
                 budget,
                 limit,
+                post_compaction,
             };
             let emitted = commands::auto_recall::cmd_auto_recall(&store, args)?;
             if !emitted {
