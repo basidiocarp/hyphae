@@ -51,6 +51,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Prune { .. } => "prune",
         Commands::Consolidate { .. } => "consolidate",
         Commands::Lessons { .. } => "lessons",
+        Commands::Learn { .. } => "learn",
         Commands::Activity => "activity",
         Commands::Analytics => "analytics",
         Commands::TestEmbed { .. } => "test_embed",
@@ -93,6 +94,7 @@ fn all_projects_allowed(command: &Commands) -> bool {
         | Commands::Health { .. }
         | Commands::Memory(_)
         | Commands::Lessons { .. }
+        | Commands::Learn { .. }
         | Commands::Activity
         | Commands::Analytics
         | Commands::Config
@@ -545,6 +547,16 @@ fn main() -> Result<()> {
             commands::lessons::cmd_lessons(&store, resolved_project, limit)?;
         }
 
+        Commands::Learn {
+            project,
+            limit,
+            target,
+            apply,
+        } => {
+            let effective_project = project.or(resolved_project);
+            commands::learn::cmd_learn(&store, effective_project, limit, target, apply)?;
+        }
+
         Commands::Activity => {
             commands::activity::cmd_activity(&store, resolved_project)?;
         }
@@ -835,6 +847,12 @@ mod tests {
             },
         })));
         assert!(all_projects_allowed(&Commands::Lessons { limit: 50 }));
+        assert!(all_projects_allowed(&Commands::Learn {
+            project: None,
+            limit: 50,
+            target: None,
+            apply: false,
+        }));
         assert!(all_projects_allowed(&Commands::Analytics));
     }
 

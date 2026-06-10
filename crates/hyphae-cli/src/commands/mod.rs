@@ -19,6 +19,7 @@ pub mod export_training;
 pub mod feedback;
 pub mod import;
 pub mod import_claude_memory;
+pub mod learn;
 pub mod lessons;
 pub mod memoir;
 pub mod memory;

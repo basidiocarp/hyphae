@@ -320,6 +320,22 @@ pub(crate) enum Commands {
         limit: usize,
     },
 
+    /// Mine lessons and propose patches to an instruction file
+    Learn {
+        /// Project to filter lessons by
+        #[arg(short, long)]
+        project: Option<String>,
+        /// Maximum lessons to consider per topic
+        #[arg(short, long, default_value = "50")]
+        limit: usize,
+        /// Instruction file to patch (required with --apply)
+        #[arg(long)]
+        target: Option<PathBuf>,
+        /// Write the proposed additions to --target instead of previewing
+        #[arg(long, requires = "target")]
+        apply: bool,
+    },
+
     /// Show Hyphae activity and count snapshot as JSON
     Activity,
 
