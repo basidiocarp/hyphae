@@ -15,6 +15,6 @@ concurrency:
 
 jobs:
   coverage:
-    uses: basidiocarp/.github/.github/workflows/rust-coverage.yml@ac464bbd159bc15d40a4d496c44c1a8d77e3d50f
+    uses: basidiocarp/.github/.github/workflows/rust-coverage.yml@e49ea71dd7b5920e64538312db630656a6359d6c
     with:
       threshold: 60

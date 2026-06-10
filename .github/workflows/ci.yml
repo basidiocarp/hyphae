@@ -29,7 +29,7 @@ jobs:
   # Full build with embeddings (default features) — exercises the fastembed/ort/ort-sys chain.
   ci-embeddings:
     needs: [lint]
-    uses: basidiocarp/.github/.github/workflows/rust-ci.yml@1b81c125bdbd08a3454e7fed7446a0e2fee68e26
+    uses: basidiocarp/.github/.github/workflows/rust-ci.yml@e49ea71dd7b5920e64538312db630656a6359d6c
     with:
       workspace: true
       no-default-features: false
@@ -38,7 +38,7 @@ jobs:
   # Slim build without embeddings — verifies the --no-default-features path compiles and tests pass.
   ci-no-embeddings:
     needs: [lint]
-    uses: basidiocarp/.github/.github/workflows/rust-ci.yml@1b81c125bdbd08a3454e7fed7446a0e2fee68e26
+    uses: basidiocarp/.github/.github/workflows/rust-ci.yml@e49ea71dd7b5920e64538312db630656a6359d6c
     with:
       workspace: true
       no-default-features: true
