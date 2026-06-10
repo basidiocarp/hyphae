@@ -126,6 +126,37 @@ fn initial_context(store: &SqliteStore, project: Option<&str>) -> String {
     ctx
 }
 
+/// Dispatch a request handler with panic recovery. If the handler panics,
+/// returns a well-formed `-32603` (internal error) response with the original request id.
+///
+/// `AssertUnwindSafe` is safe here because:
+/// - The closure captures `&mut calls_since_store` (advisory consolidation counter). A stale
+///   value after a caught panic is benign — the counter is only used for nudge heuristics.
+/// - The closure captures `&SqliteStore`. If a panic occurs mid-transaction, the rusqlite
+///   connection automatically rolls back any in-flight transaction. The connection itself
+///   remains usable, and the panic path returns an error without mutating state beyond the
+///   panic frame. The next request starts fresh.
+fn dispatch_with_panic_recovery<F>(id_for_error: Value, f: F) -> JsonRpcResponse
+where
+    F: FnOnce() -> JsonRpcResponse,
+{
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(resp) => resp,
+        Err(payload) => {
+            let detail = payload
+                .downcast_ref::<&str>()
+                .map(|s| s.to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "unknown panic".to_string());
+            JsonRpcResponse::err(
+                id_for_error,
+                -32603,
+                format!("internal error: handler panicked: {detail}"),
+            )
+        }
+    }
+}
+
 /// Run the MCP server on stdio. Blocks until stdin is closed or idle timeout expires.
 pub fn run_server(
     store: &SqliteStore,
@@ -234,7 +265,8 @@ pub fn run_server(
         // hardware barrier), and there is no data dependency between this flag and any
         // other shared memory.
         is_busy.store(true, std::sync::atomic::Ordering::Relaxed);
-        let response = match method {
+        let id_for_error = id.clone();
+        let response = dispatch_with_panic_recovery(id_for_error, || match method {
             "initialize" => handle_initialize(id, store, project.as_deref()),
             "ping" => JsonRpcResponse::ok(id, json!({})),
             "tools/list" => handle_tools_list(id, embedder.is_some()),
@@ -258,7 +290,7 @@ pub fn run_server(
                 },
             ),
             other => JsonRpcResponse::method_not_found(id, other),
-        };
+        });
 
         let write_result = write_response(&mut stdout, &response);
         is_busy.store(false, std::sync::atomic::Ordering::Relaxed);
@@ -1105,5 +1137,32 @@ mod tests {
         assert_eq!(context.tool.as_deref(), Some("hyphae_ingest_file"));
         assert_eq!(context.session_id.as_deref(), Some("runtime-7"));
         assert_eq!(context.workspace_root.as_deref(), Some("/repo/docs"));
+    }
+
+    #[test]
+    fn dispatch_with_panic_recovery_catches_panic() {
+        let response = dispatch_with_panic_recovery(json!(7), || panic!("boom"));
+        assert!(response.error.is_some());
+        let err = response.error.unwrap();
+        assert_eq!(err.code, -32603);
+        assert!(err.message.contains("handler panicked"));
+        assert!(err.message.contains("boom"));
+        assert_eq!(response.id, json!(7));
+    }
+
+    #[test]
+    fn dispatch_with_panic_recovery_passes_through_ok_response() {
+        let ok_resp = JsonRpcResponse::ok(json!(7), json!({"ok": true}));
+        let response = dispatch_with_panic_recovery(json!(7), || ok_resp);
+        assert!(response.error.is_none());
+        assert!(response.result.is_some());
+        assert_eq!(response.result.unwrap(), json!({"ok": true}));
+        assert_eq!(response.id, json!(7));
+    }
+
+    #[test]
+    fn dispatch_with_panic_recovery_preserves_original_request_id() {
+        let response = dispatch_with_panic_recovery(json!("request-42"), || panic!("fail"));
+        assert_eq!(response.id, json!("request-42"));
     }
 }

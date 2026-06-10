@@ -210,9 +210,9 @@ impl SqliteStore {
     /// Begin a transaction for import or bulk operations. Call with a closure that performs the work.
     /// On error, automatically rolls back. On success, commits. Returns the result of the closure.
     ///
-    /// Uses rusqlite's `Transaction` type. On unwind panics (tests), Drop issues ROLLBACK. In
-    /// release builds (`panic = "abort"`) the process terminates before Drop runs; WAL-mode SQLite
-    /// automatically rolls back the uncommitted transaction when the database is next opened.
+    /// Uses rusqlite's `Transaction` type, whose `Drop` issues ROLLBACK for any uncommitted
+    /// transaction. The workspace sets `panic = "unwind"` in all profiles, so if the closure
+    /// panics, Drop still runs and rolls back in-process before the unwind propagates.
     pub fn with_transaction<F, T>(&self, f: F) -> HyphaeResult<T>
     where
         F: FnOnce() -> HyphaeResult<T>,
@@ -232,7 +232,7 @@ impl SqliteStore {
                 Ok(result)
             }
             Err(e) => {
-                // Drop issues ROLLBACK in unwind mode; WAL recovery handles abort mode.
+                // Drop issues ROLLBACK for the uncommitted transaction (unwind mode, all profiles).
                 Err(e)
             }
         }
