@@ -8,6 +8,9 @@ members = [
   "crates/hyphae-ingest",
 ]
 
+[workspace.package]
+version = "0.16.0"
+
 [profile.dev]
 opt-level = 1
 debug = "line-tables-only"
