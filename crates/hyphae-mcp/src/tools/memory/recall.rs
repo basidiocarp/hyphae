@@ -22,6 +22,47 @@ use super::helpers::dedupe_memory_results;
 // ─────────────────────────────────────────────────────────────────────────────
 
 const STALE_DAYS_THRESHOLD: i64 = 30;
+/// Truncation cap in bytes (not chars); guards against injection-size payloads
+const MEMORY_TRUNCATION_BYTES: usize = 400;
+const AGGREGATE_CAP_BYTES: usize = 4096;
+
+fn truncate_memory_summary(mem: &mut Memory) {
+    if mem.summary.len() > MEMORY_TRUNCATION_BYTES {
+        mem.summary = truncate_str(&mem.summary, MEMORY_TRUNCATION_BYTES).to_string();
+    }
+}
+
+fn apply_aggregate_cap(results: &mut Vec<Memory>) {
+    let mut total_bytes = 0;
+
+    // Keeps whole memories in order until the aggregate byte cap would be exceeded,
+    // then drops the rest (no partial-memory truncation at the aggregate stage).
+    results.retain(|mem| {
+        let mem_bytes = mem.summary.len();
+        if total_bytes + mem_bytes > AGGREGATE_CAP_BYTES {
+            false
+        } else {
+            total_bytes += mem_bytes;
+            true
+        }
+    });
+}
+
+fn apply_aggregate_cap_scored(results: &mut Vec<(Memory, f32)>) {
+    let mut total_bytes = 0;
+
+    // Keeps whole memories in order until the aggregate byte cap would be exceeded,
+    // then drops the rest (no partial-memory truncation at the aggregate stage).
+    results.retain(|(mem, _)| {
+        let mem_bytes = mem.summary.len();
+        if total_bytes + mem_bytes > AGGREGATE_CAP_BYTES {
+            false
+        } else {
+            total_bytes += mem_bytes;
+            true
+        }
+    });
+}
 
 fn check_applicability(
     rules: &[ApplicabilityRule],
@@ -254,14 +295,14 @@ fn collect_shared_candidates(
         return Vec::new();
     }
 
-    let shared = store.search_fts(
+    match store.search_fts_scoped(
         query,
         limit.saturating_mul(4).max(4),
         0,
         Some(hyphae_store::SHARED_PROJECT),
-    );
-    match shared {
-        Ok(shared_results) => shared_results,
+        None, // shared memories are worktree-agnostic — do NOT pass a worktree filter or they get excluded
+    ) {
+        Ok(results) => results,
         Err(e) => {
             tracing::warn!("context-aware recall shared search failed: {e}");
             Vec::new()
@@ -372,7 +413,17 @@ fn run_context_aware_recall(
         ));
     }
 
-    Ok(dedupe_memory_results(branches, limit))
+    let mut results = dedupe_memory_results(branches, limit);
+
+    // Apply per-memory truncation (400 bytes per summary)
+    for mem in &mut results {
+        truncate_memory_summary(mem);
+    }
+
+    // Apply aggregate cap (4KB total)
+    apply_aggregate_cap(&mut results);
+
+    Ok(results)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -743,6 +794,14 @@ pub(crate) fn tool_recall(
                     scored_results.retain(|(m, _)| selected_ids.contains(&m.id));
                 }
 
+                // Apply per-memory truncation (400 bytes per summary)
+                for (mem, _) in &mut scored_results {
+                    truncate_memory_summary(mem);
+                }
+
+                // Apply aggregate cap (4KB total)
+                apply_aggregate_cap_scored(&mut scored_results);
+
                 for (mem, _) in &scored_results {
                     if let Err(e) = store.update_access(&mem.id) {
                         tracing::warn!("update_access failed: {e}");
@@ -964,4 +1023,118 @@ pub(crate) fn is_session_query(query: &str) -> bool {
         "earlier today",
     ];
     SESSION_KEYWORDS.iter().any(|kw| lower.contains(kw))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hyphae_core::{Importance, MemorySource, MemoryTier};
+
+    fn create_test_memory(id: &str, summary: &str, weight: f32) -> Memory {
+        Memory {
+            id: id.into(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            last_accessed: Utc::now(),
+            access_count: 0,
+            weight: hyphae_core::Weight::new_clamped(weight),
+            topic: "test_topic".to_string(),
+            summary: summary.to_string(),
+            raw_excerpt: None,
+            keywords: vec![],
+            entities: vec![],
+            importance: Importance::Medium,
+            tier: MemoryTier::Recall,
+            source: MemorySource::Manual,
+            related_ids: vec![],
+            project: Some("test_project".to_string()),
+            branch: None,
+            worktree: None,
+            agent_id: None,
+            expires_at: None,
+            invalidated_at: None,
+            invalidation_reason: None,
+            superseded_by: None,
+            embedding: None,
+        }
+    }
+
+    #[test]
+    fn test_truncate_memory_summary_within_limit() {
+        let short_text = "a".repeat(100);
+        let mut mem = create_test_memory("mem1", &short_text, 0.8);
+        truncate_memory_summary(&mut mem);
+        assert_eq!(mem.summary, short_text);
+    }
+
+    #[test]
+    fn test_truncate_memory_summary_exceeds_limit() {
+        let long_text = "x".repeat(500);
+        let mut mem = create_test_memory("mem2", &long_text, 0.8);
+        truncate_memory_summary(&mut mem);
+        assert!(mem.summary.len() <= MEMORY_TRUNCATION_BYTES);
+        assert!(!mem.summary.is_empty());
+    }
+
+    #[test]
+    fn test_apply_aggregate_cap_under_limit() {
+        let mut results = vec![
+            create_test_memory("mem1", "short1", 0.8),
+            create_test_memory("mem2", "short2", 0.7),
+        ];
+        apply_aggregate_cap(&mut results);
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_apply_aggregate_cap_exceeds_limit() {
+        let long_text = "x".repeat(2000);
+        let mut results = vec![
+            create_test_memory("mem1", &long_text, 0.8),
+            create_test_memory("mem2", &long_text, 0.7),
+            create_test_memory("mem3", "short", 0.6),
+        ];
+        apply_aggregate_cap(&mut results);
+        // Total bytes should not exceed 4KB; some memories should be filtered out
+        let total_bytes: usize = results.iter().map(|m| m.summary.len()).sum();
+        assert!(total_bytes <= AGGREGATE_CAP_BYTES);
+    }
+
+    #[test]
+    fn test_apply_aggregate_cap_empty() {
+        let mut results = vec![];
+        apply_aggregate_cap(&mut results);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_apply_aggregate_cap_scored_under_limit() {
+        let mut results = vec![
+            (create_test_memory("mem1", "short1", 0.8), 0.9),
+            (create_test_memory("mem2", "short2", 0.7), 0.8),
+        ];
+        apply_aggregate_cap_scored(&mut results);
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_apply_aggregate_cap_scored_exceeds_limit() {
+        let long_text = "x".repeat(2000);
+        let mut results = vec![
+            (create_test_memory("mem1", &long_text, 0.8), 0.9),
+            (create_test_memory("mem2", &long_text, 0.7), 0.8),
+            (create_test_memory("mem3", "short", 0.6), 0.7),
+        ];
+        apply_aggregate_cap_scored(&mut results);
+        // Total bytes should not exceed 4KB; some memories should be filtered out
+        let total_bytes: usize = results.iter().map(|(m, _)| m.summary.len()).sum();
+        assert!(total_bytes <= AGGREGATE_CAP_BYTES);
+    }
+
+    #[test]
+    fn test_apply_aggregate_cap_scored_empty() {
+        let mut results: Vec<(Memory, f32)> = vec![];
+        apply_aggregate_cap_scored(&mut results);
+        assert!(results.is_empty());
+    }
 }
