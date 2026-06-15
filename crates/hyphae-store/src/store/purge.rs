@@ -111,6 +111,11 @@ impl SqliteStore {
 
     /// Delete all data for a specific project.
     /// Returns (memories_deleted, sessions_deleted, chunks_deleted, documents_deleted).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal cache lock is poisoned (i.e. another thread panicked
+    /// while holding it). A poisoned lock indicates an unrecoverable state.
     pub fn purge_project(&self, project: &str) -> HyphaeResult<(usize, usize, usize, usize)> {
         // SAFETY: No nested transactions — this method does not call other &self methods
         // that open transactions. The &self receiver is required by SqliteStore.
@@ -176,6 +181,9 @@ impl SqliteStore {
         tx.commit()
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
 
+        // Bulk-clear: we cannot enumerate which memory ids were deleted.
+        self.cache.lock().unwrap().clear();
+
         Ok((
             memories_deleted,
             sessions_deleted,
@@ -186,6 +194,11 @@ impl SqliteStore {
 
     /// Delete all data created before a specific date (ISO 8601 format).
     /// Returns (memories_deleted, sessions_deleted, chunks_deleted, documents_deleted).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal cache lock is poisoned (i.e. another thread panicked
+    /// while holding it). A poisoned lock indicates an unrecoverable state.
     pub fn purge_before_date(&self, before_dt: &str) -> HyphaeResult<(usize, usize, usize, usize)> {
         // SAFETY: No nested transactions — this method does not call other &self methods
         // that open transactions. The &self receiver is required by SqliteStore.
@@ -259,6 +272,9 @@ impl SqliteStore {
 
         tx.commit()
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        // Bulk-clear: we cannot enumerate which memory ids were deleted.
+        self.cache.lock().unwrap().clear();
 
         Ok((
             memories_deleted,

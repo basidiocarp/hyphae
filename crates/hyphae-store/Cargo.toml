@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 hyphae-core = { path = "../hyphae-core" }
+lru = "0.12"
 rusqlite = { workspace = true }
 rusqlite_migration = { workspace = true }
 sqlite-vec = { workspace = true }

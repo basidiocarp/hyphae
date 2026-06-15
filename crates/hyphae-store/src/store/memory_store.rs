@@ -548,6 +548,11 @@ impl SqliteStore {
     /// Unlike [`MemoryStore::update`], this method deletes the existing row and
     /// re-inserts the provided `Memory`, which allows callers to change the
     /// `created_at` timestamp (e.g. for archive import merge).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal cache lock is poisoned (i.e. another thread panicked
+    /// while holding it). A poisoned lock indicates an unrecoverable state.
     pub fn replace_memory(&self, memory: Memory) -> HyphaeResult<MemoryId> {
         let tx = self
             .conn
@@ -631,6 +636,10 @@ impl SqliteStore {
         if let Err(e) = self.audit_memory(super::audit::AuditOperation::Update, &memory) {
             tracing::warn!("audit log write failed after replace commit: {e}");
         }
+
+        // Invalidate cache after the commit is durable.
+        self.cache.lock().unwrap().pop(memory.id.as_ref());
+
         Ok(id)
     }
 
@@ -663,6 +672,14 @@ impl SqliteStore {
                 HyphaeError::Database(e.to_string())
             })?;
 
+        // Invalidate cache for each updated id — access_count changed.
+        {
+            let mut guard = self.cache.lock().unwrap();
+            for id in ids {
+                guard.pop(*id);
+            }
+        }
+
         Ok(())
     }
 
@@ -673,6 +690,11 @@ impl SqliteStore {
     /// # Errors
     ///
     /// Returns `HyphaeError::Database` if the transaction, DELETE, or commit fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal cache lock is poisoned (i.e. another thread panicked
+    /// while holding it). A poisoned lock indicates an unrecoverable state.
     pub fn purge_old_invalidated(&self, cutoff_days: u32) -> HyphaeResult<usize> {
         let cutoff_seconds = i64::from(cutoff_days) * 86_400;
         let now = Utc::now();
@@ -716,6 +738,10 @@ impl SqliteStore {
 
         tx.commit()
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        // Bulk-clear: we cannot enumerate which ids were deleted.
+        self.cache.lock().unwrap().clear();
+
         Ok(changed)
     }
 }
@@ -806,6 +832,16 @@ impl MemoryStore for SqliteStore {
     }
 
     fn get(&self, id: &MemoryId) -> HyphaeResult<Option<Memory>> {
+        let id_str = id.as_ref().to_string();
+
+        // Cache check — acquire, check, drop before any SQLite work.
+        {
+            let mut guard = self.cache.lock().unwrap();
+            if let Some(cached) = guard.get(&id_str) {
+                return Ok(Some(cached.clone()));
+            }
+        }
+
         let sql = format!("SELECT {SELECT_COLS} FROM memories WHERE id = ?1");
         let mut stmt = self
             .conn
@@ -816,6 +852,12 @@ impl MemoryStore for SqliteStore {
             .query_row(params![id.as_ref()], row_to_memory)
             .optional()
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        // Populate cache on hit; do not cache misses.
+        if let Some(ref memory) = result {
+            let mut guard = self.cache.lock().unwrap();
+            guard.put(id_str, memory.clone());
+        }
 
         Ok(result)
     }
@@ -951,6 +993,10 @@ impl MemoryStore for SqliteStore {
 
         tx.commit()
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        // Invalidate cache after the commit is durable.
+        self.cache.lock().unwrap().pop(memory.id.as_ref());
+
         Ok(())
     }
 
@@ -998,6 +1044,9 @@ impl MemoryStore for SqliteStore {
         if changed == 0 {
             return Err(HyphaeError::NotFound(id.to_string()));
         }
+
+        // Invalidate cache — the row is now mutated.
+        self.cache.lock().unwrap().pop(id.as_ref());
 
         Ok(())
     }
@@ -1067,6 +1116,10 @@ impl MemoryStore for SqliteStore {
 
         tx.commit()
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        // Invalidate cache — the row is now deleted.
+        self.cache.lock().unwrap().pop(id.as_ref());
+
         Ok(())
     }
 
@@ -1822,6 +1875,10 @@ impl MemoryStore for SqliteStore {
         if changed == 0 {
             return Err(HyphaeError::NotFound(id.to_string()));
         }
+
+        // Invalidate cache — access_count and last_accessed changed.
+        self.cache.lock().unwrap().pop(id.as_ref());
+
         Ok(())
     }
 
@@ -1867,6 +1924,9 @@ impl MemoryStore for SqliteStore {
         ) {
             tracing::warn!("audit log write failed, mutation succeeded: {e}");
         }
+
+        // Bulk-clear: weights changed across an unenumerable set of rows.
+        self.cache.lock().unwrap().clear();
 
         Ok(changed)
     }
@@ -1914,6 +1974,10 @@ impl MemoryStore for SqliteStore {
 
         tx.commit()
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        // Bulk-clear: we cannot enumerate which ids were pruned.
+        self.cache.lock().unwrap().clear();
+
         Ok(changed)
     }
 
@@ -2063,6 +2127,10 @@ impl MemoryStore for SqliteStore {
 
         tx.commit()
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        // Bulk-clear: source memories were invalidated, new memory inserted.
+        self.cache.lock().unwrap().clear();
+
         Ok(())
     }
 
@@ -2246,6 +2314,10 @@ impl MemoryStore for SqliteStore {
 
         tx.commit()
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        // Bulk-clear: we cannot enumerate which ids were pruned.
+        self.cache.lock().unwrap().clear();
+
         Ok(changed)
     }
 }

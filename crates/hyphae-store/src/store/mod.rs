@@ -30,7 +30,7 @@ use rusqlite::{
     params,
 };
 
-use hyphae_core::{HyphaeError, HyphaeResult, MemoryStore};
+use hyphae_core::{HyphaeError, HyphaeResult, Memory, MemoryStore};
 
 use crate::schema::{init_db, init_db_with_dims};
 
@@ -51,8 +51,13 @@ fn ensure_sqlite_vec() {
     });
 }
 
+/// Capacity of the in-process LRU cache over hot single-id `get` reads.
+/// Using `unwrap()` in a `const` context is safe: 256 is never zero.
+const CACHE_CAP: std::num::NonZeroUsize = std::num::NonZeroUsize::new(256).unwrap();
+
 pub struct SqliteStore {
     pub(crate) conn: Connection,
+    pub(crate) cache: std::sync::Mutex<lru::LruCache<String, Memory>>,
 }
 
 impl SqliteStore {
@@ -93,7 +98,10 @@ impl SqliteStore {
                 .map_err(|e| HyphaeError::Database(e.to_string()))?;
         }
 
-        let store = Self { conn };
+        let store = Self {
+            conn,
+            cache: std::sync::Mutex::new(lru::LruCache::new(CACHE_CAP)),
+        };
         // Expire sessions that were never ended (crash recovery). Ignoring the error here
         // is intentional: startup cleanup is best-effort and should not block store init.
         if let Err(e) = store.cleanup_stale_sessions(24) {
@@ -204,7 +212,10 @@ impl SqliteStore {
         conn.execute_batch("PRAGMA foreign_keys=ON;")
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
         init_db(&mut conn)?;
-        Ok(Self { conn })
+        Ok(Self {
+            conn,
+            cache: std::sync::Mutex::new(lru::LruCache::new(CACHE_CAP)),
+        })
     }
 
     /// Begin a transaction for import or bulk operations. Call with a closure that performs the work.
@@ -324,6 +335,57 @@ mod tests {
         let store = test_store();
         let result = store.delete(&MemoryId::from("nonexistent"));
         assert!(result.is_err());
+    }
+
+    // === LRU cache invariant tests ===
+
+    /// get → delete → get must return None (phantom-after-delete must not occur).
+    #[test]
+    fn test_cache_no_phantom_after_delete() {
+        let store = test_store();
+        let mem = make_memory("cache-test", "will be deleted");
+        let id = mem.id.clone();
+
+        store.store(mem).unwrap();
+
+        // Prime the cache with a get.
+        let first = store.get(&id).unwrap().unwrap();
+        assert_eq!(first.summary, "will be deleted");
+
+        // Delete the memory.
+        store.delete(&id).unwrap();
+
+        // A second get must return None — the cache must have been invalidated.
+        let after_delete = store.get(&id).unwrap();
+        assert!(
+            after_delete.is_none(),
+            "get after delete must return None; cache was not invalidated"
+        );
+    }
+
+    /// get → update → get must return the updated value (stale-after-update must not occur).
+    #[test]
+    fn test_cache_no_stale_after_update() {
+        let store = test_store();
+        let mut mem = make_memory("cache-test", "original summary");
+        let id = mem.id.clone();
+
+        store.store(mem.clone()).unwrap();
+
+        // Prime the cache.
+        let first = store.get(&id).unwrap().unwrap();
+        assert_eq!(first.summary, "original summary");
+
+        // Update the memory.
+        mem.summary = "updated summary".into();
+        store.update(&mem).unwrap();
+
+        // A second get must return the updated value.
+        let after_update = store.get(&id).unwrap().unwrap();
+        assert_eq!(
+            after_update.summary, "updated summary",
+            "get after update must return new value; cache was not invalidated"
+        );
     }
 
     #[test]

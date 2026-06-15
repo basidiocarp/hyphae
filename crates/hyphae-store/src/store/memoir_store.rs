@@ -313,6 +313,10 @@ impl MemoirStore for SqliteStore {
 
         tx.commit()
             .map_err(|e| HyphaeError::Database(e.to_string()))?;
+
+        // Invalidate the paired memory entry from the cache after the commit.
+        self.cache.lock().unwrap().pop(memory_id.as_ref());
+
         Ok(())
     }
 

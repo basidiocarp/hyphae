@@ -227,6 +227,11 @@ impl SqliteStore {
     /// - For `invalidate`: clears the invalidation fields
     /// - For `update`/`delete`/`decay`/`prune`/`consolidate`: not reversible,
     ///   returns an error explaining why
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal cache lock is poisoned (i.e. another thread panicked
+    /// while holding it). A poisoned lock indicates an unrecoverable state.
     pub fn audit_rollback(&self, audit_id: &str) -> HyphaeResult<String> {
         let entry = self
             .audit_get(audit_id)?
@@ -268,6 +273,7 @@ impl SqliteStore {
                         params![entry.memory_id, Utc::now().to_rfc3339()],
                     )
                     .map_err(|e| HyphaeError::Database(e.to_string()))?;
+                self.cache.lock().unwrap().pop(entry.memory_id.as_str());
                 Ok(format!(
                     "Rolled back invalidate: restored memory {}",
                     entry.memory_id
@@ -429,6 +435,36 @@ mod tests {
         assert!(msg.contains("Rolled back invalidate"));
 
         // Memory should be active again
+        let restored = store.get(&mem_id).unwrap().unwrap();
+        assert!(restored.invalidated_at.is_none());
+    }
+
+    #[test]
+    fn test_cache_no_stale_after_audit_rollback_invalidate() {
+        let store = test_store();
+        let mem = Memory::new(
+            "rollback-cache".to_string(),
+            "Should read active after rollback".to_string(),
+            Importance::Medium,
+        );
+        let mem_id = mem.id.clone();
+        store.store(mem).unwrap();
+        store.invalidate(&mem_id, Some("test"), None).unwrap();
+
+        // Prime the cache with the invalidated-state row (this is what makes
+        // the missing pop observable — get caches whatever it reads).
+        let primed = store.get(&mem_id).unwrap();
+        assert!(primed.is_some());
+
+        let entries = store
+            .audit_list(None, Some(AuditOperation::Invalidate), 10)
+            .unwrap();
+        assert!(!entries.is_empty());
+        let audit_id = &entries[0].id;
+        store.audit_rollback(audit_id).unwrap();
+
+        // After rollback the row is active in the DB; the cache must not serve
+        // the stale invalidated entry.
         let restored = store.get(&mem_id).unwrap().unwrap();
         assert!(restored.invalidated_at.is_none());
     }
