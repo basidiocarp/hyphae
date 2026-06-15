@@ -37,13 +37,27 @@ pub trait MemoryStore {
     /// Returns `HyphaeError` if the database write fails.
     fn store(&self, memory: Memory) -> HyphaeResult<MemoryId>;
 
-    /// Fetch a memory by ID.
+    /// Fetch a memory by ID, **including invalidated rows**.
+    ///
+    /// This is a raw by-id accessor: it returns the row whatever its
+    /// `invalidated_at` state. The asymmetry with [`get_by_ids`](Self::get_by_ids)
+    /// — which filters `invalidated_at IS NULL` — is deliberate. Upsert callers
+    /// (`get` then `store`/`update`), import conflict detection, admin delete,
+    /// and audit/eval labeling all need to see invalidated rows by id; filtering
+    /// here would route those paths into INSERT-over-existing-row PK conflicts or
+    /// break administrative access to invalidated records. Callers that need
+    /// active-only results (recall, search) must use [`get_by_ids`](Self::get_by_ids)
+    /// or a search method, not this accessor.
     ///
     /// # Errors
     /// Returns `HyphaeError` if the database query fails.
     fn get(&self, id: &MemoryId) -> HyphaeResult<Option<Memory>>;
 
-    /// Fetch multiple memories by their string IDs.
+    /// Fetch multiple **active** memories by their string IDs.
+    ///
+    /// Filters `invalidated_at IS NULL`, so invalidated rows are excluded. This
+    /// is the active-recall counterpart to [`get`](Self::get), which returns a
+    /// row by id regardless of invalidation.
     ///
     /// # Errors
     /// Returns `HyphaeError` if the database query fails.

@@ -842,6 +842,9 @@ impl MemoryStore for SqliteStore {
             }
         }
 
+        // No `invalidated_at IS NULL` filter here — intentional. `get` is a raw
+        // by-id accessor and returns invalidated rows; `get_by_ids`/search are the
+        // active-only paths. See the `MemoryStore::get` contract for why.
         let sql = format!("SELECT {SELECT_COLS} FROM memories WHERE id = ?1");
         let mut stmt = self
             .conn
