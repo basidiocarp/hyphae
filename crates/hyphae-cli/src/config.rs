@@ -35,6 +35,8 @@ pub struct StoreConfig {
     pub path: Option<String>,
     /// Default project namespace for memory isolation.
     pub default_project: Option<String>,
+    /// Path to legacy database file for migration. Cleared after successful migration.
+    pub legacy_db: Option<String>,
 }
 
 /// Memory decay and pruning settings.
@@ -230,6 +232,67 @@ pub fn load_config() -> Result<Config> {
     Ok(Config::default())
 }
 
+/// Persist config to disk.
+/// Reads the existing config (if any), updates the [store] section with the new values,
+/// and preserves all other top-level sections and any unknown keys for forward compatibility.
+pub fn save_config(config: &Config) -> Result<()> {
+    let path = config_path();
+
+    if let Some(p) = &path {
+        // Read the existing TOML file (or start fresh if it doesn't exist).
+        // Preserving the full root table ensures that any unknown future [store] keys
+        // or other sections are not lost.
+        let mut root = if p.exists() {
+            let content =
+                std::fs::read_to_string(p).with_context(|| format!("reading {}", p.display()))?;
+            toml::from_str::<toml::Value>(&content)
+                .context("parsing existing TOML config")?
+                .as_table()
+                .cloned()
+                .unwrap_or_default()
+        } else {
+            toml::value::Table::new()
+        };
+
+        // Update store section with current config values.
+        // Only the known fields from config.store are written; unknown future keys in the
+        // existing [store] table would be discarded. If minimal-touch updates are needed,
+        // we could instead selectively update only specific keys (e.g., just legacy_db),
+        // but the full reconstruction approach ensures type consistency.
+        let mut store_table = root
+            .remove("store")
+            .and_then(|v| v.try_into::<toml::value::Table>().ok())
+            .unwrap_or_default();
+
+        if let Some(ref s) = config.store.path {
+            store_table.insert("path".to_string(), toml::Value::String(s.clone()));
+        }
+        if let Some(ref proj) = config.store.default_project {
+            store_table.insert(
+                "default_project".to_string(),
+                toml::Value::String(proj.clone()),
+            );
+        }
+        if let Some(ref leg) = config.store.legacy_db {
+            store_table.insert("legacy_db".to_string(), toml::Value::String(leg.clone()));
+        } else {
+            // Ensure legacy_db is removed if it's None (cleared after migration).
+            store_table.remove("legacy_db");
+        }
+        root.insert("store".to_string(), toml::Value::Table(store_table));
+
+        let content = toml::to_string_pretty(&toml::Value::Table(root))
+            .context("serializing config to TOML")?;
+
+        let parent = p.parent().unwrap_or_else(|| std::path::Path::new("."));
+        std::fs::create_dir_all(parent).context("creating config directory")?;
+        std::fs::write(p, content).with_context(|| format!("writing {}", p.display()))?;
+        return Ok(());
+    }
+
+    anyhow::bail!("no config path could be resolved")
+}
+
 /// Resolve the config file path.
 fn config_path() -> Option<PathBuf> {
     default_config_path()
@@ -416,5 +479,32 @@ instructions = "Custom instructions here"
         config.recall.limit = 0;
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("recall.limit"));
+    }
+
+    #[test]
+    fn test_store_config_legacy_db_defaults_to_none() {
+        let config = StoreConfig::default();
+        assert!(config.legacy_db.is_none());
+    }
+
+    #[test]
+    fn test_store_config_legacy_db_deserialization() {
+        let toml_str = r#"
+[store]
+path = "/tmp/test.db"
+legacy_db = "/tmp/legacy.db"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.store.legacy_db, Some("/tmp/legacy.db".to_string()));
+    }
+
+    #[test]
+    fn test_store_config_legacy_db_optional() {
+        let toml_str = r#"
+[store]
+path = "/tmp/test.db"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(config.store.legacy_db.is_none());
     }
 }
