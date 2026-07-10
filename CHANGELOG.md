@@ -4,6 +4,28 @@ All notable changes to Hyphae are documented in this file.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-07-10
+
+### Added
+
+- **Config-driven legacy-db migration**: `hyphae migrate` now reads the legacy
+  database location from config instead of a hardcoded path.
+
+### Fixed
+
+- **FTS relevance ranking**: `search_fts`, `search_fts_scoped`, and
+  `search_fts_in_topic` now rank by BM25 relevance instead of static memory
+  weight. Previously the FTS table was referenced only inside an `IN (subquery)`,
+  making `bm25()` unreferenceable in the outer `ORDER BY`, so relevance was
+  silently discarded and rows ranked by hand-set weight. This is the primary
+  recall path when no embeddings are present.
+
+### Security
+
+- Cleared `RUSTSEC-2026-0204` (crossbeam-epoch), `RUSTSEC-2026-0185`
+  (quinn-proto), `RUSTSEC-2026-0002` (lru), and the core2/rand advisories via
+  transitive dependency bumps.
+
 ## [0.10.11] - 2026-04-15
 
 ### Fixed
