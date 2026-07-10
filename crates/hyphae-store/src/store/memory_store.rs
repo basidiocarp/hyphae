@@ -1201,18 +1201,14 @@ impl MemoryStore for SqliteStore {
             return Ok(Vec::new());
         }
 
-        // ─────────────────────────────────────────────────────────────────────
-        // FTS5 search with project filter using UNINDEXED column
-        // ─────────────────────────────────────────────────────────────────────
+        let qualified_select_cols = format!("m.{}", SELECT_COLS.replace(", ", ", m."));
         let sql = format!(
-            "SELECT {SELECT_COLS} FROM memories m
-             WHERE m.id IN (
-                 SELECT id FROM memories_fts
-                 WHERE memories_fts MATCH ?1
-                 AND (project = ?3 OR ?3 IS NULL)
-             )
-             AND m.{ACTIVE_MEMORY_CLAUSE}
-             ORDER BY m.weight DESC
+            "SELECT {qualified_select_cols} FROM memories m
+             JOIN memories_fts ON memories_fts.id = m.id
+             WHERE memories_fts MATCH ?1
+               AND (m.project = ?3 OR ?3 IS NULL)
+               AND m.{ACTIVE_MEMORY_CLAUSE}
+             ORDER BY bm25(memories_fts) ASC, m.weight DESC, m.created_at DESC
              LIMIT ?2 OFFSET ?4"
         );
 
@@ -1248,17 +1244,15 @@ impl MemoryStore for SqliteStore {
             return Ok(Vec::new());
         }
 
+        let qualified_select_cols = format!("m.{}", SELECT_COLS.replace(", ", ", m."));
         let sql = format!(
-            "SELECT {SELECT_COLS} FROM memories m
-             WHERE m.id IN (
-                 SELECT id FROM memories_fts
-                 WHERE memories_fts MATCH ?1
-                 AND topic = ?2
-                 AND (project = ?4 OR ?4 IS NULL)
-             )
-             AND m.topic = ?2
-             AND m.{ACTIVE_MEMORY_CLAUSE}
-             ORDER BY m.weight DESC
+            "SELECT {qualified_select_cols} FROM memories m
+             JOIN memories_fts ON memories_fts.id = m.id
+             WHERE memories_fts MATCH ?1
+               AND m.topic = ?2
+               AND (m.project = ?4 OR ?4 IS NULL)
+               AND m.{ACTIVE_MEMORY_CLAUSE}
+             ORDER BY bm25(memories_fts) ASC, m.weight DESC, m.created_at DESC
              LIMIT ?3 OFFSET ?5"
         );
 
@@ -3504,6 +3498,105 @@ mod recall_bias_tests {
     // When a memory is highly relevant (many term repeats) but low-weight, and another
     // is barely relevant (few repeats) but high-weight, the highly-relevant one should
     // rank first (bm25 decides before weight breaks ties).
+    #[test]
+    fn search_fts_ranks_by_bm25_not_weight() {
+        let store = make_store();
+        let project = "test_project";
+
+        // Highly relevant to "omega" (10 repeats) but low weight (0.1)
+        let highly_relevant_id = {
+            let mem = Memory {
+                id: MemoryId::new(),
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+                last_accessed: chrono::Utc::now(),
+                access_count: 0,
+                weight: Weight::new(0.1).unwrap(),
+                topic: "test/bm25".to_string(),
+                summary:
+                    "omega omega omega omega omega omega omega omega omega omega doc_high_relevance"
+                        .to_string(),
+                raw_excerpt: None,
+                keywords: vec![],
+                importance: Importance::Low,
+                source: MemorySource::Manual,
+                related_ids: vec![],
+                embedding: None,
+                project: Some(project.to_string()),
+                branch: None,
+                worktree: None,
+                agent_id: None,
+                expires_at: None,
+                invalidated_at: None,
+                invalidation_reason: None,
+                superseded_by: None,
+                tier: Default::default(),
+                entities: vec![],
+            };
+            let id = mem.id.clone();
+            store.store(mem).unwrap();
+            id
+        };
+
+        // Barely relevant to "omega" (1 repeat) but high weight (0.9)
+        let barely_relevant_id = {
+            let mem = Memory {
+                id: MemoryId::new(),
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+                last_accessed: chrono::Utc::now(),
+                access_count: 0,
+                weight: Weight::new(0.9).unwrap(),
+                topic: "test/bm25".to_string(),
+                summary: "omega doc_low_relevance".to_string(),
+                raw_excerpt: None,
+                keywords: vec![],
+                importance: Importance::Low,
+                source: MemorySource::Manual,
+                related_ids: vec![],
+                embedding: None,
+                project: Some(project.to_string()),
+                branch: None,
+                worktree: None,
+                agent_id: None,
+                expires_at: None,
+                invalidated_at: None,
+                invalidation_reason: None,
+                superseded_by: None,
+                tier: Default::default(),
+                entities: vec![],
+            };
+            let id = mem.id.clone();
+            store.store(mem).unwrap();
+            id
+        };
+
+        // search_fts should rank by bm25 (via JOIN), not by weight alone.
+        // The highly-relevant low-weight memory should come first.
+        let results = store.search_fts("omega", 10, 0, Some(project)).unwrap();
+
+        assert_eq!(results.len(), 2, "both memories should match the query");
+
+        // The highly relevant one (10 repeats) should rank first, even though it has lower weight
+        assert_eq!(
+            results[0].id, highly_relevant_id,
+            "highly relevant (10x term) should rank first despite lower weight (0.1 vs 0.9)"
+        );
+        assert_eq!(
+            results[1].id, barely_relevant_id,
+            "barely relevant (1x term) should rank second despite higher weight"
+        );
+
+        // Verify no rows are lost or duplicated (JOIN restructure must preserve cardinality)
+        let result_ids: std::collections::HashSet<_> =
+            results.iter().map(|m| m.id.clone()).collect();
+        assert_eq!(
+            result_ids.len(),
+            2,
+            "all results should be unique (no duplicates from JOIN)"
+        );
+    }
+
     #[test]
     fn search_fts_scoped_ranks_by_bm25_not_weight() {
         let store = make_store();
